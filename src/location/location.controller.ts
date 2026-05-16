@@ -1,4 +1,11 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+} from '@nestjs/common';
 import { LocationService } from './location.service.js';
 
 @Controller('location')
@@ -6,17 +13,17 @@ export class LocationController {
   constructor(private readonly locationService: LocationService) {}
 
   @Get('resolve')
-  async resolve(
-    @Query('ip') ip?: string,
-    @Query('lat') lat?: string,
-    @Query('lng') lng?: string,
-  ) {
-    const latitude = lat ? parseFloat(lat) : undefined;
-    const longitude = lng ? parseFloat(lng) : undefined;
-    
-    // Sends the request to the APICenter SDK 
-    // The Frontend (React/Leaflet) will call this endpoint
-    return this.locationService.resolveLocation(ip, latitude, longitude);
+  async resolve(@Query('lat') lat?: string, @Query('lng') lng?: string) {
+    const latitude = lat !== undefined ? parseFloat(lat) : undefined;
+    const longitude = lng !== undefined ? parseFloat(lng) : undefined;
+
+    if (latitude === undefined || longitude === undefined) {
+      throw new BadRequestException(
+        'lat and lng query parameters are required',
+      );
+    }
+
+    return this.locationService.resolveLocation(latitude, longitude);
   }
 
   @Post('geofence')

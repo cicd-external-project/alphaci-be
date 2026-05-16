@@ -1,19 +1,22 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
-import { Injectable, NotFoundException } from "@nestjs/common";
-import yaml from "js-yaml";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import yaml from 'js-yaml';
 
-import { CatalogService, type WorkflowTemplate } from "../catalog/catalog.service";
-import { OutboxRepository } from "../persistence/outbox.repository";
-import { WorkflowHistoryRepository } from "../persistence/workflow-history.repository";
-import type { GenerateWorkflowDto } from "./dto/generate-workflow.dto";
+import {
+  CatalogService,
+  type WorkflowTemplate,
+} from '../catalog/catalog.service';
+import { OutboxRepository } from '../persistence/outbox.repository';
+import { WorkflowHistoryRepository } from '../persistence/workflow-history.repository';
+import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 type Enhancement =
-  | "strictProductionApproval"
-  | "enableUatApproval"
-  | "disablePlaywright"
-  | "disableK6";
+  | 'strictProductionApproval'
+  | 'enableUatApproval'
+  | 'disablePlaywright'
+  | 'disableK6';
 
 @Injectable()
 export class WorkflowsService {
@@ -29,14 +32,11 @@ export class WorkflowsService {
       throw new NotFoundException(`Template '${dto.templateId}' not found`);
     }
 
-    const source = await readFile(template.workflowPath, "utf8");
-    const { generatedYaml, substitutionsApplied, enhancementsApplied } = this.buildWorkflow(
-      source,
-      template,
-      dto,
-    );
+    const source = await readFile(template.workflowPath, 'utf8');
+    const { generatedYaml, substitutionsApplied, enhancementsApplied } =
+      this.buildWorkflow(source, template, dto);
 
-    const sha256 = createHash("sha256").update(generatedYaml).digest("hex");
+    const sha256 = createHash('sha256').update(generatedYaml).digest('hex');
     const lineCount = generatedYaml.split(/\r?\n/).length;
     const outputFileName = this.outputFileName(dto.serviceName, template.id);
 
@@ -55,8 +55,8 @@ export class WorkflowsService {
     });
 
     await this.outboxRepository.publishLater({
-      topic: "workflow.generated",
-      aggregateType: "workflow",
+      topic: 'workflow.generated',
+      aggregateType: 'workflow',
       aggregateId: userId,
       payload: {
         userId,
@@ -74,7 +74,7 @@ export class WorkflowsService {
         stack: template.stack,
         generatedAt: new Date().toISOString(),
         sha256,
-        byteSize: Buffer.byteLength(generatedYaml, "utf8"),
+        byteSize: Buffer.byteLength(generatedYaml, 'utf8'),
         lineCount,
         substitutionsApplied,
         enhancementsApplied,
@@ -86,50 +86,81 @@ export class WorkflowsService {
   }
 
   async getHistory(userId: string, limit = 25) {
-    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 25;
+    const safeLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, limit))
+      : 25;
     return this.workflowHistoryRepository.listByUser(userId, safeLimit);
   }
 
-  private buildWorkflow(source: string, template: WorkflowTemplate, dto: GenerateWorkflowDto) {
+  private buildWorkflow(
+    source: string,
+    template: WorkflowTemplate,
+    dto: GenerateWorkflowDto,
+  ) {
     const substitutionsApplied: string[] = [];
     const enhancementsApplied: string[] = [];
 
     const parsed = yaml.load(source) as Record<string, unknown> | null;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Workflow template could not be parsed");
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Workflow template could not be parsed');
     }
 
     parsed.name = `${dto.serviceName} - ${template.name}`;
-    substitutionsApplied.push("name");
+    substitutionsApplied.push('name');
 
-    const onConfig = this.ensureObject(parsed, "on");
-    const dispatchConfig = this.ensureObject(onConfig, "workflow_dispatch");
-    const inputConfig = this.ensureObject(dispatchConfig, "inputs");
+    const onConfig = this.ensureObject(parsed, 'on');
+    const dispatchConfig = this.ensureObject(onConfig, 'workflow_dispatch');
+    const inputConfig = this.ensureObject(dispatchConfig, 'inputs');
 
-    this.setInputDefault(inputConfig, "service_name", dto.serviceName, "string", substitutionsApplied);
+    this.setInputDefault(
+      inputConfig,
+      'service_name',
+      dto.serviceName,
+      'string',
+      substitutionsApplied,
+    );
 
     if (dto.servicePath !== undefined) {
-      this.setInputDefault(inputConfig, "service_path", dto.servicePath, "string", substitutionsApplied);
+      this.setInputDefault(
+        inputConfig,
+        'service_path',
+        dto.servicePath,
+        'string',
+        substitutionsApplied,
+      );
     }
 
     if (dto.nodeVersion !== undefined) {
-      this.setInputDefault(inputConfig, "node_version", dto.nodeVersion, "string", substitutionsApplied);
+      this.setInputDefault(
+        inputConfig,
+        'node_version',
+        dto.nodeVersion,
+        'string',
+        substitutionsApplied,
+      );
     }
 
     if (dto.coverageThreshold !== undefined) {
       this.setInputDefault(
         inputConfig,
-        "coverage_threshold",
+        'coverage_threshold',
         dto.coverageThreshold,
-        "number",
+        'number',
         substitutionsApplied,
       );
     }
 
-    const pipelineConfig = this.ensureObject(this.ensureObject(parsed, "jobs"), "pipeline");
-    const withConfig = this.ensureObject(pipelineConfig, "with");
+    const pipelineConfig = this.ensureObject(
+      this.ensureObject(parsed, 'jobs'),
+      'pipeline',
+    );
+    const withConfig = this.ensureObject(pipelineConfig, 'with');
 
-    this.applyEnhancements(withConfig, dto.enhancements ?? [], enhancementsApplied);
+    this.applyEnhancements(
+      withConfig,
+      dto.enhancements ?? [],
+      enhancementsApplied,
+    );
 
     const generatedYaml = yaml.dump(parsed, {
       lineWidth: -1,
@@ -151,20 +182,20 @@ export class WorkflowsService {
   ): void {
     for (const enhancement of enhancements) {
       switch (enhancement) {
-        case "disablePlaywright":
-          withConfig["run-playwright"] = false;
+        case 'disablePlaywright':
+          withConfig['run-playwright'] = false;
           enhancementsApplied.push(enhancement);
           break;
-        case "disableK6":
-          withConfig["run-k6"] = false;
+        case 'disableK6':
+          withConfig['run-k6'] = false;
           enhancementsApplied.push(enhancement);
           break;
-        case "enableUatApproval":
-          withConfig["require-uat-approval"] = true;
+        case 'enableUatApproval':
+          withConfig['require-uat-approval'] = true;
           enhancementsApplied.push(enhancement);
           break;
-        case "strictProductionApproval":
-          withConfig["require-production-approval"] = true;
+        case 'strictProductionApproval':
+          withConfig['require-production-approval'] = true;
           enhancementsApplied.push(enhancement);
           break;
         default:
@@ -173,9 +204,12 @@ export class WorkflowsService {
     }
   }
 
-  private ensureObject(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  private ensureObject(
+    parent: Record<string, unknown>,
+    key: string,
+  ): Record<string, unknown> {
     const existing = parent[key];
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
       const next: Record<string, unknown> = {};
       parent[key] = next;
       return next;
@@ -188,11 +222,11 @@ export class WorkflowsService {
     inputs: Record<string, unknown>,
     key: string,
     value: string | number,
-    type: "string" | "number",
+    type: 'string' | 'number',
     substitutionsApplied: string[],
   ): void {
     const existing = inputs[key];
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
       inputs[key] = {
         description: `Auto-generated default for ${key}`,
         required: false,
@@ -213,9 +247,9 @@ export class WorkflowsService {
   private outputFileName(serviceName: string, templateId: string): string {
     const normalized = serviceName
       .toLowerCase()
-      .replaceAll(/[^a-z0-9-]+/g, "-")
-      .replaceAll(/^-+|-+$/g, "");
+      .replaceAll(/[^a-z0-9-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
 
-    return `${normalized || "service"}-${templateId}.yml`;
+    return `${normalized || 'service'}-${templateId}.yml`;
   }
 }

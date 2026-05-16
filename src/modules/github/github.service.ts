@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
 
 interface GitHubRepoResponse {
   id: number;
@@ -26,12 +26,12 @@ export interface GitHubRepo {
 export class GithubService {
   async listRepos(accessToken: string): Promise<GitHubRepo[]> {
     const response = await fetch(
-      "https://api.github.com/user/repos?per_page=100&sort=updated&type=all",
+      'https://api.github.com/user/repos?per_page=100&sort=updated&type=all',
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "cicd-workflow-product",
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
         },
       },
     );

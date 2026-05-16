@@ -5,6 +5,13 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
+interface TribeManifest {
+  serviceId?: string | undefined;
+  name?: string | undefined;
+  baseUrl?: string | undefined;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class TribeRegistrationService implements OnApplicationBootstrap {
   private readonly logger = new Logger('TribeRegistration');
@@ -15,12 +22,16 @@ export class TribeRegistrationService implements OnApplicationBootstrap {
     const apiCenterUrl = this.configService.get<string>('API_CENTER_BASE_URL');
 
     if (!apiCenterUrl) {
-      this.logger.debug('API_CENTER_BASE_URL not set — skipping auto-registration');
+      this.logger.debug(
+        'API_CENTER_BASE_URL not set — skipping auto-registration',
+      );
       return;
     }
 
     const manifestPath = path.resolve(process.cwd(), 'tribe-manifest.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    const manifest = JSON.parse(
+      fs.readFileSync(manifestPath, 'utf-8'),
+    ) as unknown as TribeManifest;
 
     const serviceId =
       this.configService.get<string>('TRIBE_SERVICE_ID') ??
@@ -28,15 +39,17 @@ export class TribeRegistrationService implements OnApplicationBootstrap {
       manifest.serviceId;
 
     const name = this.configService.get<string>('TRIBE_NAME') ?? manifest.name;
-    const baseUrl = this.configService.get<string>('TRIBE_BASE_URL') ?? manifest.baseUrl;
+    const baseUrl =
+      this.configService.get<string>('TRIBE_BASE_URL') ?? manifest.baseUrl;
 
-    const payload = { ...manifest, serviceId, name, baseUrl };
+    const payload: TribeManifest = { ...manifest, serviceId, name, baseUrl };
 
     try {
       await axios.post(`${apiCenterUrl}/api/v1/registry/register`, payload, {
         headers: {
           'Content-Type': 'application/json',
-          'X-Platform-Secret': this.configService.get<string>('PLATFORM_ADMIN_SECRET') ?? '',
+          'X-Platform-Secret':
+            this.configService.get<string>('PLATFORM_ADMIN_SECRET') ?? '',
         },
       });
       this.logger.log(`registered as ${serviceId}`);

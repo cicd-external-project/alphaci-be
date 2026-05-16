@@ -5,10 +5,10 @@ import {
   HttpStatus,
   Injectable,
   UnauthorizedException,
-} from "@nestjs/common";
-import type { Request } from "express";
+} from '@nestjs/common';
+import type { Request } from 'express';
 
-import { SubscriptionService } from "../../modules/subscription/subscription.service";
+import { SubscriptionService } from '../../modules/subscription/subscription.service';
 
 @Injectable()
 export class SubscriptionGuard implements CanActivate {
@@ -19,12 +19,15 @@ export class SubscriptionGuard implements CanActivate {
     const user = request.session?.user;
 
     if (!user) {
-      throw new UnauthorizedException("Authentication required");
+      throw new UnauthorizedException('Authentication required');
     }
 
     const subscription = await this.subscriptionService.getForUser(user);
-    if (subscription.status !== "active") {
-      throw new HttpException("Active subscription required", HttpStatus.PAYMENT_REQUIRED);
+    if (subscription.status !== 'active') {
+      throw new HttpException(
+        'Active subscription required',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
     }
 
     return true;

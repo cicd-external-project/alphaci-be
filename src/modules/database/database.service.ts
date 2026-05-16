@@ -1,8 +1,18 @@
-import { Injectable, Logger, OnModuleDestroy, ServiceUnavailableException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import {
+  Pool,
+  type PoolClient,
+  type QueryResult,
+  type QueryResultRow,
+} from 'pg';
 
-import type { AppConfig } from "../../config/app.config";
+import type { AppConfig } from '../../config/app.config';
 
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
@@ -11,15 +21,19 @@ export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool | null;
 
   constructor(private readonly configService: ConfigService) {
-    this.config = this.configService.getOrThrow<AppConfig>("app");
+    this.config = this.configService.getOrThrow<AppConfig>('app');
 
     if (!this.config.supabase.dbUrl) {
       this.pool = null;
-      this.logger.warn("SUPABASE_DB_URL is missing. Database-backed features are disabled.");
+      this.logger.warn(
+        'SUPABASE_DB_URL is missing. Database-backed features are disabled.',
+      );
       return;
     }
 
-    const isLocal = this.config.supabase.dbUrl.includes("localhost") || this.config.supabase.dbUrl.includes("127.0.0.1");
+    const isLocal =
+      this.config.supabase.dbUrl.includes('localhost') ||
+      this.config.supabase.dbUrl.includes('127.0.0.1');
 
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
@@ -69,7 +83,9 @@ export class DatabaseService implements OnModuleDestroy {
 
   private getPoolOrThrow(): Pool {
     if (!this.pool) {
-      throw new ServiceUnavailableException("Database is not configured. Set SUPABASE_DB_URL.");
+      throw new ServiceUnavailableException(
+        'Database is not configured. Set SUPABASE_DB_URL.',
+      );
     }
 
     return this.pool;

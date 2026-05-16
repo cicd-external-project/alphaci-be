@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TribeClient } from '@implementsprint/sdk';
+import type {
+  KafkaGovernedPublishResponse,
+  GoogleOAuthTokenResponse,
+  PaymentCheckoutSession,
+} from '@implementsprint/sdk';
 
 @Injectable()
 export class ApiCenterClientService {
@@ -7,50 +12,62 @@ export class ApiCenterClientService {
   public readonly client: TribeClient;
 
   constructor() {
-    // Initialize the official SDK from api-shared
     this.client = new TribeClient({
-      baseUrl: process.env.API_CENTER_BASE_URL || 'http://api-center-service',
-      tribeId: process.env.API_CENTER_TRIBE_ID || 'local_dev',
-      tribeSecret: process.env.API_CENTER_TRIBE_SECRET || 'local_secret',
+      gatewayUrl:
+        process.env['API_CENTER_BASE_URL'] ?? 'http://api-center-service',
+      tribeId: process.env['API_CENTER_TRIBE_ID'] ?? 'local_dev',
+      secret: process.env['API_CENTER_TRIBE_SECRET'] ?? 'local_secret',
     });
   }
 
-  async sendKafkaMessage(topic: string, message: any, referenceId?: string) {
+  async sendKafkaMessage(
+    topic: string,
+    message: Record<string, unknown>,
+    eventType: string,
+  ): Promise<KafkaGovernedPublishResponse> {
     try {
-      const response = await this.client.kafkaPublish({
+      return await this.client.kafkaPublish({
         topic,
+        eventType,
         payload: message,
-        referenceId: referenceId || `ref-${Date.now()}`
       });
-      return response;
     } catch (error) {
       this.logger.error(`Failed to send Kafka message to ${topic}`, error);
       throw error;
     }
   }
 
-  async verifyGoogleAuth(code: string, redirectUri: string) {
+  async verifyGoogleAuth(
+    code: string,
+    redirectUri: string,
+  ): Promise<GoogleOAuthTokenResponse> {
     try {
-      const response = await this.client.gauthExchangeCode({ code, redirectUri });
-      return response;
+      return await this.client.gauthExchangeCode({ code, redirectUri });
     } catch (error) {
-      this.logger.error(`Failed to verify Google Auth`, error);
+      this.logger.error('Failed to verify Google Auth', error);
       throw error;
     }
   }
 
-  async createPayMongoIntent(amount: number, description: string) {
+  async createPayMongoCheckout(
+    referenceId: string,
+    lineItems: Array<{ name: string; quantity: number; amountPhp: number }>,
+    successUrl: string,
+    cancelUrl: string,
+  ): Promise<PaymentCheckoutSession> {
     try {
-      const response = await this.client.paymentCreateCheckoutSession({
-        amount,
-        currency: 'PHP',
-        description,
-        cancelUrl: 'http://localhost:3000/cancel',
-        successUrl: 'http://localhost:3000/success'
+      return await this.client.paymentCreateCheckoutSession({
+        referenceId,
+        successUrl,
+        cancelUrl,
+        lineItems: lineItems.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          amount: { value: item.amountPhp, currency: 'PHP' },
+        })),
       });
-      return response;
     } catch (error) {
-      this.logger.error(`Failed to create PayMongo intent`, error);
+      this.logger.error('Failed to create PayMongo checkout session', error);
       throw error;
     }
   }

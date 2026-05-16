@@ -1,6 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from '@nestjs/common';
 
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService } from '../database/database.service';
 
 interface OutboxEventInput {
   topic: string;
@@ -28,7 +28,12 @@ export class OutboxRepository {
           )
           VALUES ($1, $2, $3, $4::jsonb, 'pending');
         `,
-        [event.topic, event.aggregateType, event.aggregateId, JSON.stringify(event.payload ?? {})],
+        [
+          event.topic,
+          event.aggregateType,
+          event.aggregateId,
+          JSON.stringify(event.payload ?? {}),
+        ],
       );
     } catch (error) {
       this.logger.warn(`Outbox write skipped: ${(error as Error).message}`);

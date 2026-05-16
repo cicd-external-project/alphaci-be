@@ -1,15 +1,15 @@
-import { Controller, Get, Req, UseGuards } from "@nestjs/common";
-import type { Request } from "express";
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 
-import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
-import { GithubService } from "./github.service";
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
+import { GithubService } from './github.service';
 
-@Controller("github")
+@Controller('github')
 @UseGuards(SessionAuthGuard)
 export class GithubController {
   constructor(private readonly githubService: GithubService) {}
 
-  @Get("repos")
+  @Get('repos')
   async repos(@Req() req: Request) {
     const accessToken = req.session.githubAccessToken;
     if (!accessToken) {

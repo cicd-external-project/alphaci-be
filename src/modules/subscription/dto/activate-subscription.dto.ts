@@ -1,7 +1,7 @@
-import { IsIn, IsOptional } from "class-validator";
+import { IsIn, IsOptional } from 'class-validator';
 
 export class ActivateSubscriptionDto {
   @IsOptional()
-  @IsIn(["pro", "enterprise"])
-  plan?: "pro" | "enterprise";
+  @IsIn(['pro', 'enterprise'])
+  plan?: 'pro' | 'enterprise';
 }

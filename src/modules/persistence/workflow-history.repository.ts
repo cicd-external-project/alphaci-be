@@ -1,6 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
 
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService } from '../database/database.service';
 
 export interface WorkflowHistoryEntry {
   id: string;
@@ -83,8 +83,13 @@ export class WorkflowHistoryRepository {
     );
   }
 
-  async listByUser(userId: string, limit = 25): Promise<WorkflowHistoryEntry[]> {
-    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 25;
+  async listByUser(
+    userId: string,
+    limit = 25,
+  ): Promise<WorkflowHistoryEntry[]> {
+    const safeLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, limit))
+      : 25;
 
     const result = await this.databaseService.query<WorkflowHistoryRow>(
       `

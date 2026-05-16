@@ -4,6 +4,7 @@ import {
   type NestModule,
 } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { appConfig } from './config/app.config.js';
 import { ApiCenterSdkModule } from './api-center/api-center-sdk.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -28,6 +29,7 @@ const shouldValidateEnv = process.env.NODE_ENV === 'production';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
       cache: true,
+      load: [appConfig],
       ...(shouldValidateEnv ? { validate: validateEnv } : {}),
     }),
     SupabaseModule,
@@ -35,7 +37,7 @@ const shouldValidateEnv = process.env.NODE_ENV === 'production';
     ApiCenterSdkModule,
     LocationModule,
     ExternalModule,
-    
+
     // Business modules
     AuthModule,
     CatalogModule,

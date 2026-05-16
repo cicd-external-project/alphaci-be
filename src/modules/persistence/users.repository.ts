@@ -1,7 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
 
-import type { SessionUser } from "../../common/interfaces/session-user.interface";
-import { DatabaseService } from "../database/database.service";
+import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import { DatabaseService } from '../database/database.service';
 
 interface UpsertGitHubUserInput {
   githubUserId: string;
@@ -32,7 +32,11 @@ export class UsersRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async upsertGitHubUser(input: UpsertGitHubUserInput): Promise<SessionUser> {
-    const normalizedLogin = this.normalizeLogin(input.login, "github", input.githubUserId);
+    const normalizedLogin = this.normalizeLogin(
+      input.login,
+      'github',
+      input.githubUserId,
+    );
 
     const query = `
       WITH candidate AS (
@@ -80,11 +84,16 @@ export class UsersRepository {
     ]);
 
     const row = result.rows[0];
+    if (!row) throw new Error('Upsert returned no row');
     return this.toSessionUser(row);
   }
 
   async upsertGoogleUser(input: UpsertGoogleUserInput): Promise<SessionUser> {
-    const normalizedLogin = this.normalizeLogin(input.login, "google", input.googleUserId);
+    const normalizedLogin = this.normalizeLogin(
+      input.login,
+      'google',
+      input.googleUserId,
+    );
 
     const query = `
       WITH candidate AS (
@@ -132,6 +141,7 @@ export class UsersRepository {
     ]);
 
     const row = result.rows[0];
+    if (!row) throw new Error('Upsert returned no row');
     return this.toSessionUser(row);
   }
 
@@ -155,18 +165,22 @@ export class UsersRepository {
       id: row.id,
       login: row.login,
       name: row.display_name ?? row.login,
-      email: row.email ?? undefined,
-      avatarUrl: row.avatar_url ?? undefined,
+      ...(row.email != null && { email: row.email }),
+      ...(row.avatar_url != null && { avatarUrl: row.avatar_url }),
     };
   }
 
-  private normalizeLogin(login: string, provider: "github" | "google", providerUserId: string): string {
+  private normalizeLogin(
+    login: string,
+    provider: 'github' | 'google',
+    providerUserId: string,
+  ): string {
     const normalized = login
       .trim()
       .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, "-")
-      .replaceAll(/-+/g, "-")
-      .replaceAll(/^-+|-+$/g, "");
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/-+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
 
     if (normalized) {
       return normalized;

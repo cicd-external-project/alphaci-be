@@ -1,22 +1,25 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
 import { LocationController } from './location.controller.js';
 import { LocationService } from './location.service.js';
-import { TribeClient } from '@apicenter/sdk';
+import { TribeClient } from '@implementsprint/sdk';
 
 describe('LocationController', () => {
   let controller: LocationController;
-  let service: LocationService;
   let tribeClientMock: Partial<TribeClient>;
 
   beforeEach(async () => {
     tribeClientMock = {
-      geotagResolve: jest.fn().mockResolvedValue({
-        status: 200,
-        data: { address: '123 Fake St, City, Country' },
+      geoReverseGeocode: jest.fn().mockResolvedValue({
+        formattedAddress: '123 Fake St, City, Country',
+        latitude: 14.5995,
+        longitude: 120.9842,
+        provider: 'google-maps',
       }),
-      geofenceCheck: jest.fn().mockResolvedValue({
-        status: 200,
-        data: { insideFence: true, fenceName: 'Default Boundary' },
+      geoFenceCheck: jest.fn().mockResolvedValue({
+        inside: true,
+        distanceDetails: [],
+        provider: 'local',
       }),
     };
 
@@ -32,7 +35,6 @@ describe('LocationController', () => {
     }).compile();
 
     controller = module.get<LocationController>(LocationController);
-    service = module.get<LocationService>(LocationService);
   });
 
   it('should be defined', () => {
@@ -40,34 +42,27 @@ describe('LocationController', () => {
   });
 
   describe('resolve', () => {
-    it('should call geotagResolve via service and return address info', async () => {
-      const result = await controller.resolve('1.2.3.4', '14.5995', '120.9842');
-      
-      expect(result.data.address).toBe('123 Fake St, City, Country');
-      expect(tribeClientMock.geotagResolve).toHaveBeenCalledWith({
-        ip: '1.2.3.4',
+    it('should call geoReverseGeocode via service and return address info', async () => {
+      const result = await controller.resolve('14.5995', '120.9842');
+
+      expect(result.formattedAddress).toBe('123 Fake St, City, Country');
+      expect(tribeClientMock.geoReverseGeocode).toHaveBeenCalledWith({
         latitude: 14.5995,
         longitude: 120.9842,
       });
-    });
-
-    it('should handle undefined parameters gracefully', async () => {
-      await controller.resolve();
-      
-      expect(tribeClientMock.geotagResolve).toHaveBeenCalledWith({});
     });
   });
 
   describe('checkFence', () => {
-    it('should call geofenceCheck via service and return insideFence status', async () => {
+    it('should call geoFenceCheck via service and return inside status', async () => {
       const result = await controller.checkFence({
         latitude: 14.5995,
         longitude: 120.9842,
-        fenceId: 'zone-alpha'
+        fenceId: 'zone-alpha',
       });
-      
-      expect(result.data.insideFence).toBe(true);
-      expect(tribeClientMock.geofenceCheck).toHaveBeenCalledWith({
+
+      expect(result.inside).toBe(true);
+      expect(tribeClientMock.geoFenceCheck).toHaveBeenCalledWith({
         latitude: 14.5995,
         longitude: 120.9842,
         fenceId: 'zone-alpha',
@@ -76,8 +71,8 @@ describe('LocationController', () => {
 
     it('should handle request without fenceId gracefully', async () => {
       await controller.checkFence({ latitude: 10, longitude: 20 });
-      
-      expect(tribeClientMock.geofenceCheck).toHaveBeenCalledWith({
+
+      expect(tribeClientMock.geoFenceCheck).toHaveBeenCalledWith({
         latitude: 10,
         longitude: 20,
       });

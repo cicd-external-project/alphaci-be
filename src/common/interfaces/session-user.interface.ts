@@ -1,6 +1,6 @@
-export type SubscriptionPlan = "free" | "pro" | "enterprise";
+export type SubscriptionPlan = 'free' | 'pro' | 'enterprise';
 
-export type SubscriptionStatus = "inactive" | "active" | "canceled";
+export type SubscriptionStatus = 'inactive' | 'active' | 'canceled';
 
 export interface SessionUser {
   id: string;
@@ -13,12 +13,12 @@ export interface SessionUser {
 export interface SubscriptionState {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
-  provider: "mock" | "supabase" | "manual";
+  provider: 'mock' | 'supabase' | 'manual';
   updatedAt: string;
   planCode?: string;
   currentPeriodStart?: string | null;
   currentPeriodEnd?: string | null;
   cancelAtPeriodEnd?: boolean;
   amountPhp?: number;
-  interval?: "month" | "year";
+  interval?: 'month' | 'year';
 }

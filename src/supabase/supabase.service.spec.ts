@@ -158,7 +158,7 @@ describe('SupabaseService', () => {
 
       // Stub the internal Supabase client
       const mockListUsers = jest.fn().mockResolvedValue({ error: null });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       (service as any).client = {
         auth: { admin: { listUsers: mockListUsers } },
       };
@@ -177,7 +177,7 @@ describe('SupabaseService', () => {
       const mockListUsers = jest
         .fn()
         .mockResolvedValue({ error: new Error('auth failed') });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       (service as any).client = {
         auth: { admin: { listUsers: mockListUsers } },
       };
@@ -195,7 +195,7 @@ describe('SupabaseService', () => {
       const mockListUsers = jest
         .fn()
         .mockRejectedValue(new Error('network error'));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       (service as any).client = {
         auth: { admin: { listUsers: mockListUsers } },
       };
@@ -214,7 +214,7 @@ describe('SupabaseService', () => {
 
       // Promise that never resolves
       const mockListUsers = jest.fn().mockReturnValue(new Promise(() => {}));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
       (service as any).client = {
         auth: { admin: { listUsers: mockListUsers } },
       };
@@ -237,7 +237,7 @@ describe('SupabaseService', () => {
       );
 
       const mockListUsers = jest.fn().mockResolvedValue({ error: null });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       (service as any).scopedClients.set('PAYMENT_SERVICE', {
         auth: { admin: { listUsers: mockListUsers } },
       });
@@ -278,7 +278,9 @@ describe('SupabaseService', () => {
         },
       );
 
-      expect(service.getDefaultOrServiceClient('payment_service')).not.toBeNull();
+      expect(
+        service.getDefaultOrServiceClient('payment_service'),
+      ).not.toBeNull();
     });
   });
 });

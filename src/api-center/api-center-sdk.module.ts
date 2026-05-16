@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService, ConfigModule } from '@nestjs/config';
-import { TribeClient } from '@apicenter/sdk';
+import { TribeClient } from '@implementsprint/sdk';
 import { TribeRegistrationService } from './tribe-registration.service.js';
 
 @Global()
@@ -12,18 +12,28 @@ import { TribeRegistrationService } from './tribe-registration.service.js';
       provide: TribeClient,
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => {
-        const gatewayUrl = configService.get<string>('API_CENTER_BASE_URL') || configService.get<string>('APICENTER_URL');
-        const tribeId = configService.get<string>('API_CENTER_TRIBE_ID') || configService.get<string>('APICENTER_TRIBE_ID');
-        const secret = configService.get<string>('API_CENTER_TRIBE_SECRET') || configService.get<string>('APICENTER_TRIBE_SECRET');
+        const gatewayUrl =
+          configService.get<string>('API_CENTER_BASE_URL') ||
+          configService.get<string>('APICENTER_URL');
+        const tribeId =
+          configService.get<string>('API_CENTER_TRIBE_ID') ||
+          configService.get<string>('APICENTER_TRIBE_ID');
+        const secret =
+          configService.get<string>('API_CENTER_TRIBE_SECRET') ||
+          configService.get<string>('APICENTER_TRIBE_SECRET');
 
         if (!gatewayUrl) {
-           console.warn('API_CENTER_BASE_URL is not set — ApiCenterSdkService will be unavailable');
-           return null;
+          console.warn(
+            'API_CENTER_BASE_URL is not set — ApiCenterSdkService will be unavailable',
+          );
+          return null;
         }
 
         if (!tribeId || !secret) {
-           console.warn('Tribe credentials missing — falling back to offline dummy mode if allowed');
-           return null;
+          console.warn(
+            'Tribe credentials missing — falling back to offline dummy mode if allowed',
+          );
+          return null;
         }
 
         const client = new TribeClient({

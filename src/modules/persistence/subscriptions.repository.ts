@@ -1,12 +1,15 @@
-import { Injectable, Logger } from "@nestjs/common";
-import type { PoolClient } from "pg";
+import { Injectable, Logger } from '@nestjs/common';
+import type { PoolClient } from 'pg';
 
-import type { SubscriptionPlan, SubscriptionState } from "../../common/interfaces/session-user.interface";
-import { DatabaseService } from "../database/database.service";
+import type {
+  SubscriptionPlan,
+  SubscriptionState,
+} from '../../common/interfaces/session-user.interface';
+import { DatabaseService } from '../database/database.service';
 
 interface PersistedSubscriptionRow {
   plan: SubscriptionPlan;
-  status: "inactive" | "active" | "canceled";
+  status: 'inactive' | 'active' | 'canceled';
   provider: string;
   updated_at: string;
   plan_code: string;
@@ -14,7 +17,7 @@ interface PersistedSubscriptionRow {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   amount_php: number;
-  interval_unit: "month" | "year";
+  interval_unit: 'month' | 'year';
 }
 
 @Injectable()
@@ -52,7 +55,9 @@ export class SubscriptionsRepository {
     return row ? this.toSubscriptionState(row) : null;
   }
 
-  async ensureDefaultFreeSubscription(userId: string): Promise<SubscriptionState> {
+  async ensureDefaultFreeSubscription(
+    userId: string,
+  ): Promise<SubscriptionState> {
     await this.ensurePlanCatalog();
 
     const current = await this.getCurrentByUserId(userId);
@@ -91,19 +96,21 @@ export class SubscriptionsRepository {
       [userId],
     );
 
-    return this.toSubscriptionState(result.rows[0]);
+    const row = result.rows[0];
+    if (!row) throw new Error('Subscription upsert returned no row');
+    return this.toSubscriptionState(row);
   }
 
   async activateMonthlyPlan(
     userId: string,
-    planCode: "pro_monthly" | "enterprise_monthly",
+    planCode: 'pro_monthly' | 'enterprise_monthly',
     amountPhp: number,
-    provider: "manual" | "mock" | "supabase" = "manual",
+    provider: 'manual' | 'mock' | 'supabase' = 'manual',
   ): Promise<SubscriptionState> {
     await this.ensurePlanCatalog();
 
     return this.databaseService.withClient(async (client) => {
-      await client.query("BEGIN");
+      await client.query('BEGIN');
 
       try {
         await client.query(
@@ -151,10 +158,12 @@ export class SubscriptionsRepository {
           [userId, this.toPlanName(planCode), provider, amountPhp],
         );
 
-        await client.query("COMMIT");
-        return this.toSubscriptionState(insert.rows[0]);
+        await client.query('COMMIT');
+        const insertedRow = insert.rows[0];
+        if (!insertedRow) throw new Error('Activate plan returned no row');
+        return this.toSubscriptionState(insertedRow);
       } catch (error) {
-        await client.query("ROLLBACK");
+        await client.query('ROLLBACK');
         throw error;
       }
     });
@@ -216,14 +225,14 @@ export class SubscriptionsRepository {
   private async seedPlans(): Promise<void> {
     try {
       await this.databaseService.withClient(async (client) => {
-        await client.query("BEGIN");
+        await client.query('BEGIN');
         try {
           await this.seedFreePlan(client);
           await this.seedProPlan(client);
           await this.seedEnterprisePlan(client);
-          await client.query("COMMIT");
+          await client.query('COMMIT');
         } catch (error) {
-          await client.query("ROLLBACK");
+          await client.query('ROLLBACK');
           throw error;
         }
       });
@@ -277,13 +286,19 @@ export class SubscriptionsRepository {
     );
   }
 
-  private toPlanName(planCode: "pro_monthly" | "enterprise_monthly"): "pro" | "enterprise" {
-    return planCode === "pro_monthly" ? "pro" : "enterprise";
+  private toPlanName(
+    planCode: 'pro_monthly' | 'enterprise_monthly',
+  ): 'pro' | 'enterprise' {
+    return planCode === 'pro_monthly' ? 'pro' : 'enterprise';
   }
 
-  private toSubscriptionState(row: PersistedSubscriptionRow): SubscriptionState {
-    const provider: SubscriptionState["provider"] =
-      row.provider === "manual" || row.provider === "mock" ? row.provider : "supabase";
+  private toSubscriptionState(
+    row: PersistedSubscriptionRow,
+  ): SubscriptionState {
+    const provider: SubscriptionState['provider'] =
+      row.provider === 'manual' || row.provider === 'mock'
+        ? row.provider
+        : 'supabase';
 
     return {
       plan: row.plan,

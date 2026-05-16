@@ -9,7 +9,7 @@ import {
   MaxLength,
   Min,
   MinLength,
-} from "class-validator";
+} from 'class-validator';
 
 export class GenerateWorkflowDto {
   @IsString()
@@ -39,10 +39,21 @@ export class GenerateWorkflowDto {
 
   @IsOptional()
   @IsArray()
-  @IsIn(["strictProductionApproval", "enableUatApproval", "disablePlaywright", "disableK6"], {
-    each: true,
-  })
+  @IsIn(
+    [
+      'strictProductionApproval',
+      'enableUatApproval',
+      'disablePlaywright',
+      'disableK6',
+    ],
+    {
+      each: true,
+    },
+  )
   enhancements?: Array<
-    "strictProductionApproval" | "enableUatApproval" | "disablePlaywright" | "disableK6"
+    | 'strictProductionApproval'
+    | 'enableUatApproval'
+    | 'disablePlaywright'
+    | 'disableK6'
   >;
 }

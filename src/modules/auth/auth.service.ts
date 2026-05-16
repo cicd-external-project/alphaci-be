@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 
-import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import type { Request } from "express";
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 
-import type { AppConfig } from "../../config/app.config";
-import type { SessionUser } from "../../common/interfaces/session-user.interface";
-import { OutboxRepository } from "../persistence/outbox.repository";
-import { SubscriptionsRepository } from "../persistence/subscriptions.repository";
-import { UsersRepository } from "../persistence/users.repository";
+import type { AppConfig } from '../../config/app.config';
+import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import { OutboxRepository } from '../persistence/outbox.repository';
+import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
+import { UsersRepository } from '../persistence/users.repository';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -60,7 +60,7 @@ interface GoogleNormalizedUser {
   email?: string;
 }
 
-type OAuthProvider = "github" | "google";
+type OAuthProvider = 'github' | 'google';
 
 @Injectable()
 export class AuthService {
@@ -72,30 +72,38 @@ export class AuthService {
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
   ) {
-    this.config = this.configService.getOrThrow<AppConfig>("app");
+    this.config = this.configService.getOrThrow<AppConfig>('app');
   }
 
   startGitHubAuth(request: Request, returnTo?: string): string {
-    return this.startOAuthProviderAuth(request, "github", returnTo);
+    return this.startOAuthProviderAuth(request, 'github', returnTo);
   }
 
   startGoogleAuth(request: Request, returnTo?: string): string {
-    return this.startOAuthProviderAuth(request, "google", returnTo);
+    return this.startOAuthProviderAuth(request, 'google', returnTo);
   }
 
-  async handleGitHubCallback(request: Request, code?: string, state?: string): Promise<string> {
-    return this.handleOAuthProviderCallback(request, "github", code, state);
+  async handleGitHubCallback(
+    request: Request,
+    code?: string,
+    state?: string,
+  ): Promise<string> {
+    return this.handleOAuthProviderCallback(request, 'github', code, state);
   }
 
-  async handleGoogleCallback(request: Request, code?: string, state?: string): Promise<string> {
-    return this.handleOAuthProviderCallback(request, "google", code, state);
+  async handleGoogleCallback(
+    request: Request,
+    code?: string,
+    state?: string,
+  ): Promise<string> {
+    return this.handleOAuthProviderCallback(request, 'google', code, state);
   }
 
   async logout(request: Request): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       request.session.destroy((error) => {
         if (error) {
-          reject(error);
+          reject(error instanceof Error ? error : new Error(String(error)));
           return;
         }
 
@@ -122,11 +130,15 @@ export class AuthService {
     return user;
   }
 
-  private startOAuthProviderAuth(request: Request, provider: OAuthProvider, returnTo?: string): string {
+  private startOAuthProviderAuth(
+    request: Request,
+    provider: OAuthProvider,
+    returnTo?: string,
+  ): string {
     const safeReturnTo = this.normalizeReturnTo(returnTo);
 
     if (!this.hasProviderCredentials(provider)) {
-      return this.withQuery(safeReturnTo, "auth", "unavailable");
+      return this.withQuery(safeReturnTo, 'auth', 'unavailable');
     }
 
     const state = randomUUID();
@@ -134,7 +146,7 @@ export class AuthService {
     request.session.oauthReturnTo = safeReturnTo;
     request.session.oauthProvider = provider;
 
-    if (provider === "github") {
+    if (provider === 'github') {
       return this.buildGitHubAuthorizationUrl(state);
     }
 
@@ -156,33 +168,37 @@ export class AuthService {
       request.session.oauthProvider !== provider;
 
     if (isInvalidState) {
-      request.session.oauthState = undefined;
-      request.session.oauthReturnTo = undefined;
-      request.session.oauthProvider = undefined;
-      return this.withQuery(returnTo, "auth", "invalid_state");
+      delete request.session.oauthState;
+      delete request.session.oauthReturnTo;
+      delete request.session.oauthProvider;
+      return this.withQuery(returnTo, 'auth', 'invalid_state');
     }
 
     if (!this.hasProviderCredentials(provider)) {
-      return this.withQuery(returnTo, "auth", "unavailable");
+      return this.withQuery(returnTo, 'auth', 'unavailable');
     }
 
     try {
       let persistedUser: SessionUser;
-      if (provider === "github") {
+      if (provider === 'github') {
         const result = await this.signInWithGitHubAndReturnToken(code);
         persistedUser = result.user;
-        await this.subscriptionsRepository.ensureDefaultFreeSubscription(persistedUser.id);
+        await this.subscriptionsRepository.ensureDefaultFreeSubscription(
+          persistedUser.id,
+        );
         await this.establishSession(request, persistedUser);
         request.session.githubAccessToken = result.accessToken;
       } else {
         persistedUser = await this.signInWithGoogle(code);
-        await this.subscriptionsRepository.ensureDefaultFreeSubscription(persistedUser.id);
+        await this.subscriptionsRepository.ensureDefaultFreeSubscription(
+          persistedUser.id,
+        );
         await this.establishSession(request, persistedUser);
       }
 
       await this.outboxRepository.publishLater({
-        topic: "user.signed_in",
-        aggregateType: "user",
+        topic: 'user.signed_in',
+        aggregateType: 'user',
         aggregateId: persistedUser.id,
         payload: {
           provider,
@@ -190,9 +206,9 @@ export class AuthService {
         },
       });
 
-      return this.withQuery(returnTo, "auth", "success");
+      return this.withQuery(returnTo, 'auth', 'success');
     } catch {
-      return this.withQuery(returnTo, "auth", "failed");
+      return this.withQuery(returnTo, 'auth', 'failed');
     }
   }
 
@@ -203,7 +219,9 @@ export class AuthService {
     return this.usersRepository.upsertGitHubUser(profile);
   }
 
-  private async signInWithGitHubAndReturnToken(code: string): Promise<{ user: SessionUser; accessToken: string }> {
+  private async signInWithGitHubAndReturnToken(
+    code: string,
+  ): Promise<{ user: SessionUser; accessToken: string }> {
     const accessToken = await this.exchangeCodeForGitHubToken(code);
     const profile = await this.fetchGitHubUser(accessToken);
     const user = await this.usersRepository.upsertGitHubUser(profile);
@@ -218,93 +236,108 @@ export class AuthService {
   }
 
   private buildGitHubAuthorizationUrl(state: string): string {
-    const authorizationUrl = new URL("https://github.com/login/oauth/authorize");
-    authorizationUrl.searchParams.set("client_id", this.config.github.clientId);
-    authorizationUrl.searchParams.set("redirect_uri", this.config.github.callbackUrl);
-    authorizationUrl.searchParams.set("scope", this.config.github.scope);
-    authorizationUrl.searchParams.set("state", state);
+    const authorizationUrl = new URL(
+      'https://github.com/login/oauth/authorize',
+    );
+    authorizationUrl.searchParams.set('client_id', this.config.github.clientId);
+    authorizationUrl.searchParams.set(
+      'redirect_uri',
+      this.config.github.callbackUrl,
+    );
+    authorizationUrl.searchParams.set('scope', this.config.github.scope);
+    authorizationUrl.searchParams.set('state', state);
 
     return authorizationUrl.toString();
   }
 
   private buildGoogleAuthorizationUrl(state: string): string {
-    const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    authorizationUrl.searchParams.set("client_id", this.config.google.clientId);
-    authorizationUrl.searchParams.set("redirect_uri", this.config.google.callbackUrl);
-    authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("scope", this.config.google.scope);
-    authorizationUrl.searchParams.set("state", state);
-    authorizationUrl.searchParams.set("include_granted_scopes", "true");
-    authorizationUrl.searchParams.set("prompt", "select_account");
+    const authorizationUrl = new URL(
+      'https://accounts.google.com/o/oauth2/v2/auth',
+    );
+    authorizationUrl.searchParams.set('client_id', this.config.google.clientId);
+    authorizationUrl.searchParams.set(
+      'redirect_uri',
+      this.config.google.callbackUrl,
+    );
+    authorizationUrl.searchParams.set('response_type', 'code');
+    authorizationUrl.searchParams.set('scope', this.config.google.scope);
+    authorizationUrl.searchParams.set('state', state);
+    authorizationUrl.searchParams.set('include_granted_scopes', 'true');
+    authorizationUrl.searchParams.set('prompt', 'select_account');
 
     return authorizationUrl.toString();
   }
 
   private async exchangeCodeForGitHubToken(code: string): Promise<string> {
-    const response = await fetch("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
+    const response = await fetch(
+      'https://github.com/login/oauth/access_token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: new URLSearchParams({
+          client_id: this.config.github.clientId,
+          client_secret: this.config.github.clientSecret,
+          code,
+          redirect_uri: this.config.github.callbackUrl,
+        }).toString(),
       },
-      body: new URLSearchParams({
-        client_id: this.config.github.clientId,
-        client_secret: this.config.github.clientSecret,
-        code,
-        redirect_uri: this.config.github.callbackUrl,
-      }).toString(),
-    });
+    );
 
     if (!response.ok) {
-      throw new Error("Failed to exchange OAuth code");
+      throw new Error('Failed to exchange OAuth code');
     }
 
     const payload = (await response.json()) as GitHubTokenResponse;
     if (!payload.access_token || payload.error) {
-      throw new Error("GitHub did not return an access token");
+      throw new Error('GitHub did not return an access token');
     }
 
     return payload.access_token;
   }
 
   private async exchangeCodeForGoogleToken(code: string): Promise<string> {
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
         client_id: this.config.google.clientId,
         client_secret: this.config.google.clientSecret,
         code,
         redirect_uri: this.config.google.callbackUrl,
-        grant_type: "authorization_code",
+        grant_type: 'authorization_code',
       }).toString(),
     });
 
     if (!response.ok) {
-      throw new Error("Failed to exchange Google OAuth code");
+      throw new Error('Failed to exchange Google OAuth code');
     }
 
     const payload = (await response.json()) as GoogleTokenResponse;
     if (!payload.access_token || payload.error) {
-      throw new Error("Google did not return an access token");
+      throw new Error('Google did not return an access token');
     }
 
     return payload.access_token;
   }
 
-  private async fetchGitHubUser(accessToken: string): Promise<GitHubNormalizedUser> {
-    const response = await fetch("https://api.github.com/user", {
+  private async fetchGitHubUser(
+    accessToken: string,
+  ): Promise<GitHubNormalizedUser> {
+    const response = await fetch('https://api.github.com/user', {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "cicd-workflow-product",
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'cicd-workflow-product',
       },
     });
 
     if (!response.ok) {
-      throw new Error("Failed to fetch GitHub profile");
+      throw new Error('Failed to fetch GitHub profile');
     }
 
     const payload = (await response.json()) as GitHubUserResponse;
@@ -318,49 +351,60 @@ export class AuthService {
       githubUserId: String(payload.id),
       login: payload.login,
       name: payload.name ?? payload.login,
-      avatarUrl: payload.avatar_url ?? undefined,
-      email,
+      ...(payload.avatar_url !== undefined && {
+        avatarUrl: payload.avatar_url,
+      }),
+      ...(email !== undefined && { email }),
     };
   }
 
-  private async fetchGoogleUser(accessToken: string): Promise<GoogleNormalizedUser> {
-    const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+  private async fetchGoogleUser(
+    accessToken: string,
+  ): Promise<GoogleNormalizedUser> {
+    const response = await fetch(
+      'https://openidconnect.googleapis.com/v1/userinfo',
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       },
-    });
+    );
 
     if (!response.ok) {
-      throw new Error("Failed to fetch Google profile");
+      throw new Error('Failed to fetch Google profile');
     }
 
     const payload = (await response.json()) as GoogleUserResponse;
     if (!payload.sub) {
-      throw new Error("Google profile did not include a subject");
+      throw new Error('Google profile did not include a subject');
     }
 
     if (payload.email && payload.email_verified === false) {
-      throw new Error("Google account email is not verified");
+      throw new Error('Google account email is not verified');
     }
 
     const fallbackLogin = `google-${payload.sub}`;
-    const loginSeed = payload.email ? payload.email.split("@")[0] || fallbackLogin : fallbackLogin;
+    const loginSeed = payload.email
+      ? payload.email.split('@')[0] || fallbackLogin
+      : fallbackLogin;
 
     return {
       googleUserId: payload.sub,
       login: this.normalizeLogin(loginSeed),
-      name: payload.name ?? payload.given_name ?? "Google User",
-      avatarUrl: payload.picture ?? undefined,
-      email: payload.email,
+      name: payload.name ?? payload.given_name ?? 'Google User',
+      ...(payload.picture !== undefined && { avatarUrl: payload.picture }),
+      ...(payload.email !== undefined && { email: payload.email }),
     };
   }
 
-  private async fetchPrimaryEmail(accessToken: string): Promise<string | undefined> {
-    const response = await fetch("https://api.github.com/user/emails", {
+  private async fetchPrimaryEmail(
+    accessToken: string,
+  ): Promise<string | undefined> {
+    const response = await fetch('https://api.github.com/user/emails', {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "cicd-workflow-product",
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'cicd-workflow-product',
       },
     });
 
@@ -369,7 +413,9 @@ export class AuthService {
     }
 
     const payload = (await response.json()) as GitHubEmail[];
-    const primary = payload.find((item) => item.primary && item.verified) ?? payload.find((item) => item.verified);
+    const primary =
+      payload.find((item) => item.primary && item.verified) ??
+      payload.find((item) => item.verified);
 
     return primary?.email;
   }
@@ -385,7 +431,7 @@ export class AuthService {
       return this.config.frontendUrl;
     }
 
-    if (returnTo.startsWith("/")) {
+    if (returnTo.startsWith('/')) {
       return `${this.config.frontendUrl}${returnTo}`;
     }
 
@@ -403,19 +449,22 @@ export class AuthService {
     return this.config.frontendUrl;
   }
 
-  private async establishSession(request: Request, user: SessionUser): Promise<void> {
+  private async establishSession(
+    request: Request,
+    user: SessionUser,
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       request.session.regenerate((error) => {
         if (error) {
-          reject(error);
+          reject(error instanceof Error ? error : new Error(String(error)));
           return;
         }
 
         request.session.userId = user.id;
         request.session.user = user;
-        request.session.oauthState = undefined;
-        request.session.oauthReturnTo = undefined;
-        request.session.oauthProvider = undefined;
+        delete request.session.oauthState;
+        delete request.session.oauthReturnTo;
+        delete request.session.oauthProvider;
         resolve();
       });
     });
@@ -425,9 +474,9 @@ export class AuthService {
     const normalized = value
       .trim()
       .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, "-")
-      .replaceAll(/-+/g, "-")
-      .replaceAll(/^-+|-+$/g, "");
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/-+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
 
     if (normalized) {
       return normalized;
@@ -437,14 +486,20 @@ export class AuthService {
   }
 
   private hasProviderCredentials(provider: OAuthProvider): boolean {
-    return provider === "github" ? this.hasGitHubCredentials() : this.hasGoogleCredentials();
+    return provider === 'github'
+      ? this.hasGitHubCredentials()
+      : this.hasGoogleCredentials();
   }
 
   private hasGitHubCredentials(): boolean {
-    return Boolean(this.config.github.clientId && this.config.github.clientSecret);
+    return Boolean(
+      this.config.github.clientId && this.config.github.clientSecret,
+    );
   }
 
   private hasGoogleCredentials(): boolean {
-    return Boolean(this.config.google.clientId && this.config.google.clientSecret);
+    return Boolean(
+      this.config.google.clientId && this.config.google.clientSecret,
+    );
   }
 }

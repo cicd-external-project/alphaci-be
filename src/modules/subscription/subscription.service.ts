@@ -1,14 +1,14 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
-import type { AppConfig } from "../../config/app.config";
+import type { AppConfig } from '../../config/app.config';
 import type {
   SessionUser,
   SubscriptionPlan,
   SubscriptionState,
-} from "../../common/interfaces/session-user.interface";
-import { OutboxRepository } from "../persistence/outbox.repository";
-import { SubscriptionsRepository } from "../persistence/subscriptions.repository";
+} from '../../common/interfaces/session-user.interface';
+import { OutboxRepository } from '../persistence/outbox.repository';
+import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 
 @Injectable()
 export class SubscriptionService {
@@ -19,60 +19,67 @@ export class SubscriptionService {
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
   ) {
-    this.config = this.configService.getOrThrow<AppConfig>("app");
+    this.config = this.configService.getOrThrow<AppConfig>('app');
   }
 
   async getForUser(user: SessionUser): Promise<SubscriptionState> {
-    const existing = await this.subscriptionsRepository.getCurrentByUserId(user.id);
+    const existing = await this.subscriptionsRepository.getCurrentByUserId(
+      user.id,
+    );
     if (existing) {
       return existing;
     }
 
-    const seededPlan = this.config.subscription.seededPlans[user.login] ?? this.config.subscription.seededPlans[user.id];
+    const seededPlan =
+      this.config.subscription.seededPlans[user.login] ??
+      this.config.subscription.seededPlans[user.id];
     const plan = seededPlan ?? this.config.subscription.defaultPlan;
 
-    if (plan === "pro") {
+    if (plan === 'pro') {
       return this.subscriptionsRepository.activateMonthlyPlan(
         user.id,
-        "pro_monthly",
+        'pro_monthly',
         this.config.subscription.proMonthlyPricePhp,
-        "manual",
+        'manual',
       );
     }
 
-    if (plan === "enterprise") {
+    if (plan === 'enterprise') {
       return this.subscriptionsRepository.activateMonthlyPlan(
         user.id,
-        "enterprise_monthly",
+        'enterprise_monthly',
         this.config.subscription.enterpriseMonthlyPricePhp,
-        "manual",
+        'manual',
       );
     }
 
     return this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
   }
 
-  async activateForUser(user: SessionUser, plan: SubscriptionPlan = "pro"): Promise<SubscriptionState> {
+  async activateForUser(
+    user: SessionUser,
+    plan: SubscriptionPlan = 'pro',
+  ): Promise<SubscriptionState> {
     this.assertMockEnabled();
 
     const nextState =
-      plan === "enterprise"
+      plan === 'enterprise'
         ? await this.subscriptionsRepository.activateMonthlyPlan(
             user.id,
-            "enterprise_monthly",
+            'enterprise_monthly',
             this.config.subscription.enterpriseMonthlyPricePhp,
-            "manual",
+            'manual',
           )
         : await this.subscriptionsRepository.activateMonthlyPlan(
             user.id,
-            "pro_monthly",
+            'pro_monthly',
             this.config.subscription.proMonthlyPricePhp,
-            "manual",
+            'manual',
           );
 
     await this.outboxRepository.publishLater({
-      topic: "subscription.activated",
-      aggregateType: "subscription",
+      topic: 'subscription.activated',
+      aggregateType: 'subscription',
       aggregateId: user.id,
       payload: {
         userId: user.id,
@@ -90,8 +97,8 @@ export class SubscriptionService {
     const nextState = await this.subscriptionsRepository.cancelCurrent(user.id);
 
     await this.outboxRepository.publishLater({
-      topic: "subscription.canceled",
-      aggregateType: "subscription",
+      topic: 'subscription.canceled',
+      aggregateType: 'subscription',
       aggregateId: user.id,
       payload: {
         userId: user.id,
@@ -105,7 +112,7 @@ export class SubscriptionService {
 
   private assertMockEnabled(): void {
     if (!this.config.subscription.mockEnabled) {
-      throw new ForbiddenException("Subscription mock endpoints are disabled");
+      throw new ForbiddenException('Subscription mock endpoints are disabled');
     }
   }
 }

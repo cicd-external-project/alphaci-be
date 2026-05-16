@@ -1,17 +1,25 @@
-import { Body, Controller, Get, Post, Req, UnauthorizedException, UseGuards } from "@nestjs/common";
-import type { Request } from "express";
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import type { Request } from 'express';
 
-import type { SessionUser } from "../../common/interfaces/session-user.interface";
-import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
-import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
-import { SubscriptionService } from "./subscription.service";
+import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
+import { ActivateSubscriptionDto } from './dto/activate-subscription.dto';
+import { SubscriptionService } from './subscription.service';
 
-@Controller("subscription")
+@Controller('subscription')
 @UseGuards(SessionAuthGuard)
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 
-  @Get("me")
+  @Get('me')
   async getSubscription(@Req() req: Request) {
     const user = this.getUser(req);
 
@@ -20,12 +28,15 @@ export class SubscriptionController {
     };
   }
 
-  @Post("monthly/activate")
-  async activateMonthly(@Req() req: Request, @Body() body: ActivateSubscriptionDto) {
+  @Post('monthly/activate')
+  async activateMonthly(
+    @Req() req: Request,
+    @Body() body: ActivateSubscriptionDto,
+  ) {
     return this.activateInternal(req, body);
   }
 
-  @Post("monthly/cancel")
+  @Post('monthly/cancel')
   async cancelMonthly(@Req() req: Request) {
     return this.cancelInternal(req);
   }
@@ -34,7 +45,10 @@ export class SubscriptionController {
     const user = this.getUser(req);
 
     return {
-      subscription: await this.subscriptionService.activateForUser(user, body.plan ?? "pro"),
+      subscription: await this.subscriptionService.activateForUser(
+        user,
+        body.plan ?? 'pro',
+      ),
     };
   }
 
@@ -49,7 +63,7 @@ export class SubscriptionController {
   private getUser(req: Request): SessionUser {
     const user = req.session?.user;
     if (!user) {
-      throw new UnauthorizedException("Authentication required");
+      throw new UnauthorizedException('Authentication required');
     }
 
     return user;
