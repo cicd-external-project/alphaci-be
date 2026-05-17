@@ -31,12 +31,12 @@ export class AuthController {
   }
 
   @Get('google/start')
-  googleStart(
+  async googleStart(
     @Req() req: Request,
     @Res() res: Response,
     @Query('returnTo') returnTo?: string,
   ) {
-    const redirectUrl = this.authService.startGoogleAuth(req, returnTo);
+    const redirectUrl = await this.authService.startGoogleAuth(req, returnTo);
     return res.redirect(redirectUrl);
   }
 

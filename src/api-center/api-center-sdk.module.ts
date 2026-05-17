@@ -1,13 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService, ConfigModule } from '@nestjs/config';
 import { TribeClient } from '@implementsprint/sdk';
-import { TribeRegistrationService } from './tribe-registration.service.js';
 
 @Global()
 @Module({
   imports: [ConfigModule],
   providers: [
-    TribeRegistrationService,
     {
       provide: TribeClient,
       inject: [ConfigService],
@@ -42,8 +40,15 @@ import { TribeRegistrationService } from './tribe-registration.service.js';
           secret,
         });
 
-        // Authenticate immediately to ensure connectivity
-        await client.authenticate();
+        try {
+          await client.authenticate();
+          console.log('[ApiCenter] Connected successfully');
+        } catch (error) {
+          console.warn(
+            `[ApiCenter] WARNING: Could not authenticate at startup — APICenter-dependent features will be unavailable. Reason: ${(error as Error).message}`,
+          );
+          return null;
+        }
 
         return client;
       },

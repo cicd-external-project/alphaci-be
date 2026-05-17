@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service.js';
 import { TribeClient } from '@implementsprint/sdk';
 
@@ -19,7 +19,7 @@ export interface HealthResponse {
 export class HealthService {
   constructor(
     private readonly supabaseService: SupabaseService,
-    @Optional() private readonly tribeClient: TribeClient | null,
+    @Optional() @Inject(TribeClient) private readonly tribeClient: TribeClient | null,
   ) {}
 
   async getStatus(): Promise<HealthResponse> {

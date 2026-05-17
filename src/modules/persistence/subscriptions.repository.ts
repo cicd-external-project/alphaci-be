@@ -105,7 +105,7 @@ export class SubscriptionsRepository {
     userId: string,
     planCode: 'pro_monthly' | 'enterprise_monthly',
     amountPhp: number,
-    provider: 'manual' | 'mock' | 'supabase' = 'manual',
+    provider: 'manual' | 'mock' | 'supabase' | 'paymongo' = 'manual',
   ): Promise<SubscriptionState> {
     await this.ensurePlanCatalog();
 

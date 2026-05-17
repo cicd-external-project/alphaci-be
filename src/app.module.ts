@@ -12,8 +12,6 @@ import { validateEnv } from './common/config/env.validation.js';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware.js';
 import { HealthModule } from './health/health.module.js';
 import { SupabaseModule } from './supabase/supabase.module.js';
-import { LocationModule } from './location/location.module.js';
-import { ExternalModule } from './external/external.module.js';
 
 // Ported Modules
 import { AuthModule } from './modules/auth/auth.module.js';
@@ -35,8 +33,6 @@ const shouldValidateEnv = process.env.NODE_ENV === 'production';
     SupabaseModule,
     HealthModule,
     ApiCenterSdkModule,
-    LocationModule,
-    ExternalModule,
 
     // Business modules
     AuthModule,

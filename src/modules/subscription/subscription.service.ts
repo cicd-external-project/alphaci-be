@@ -1,5 +1,13 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { TribeClient } from '@implementsprint/sdk';
+import type { PaymentCheckoutSession } from '@implementsprint/sdk';
 
 import type { AppConfig } from '../../config/app.config';
 import type {
@@ -18,6 +26,7 @@ export class SubscriptionService {
     private readonly configService: ConfigService,
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
+    @Optional() @Inject(TribeClient) private readonly apiCenter: TribeClient | null,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
@@ -54,6 +63,91 @@ export class SubscriptionService {
     }
 
     return this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
+  }
+
+  async createCheckoutSession(
+    user: SessionUser,
+    plan: 'pro' | 'enterprise',
+  ): Promise<PaymentCheckoutSession> {
+    if (!this.apiCenter) {
+      throw new ServiceUnavailableException('Payment service is unavailable');
+    }
+
+    const pricePhp =
+      plan === 'pro'
+        ? this.config.subscription.proMonthlyPricePhp
+        : this.config.subscription.enterpriseMonthlyPricePhp;
+
+    const planLabel = plan === 'pro' ? 'Pro Monthly' : 'Enterprise Monthly';
+    const referenceId = `${user.id}-${plan}-${Date.now()}`;
+
+    return this.apiCenter.paymentCreateCheckoutSession({
+      referenceId,
+      idempotencyKey: referenceId,
+      successUrl: `${this.config.frontendUrl}/subscription/success`,
+      cancelUrl: `${this.config.frontendUrl}/subscription`,
+      lineItems: [
+        {
+          name: planLabel,
+          quantity: 1,
+          // PayMongo accepts value in centavos (smallest PHP unit)
+          amount: { value: pricePhp * 100, currency: 'PHP' },
+        },
+      ],
+      metadata: {
+        userId: user.id,
+        plan,
+      },
+    });
+  }
+
+  async getCheckoutStatus(
+    user: SessionUser,
+    checkoutId: string,
+  ): Promise<{ status: string; subscription?: SubscriptionState }> {
+    if (!this.apiCenter) {
+      throw new ServiceUnavailableException('Payment service is unavailable');
+    }
+
+    const session = await this.apiCenter.paymentGetCheckoutSession(checkoutId);
+
+    if (session.metadata?.['userId'] !== user.id) {
+      throw new ForbiddenException('Checkout not found');
+    }
+
+    if (session.status === 'paid') {
+      const rawPlan = session.metadata?.['plan'];
+      if (rawPlan !== 'pro' && rawPlan !== 'enterprise') {
+        throw new Error(`Unexpected plan value in checkout metadata: ${String(rawPlan)}`);
+      }
+      const plan: 'pro' | 'enterprise' = rawPlan;
+      const pricePhp =
+        plan === 'pro'
+          ? this.config.subscription.proMonthlyPricePhp
+          : this.config.subscription.enterpriseMonthlyPricePhp;
+
+      const subscription = await this.subscriptionsRepository.activateMonthlyPlan(
+        user.id,
+        `${plan}_monthly`,
+        pricePhp,
+        'paymongo',
+      );
+
+      await this.outboxRepository.publishLater({
+        topic: 'subscription.activated',
+        aggregateType: 'subscription',
+        aggregateId: user.id,
+        payload: {
+          userId: user.id,
+          plan: subscription.plan,
+          planCode: subscription.planCode,
+        },
+      });
+
+      return { status: 'paid', subscription };
+    }
+
+    return { status: session.status };
   }
 
   async activateForUser(
