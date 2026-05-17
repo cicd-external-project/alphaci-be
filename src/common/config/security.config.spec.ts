@@ -1,4 +1,9 @@
-import { corsOptions, helmetConfig, helmetConfigSwagger, BODY_SIZE_LIMIT } from './security.config';
+import {
+  corsOptions,
+  helmetConfig,
+  helmetConfigSwagger,
+  BODY_SIZE_LIMIT,
+} from './security.config';
 
 // ---------------------------------------------------------------------------
 // BODY_SIZE_LIMIT
@@ -24,19 +29,27 @@ describe('helmetConfig', () => {
   });
 
   it('has contentSecurityPolicy with defaultSrc self-only', () => {
-    expect(helmetConfig.contentSecurityPolicy.directives.defaultSrc).toEqual(["'self'"]);
+    expect(helmetConfig.contentSecurityPolicy.directives.defaultSrc).toEqual([
+      "'self'",
+    ]);
   });
 
   it('has scriptSrc restricted to self', () => {
-    expect(helmetConfig.contentSecurityPolicy.directives.scriptSrc).toEqual(["'self'"]);
+    expect(helmetConfig.contentSecurityPolicy.directives.scriptSrc).toEqual([
+      "'self'",
+    ]);
   });
 
   it('has frameAncestors set to none (clickjacking protection)', () => {
-    expect(helmetConfig.contentSecurityPolicy.directives.frameAncestors).toEqual(["'none'"]);
+    expect(
+      helmetConfig.contentSecurityPolicy.directives.frameAncestors,
+    ).toEqual(["'none'"]);
   });
 
   it('has objectSrc set to none', () => {
-    expect(helmetConfig.contentSecurityPolicy.directives.objectSrc).toEqual(["'none'"]);
+    expect(helmetConfig.contentSecurityPolicy.directives.objectSrc).toEqual([
+      "'none'",
+    ]);
   });
 
   it('has hsts maxAge of 1 year (31536000)', () => {
@@ -74,15 +87,21 @@ describe('helmetConfigSwagger', () => {
   });
 
   it('allows unsafe-inline scripts (required by Swagger UI)', () => {
-    expect(helmetConfigSwagger.contentSecurityPolicy.directives.scriptSrc).toContain("'unsafe-inline'");
+    expect(
+      helmetConfigSwagger.contentSecurityPolicy.directives.scriptSrc,
+    ).toContain("'unsafe-inline'");
   });
 
   it('allows unsafe-inline styles (required by Swagger UI)', () => {
-    expect(helmetConfigSwagger.contentSecurityPolicy.directives.styleSrc).toContain("'unsafe-inline'");
+    expect(
+      helmetConfigSwagger.contentSecurityPolicy.directives.styleSrc,
+    ).toContain("'unsafe-inline'");
   });
 
   it('still enforces frameAncestors none', () => {
-    expect(helmetConfigSwagger.contentSecurityPolicy.directives.frameAncestors).toEqual(["'none'"]);
+    expect(
+      helmetConfigSwagger.contentSecurityPolicy.directives.frameAncestors,
+    ).toEqual(["'none'"]);
   });
 
   it('still has hsts enabled', () => {
@@ -108,7 +127,12 @@ describe('corsOptions', () => {
         if (err) resolve(err);
         else resolve(result as boolean | string);
       };
-      (options.origin as Function)(origin, callback);
+      (
+        options.origin as (
+          origin: string | undefined,
+          cb: (err: Error | null, allow?: boolean | string) => void,
+        ) => void
+      )(origin, callback);
     });
   }
 
@@ -150,7 +174,9 @@ describe('corsOptions', () => {
   });
 
   it('trims whitespace around origin entries', async () => {
-    const opts = corsOptions('  http://localhost:5173  ,  https://app.example.com  ');
+    const opts = corsOptions(
+      '  http://localhost:5173  ,  https://app.example.com  ',
+    );
     const result = await resolveOrigin(opts, 'http://localhost:5173');
     expect(result).toBe(true);
   });

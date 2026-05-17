@@ -85,7 +85,9 @@ export class SupabaseService implements OnModuleInit {
 
   private initializeDefaultClient(): void {
     const url = this.configService.get<string>('SUPABASE_URL')?.trim();
-    const key = this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    const key = this.configService
+      .get<string>('SUPABASE_SERVICE_ROLE_KEY')
+      ?.trim();
 
     if (!url || !key) {
       this.logger.warn(
@@ -98,7 +100,9 @@ export class SupabaseService implements OnModuleInit {
     this.client = this.buildClient(url, key);
   }
 
-  private initializeScopedClients(env: Record<string, string | undefined>): void {
+  private initializeScopedClients(
+    env: Record<string, string | undefined>,
+  ): void {
     const configs = this.resolveScopedConfigs(env);
 
     for (const config of configs) {
@@ -218,6 +222,7 @@ export class SupabaseService implements OnModuleInit {
   }
 
   private buildClient(url: string, key: string): SupabaseClient {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return createClient(url, key, {
       auth: {
         // Service-role key must not persist sessions

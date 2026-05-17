@@ -1,6 +1,6 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service.js';
-import { TribeClient } from '@apicenter/sdk';
+import { TribeClient } from '@implementsprint/sdk';
 
 export type HealthStatus = 'ok' | 'degraded' | 'error';
 
@@ -19,13 +19,11 @@ export interface HealthResponse {
 export class HealthService {
   constructor(
     private readonly supabaseService: SupabaseService,
-    @Optional() private readonly tribeClient: TribeClient | null,
+    @Optional() @Inject(TribeClient) private readonly tribeClient: TribeClient | null,
   ) {}
 
   async getStatus(): Promise<HealthResponse> {
-    const [dbResult] = await Promise.allSettled([
-      this.supabaseService.ping(),
-    ]);
+    const [dbResult] = await Promise.allSettled([this.supabaseService.ping()]);
 
     const database = dbResult.status === 'fulfilled' ? dbResult.value : false;
     const apiCenter = !!this.tribeClient; // Consider pinging a gateway `/health` endpoint if added to SDK later
