@@ -46,6 +46,10 @@ on:
         description: "Preview, skip deploy/tag push"
         type: boolean
         default: false
+      require_api_center_check:
+        description: "Require checks.apiCenter=true in Render health response"
+        type: boolean
+        default: false
 
 # Minimum permissions required by the central pipeline's reusable jobs.
 # GitHub enforces the caller's permissions as a hard ceiling — called workflows
@@ -87,6 +91,7 @@ jobs:
       run_deploy: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_deploy || 'false') || github.event_name == 'push' }}
       run_promotion: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_promotion || 'true') || github.event_name == 'push' }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
+      require_api_center_check: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.require_api_center_check || 'false') || false }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
