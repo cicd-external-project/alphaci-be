@@ -69,9 +69,7 @@ concurrency:
 
 jobs:
   call-backend-orchestrator:
-    # TODO: Switch @main to @v1 (or the appropriate release tag) once a stable tag is published
-    #       in ImplementSprint/central-workflow to avoid unintentional breaking changes on main.
-    uses: ImplementSprint/central-workflow/.github/workflows/master-pipeline-be.yml@main
+    uses: Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/master-pipeline-be.yml@main
     with:
       pipeline_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_mode || 'auto' }}
       enable_security_scan: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.enable_security_scan || 'true') || true }}
