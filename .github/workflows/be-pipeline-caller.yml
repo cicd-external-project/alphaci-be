@@ -87,4 +87,20 @@ jobs:
       run_deploy: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_deploy || 'false') || github.event_name == 'push' }}
       run_promotion: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_promotion || 'true') || github.event_name == 'push' }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
-    secrets: inherit
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      GH_PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+      K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
+      K6_CLOUD_PROJECT_ID: ${{ secrets.K6_CLOUD_PROJECT_ID }}
+      RENDER_DEPLOY_HOOK_URL_TEST: ${{ secrets.RENDER_DEPLOY_HOOK_URL_TEST }}
+      RENDER_DEPLOY_HOOK_URL_UAT: ${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}
+      RENDER_DEPLOY_HOOK_URL_MAIN: ${{ secrets.RENDER_DEPLOY_HOOK_URL_MAIN }}
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_HEALTHCHECK_URL_TEST: ${{ secrets.RENDER_HEALTHCHECK_URL_TEST }}
+      RENDER_HEALTHCHECK_URL_UAT: ${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}
+      RENDER_HEALTHCHECK_URL_MAIN: ${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}
+      RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
