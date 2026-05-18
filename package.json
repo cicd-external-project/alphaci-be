@@ -23,7 +23,7 @@
     "dummy:show": "node ./scripts/show-dummy-account.cjs"
   },
   "dependencies": {
-    "@apicenter/sdk": "file:../../api-shared",
+    "@apicenter/sdk": "npm:@implementsprint/sdk@^1.0.3",
     "@implementsprint/sdk": "^1.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
