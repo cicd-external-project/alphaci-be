@@ -3,8 +3,8 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Install deps first (cached unless package.json changes)
-COPY package*.json ./
-RUN npm ci
+COPY package*.json .npmrc ./
+RUN npm install
 
 # Copy only source files needed for build
 COPY tsconfig*.json nest-cli.json ./
@@ -17,13 +17,13 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 
-COPY package*.json ./
+COPY package*.json .npmrc ./
 # Pull patched alpine package for CVE-2026-22184 before app install.
 # CVE-2026-33671 (picomatch in npm's own node_modules) is suppressed via .trivyignore —
 # npm is never invoked at runtime so the ReDoS vector is not reachable in production.
 RUN apk upgrade --no-cache zlib \
-  && npm ci --omit=dev \
-  && rm package-lock.json \
+  && npm install --omit=dev \
+  && rm package-lock.json .npmrc \
   && addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nestjs
 

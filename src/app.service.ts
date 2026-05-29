@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+// ci: trigger pipeline change detection
 export interface ServiceInfo {
   service: string;
   version: string;

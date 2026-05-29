@@ -23,19 +23,22 @@
     "dummy:show": "node ./scripts/show-dummy-account.cjs"
   },
   "dependencies": {
-    "@apicenter/sdk": "file:../../api-shared",
+    "@apicenter/sdk": "npm:@implementsprint/sdk@^1.0.3",
+    "@implementsprint/sdk": "^1.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
-    "@nestjs/swagger": "^11.2.6",
+    "@nestjs/swagger": "^11.4.3",
     "@supabase/supabase-js": "^2.100.1",
-    "axios": "^1.13.6",
-    "class-transformer": "0.5.1",
-    "class-validator": "0.14.1",
+    "axios": "^1.16.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "express-session": "^1.19.0",
     "helmet": "^8.1.0",
+    "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -44,15 +47,19 @@
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@types/express": "^5.0.0",
+    "@types/express-session": "^1.19.0",
     "@types/helmet": "^0.0.48",
     "@types/jest": "^30.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.7",
+    "@types/pg": "^8.20.0",
     "@types/supertest": "^6.0.2",
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
     "globals": "^16.0.0",
     "jest": "^29.7.0",
+    "jest-junit": "^16.0.0",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
@@ -61,13 +68,13 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
-    "jest-junit": "^16.0.0",
     "typescript-eslint": "^8.20.0"
   },
   "overrides": {
     "lodash": "4.18.1",
     "picomatch": "^4.0.4",
-    "path-to-regexp": "^8.4.0"
+    "path-to-regexp": "^8.4.0",
+    "fast-uri": "^3.1.2"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -81,7 +88,8 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
-      "^(\\.{1,2}/.*)\\.js$": "$1"
+      "^(\\.{1,2}/.*)\\.js$": "$1",
+      "^@implementsprint/sdk$": "<rootDir>/__mocks__/implementsprint-sdk.ts"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
@@ -92,10 +100,20 @@
       "\\.module\\.ts$"
     ],
     "coverageDirectory": "../coverage",
-    "coverageReporters": ["json-summary", "text", "lcov"],
+    "coverageReporters": [
+      "json-summary",
+      "text",
+      "lcov"
+    ],
     "reporters": [
       "default",
-      ["jest-junit", { "outputDirectory": "test-results", "outputName": "junit.xml" }]
+      [
+        "jest-junit",
+        {
+          "outputDirectory": "test-results",
+          "outputName": "junit.xml"
+        }
+      ]
     ],
     "testEnvironment": "node"
   }

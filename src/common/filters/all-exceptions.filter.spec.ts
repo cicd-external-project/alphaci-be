@@ -23,13 +23,19 @@ function makeResponse(): MockResponse {
   res.status.mockReturnValue(res); // enable chaining: res.status(x).json(y)
   res.json.mockImplementation((body: unknown) => {
     res._body = body;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     res._statusCode = (res.status.mock.calls[0]?.[0] as number) ?? 0;
   });
   return res;
 }
 
 function makeHost(
-  req: Partial<{ url: string; method: string; headers: Record<string, string>; correlationId?: string }>,
+  req: Partial<{
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    correlationId?: string;
+  }>,
   res: MockResponse,
 ): ArgumentsHost {
   return {
@@ -105,7 +111,10 @@ describe('AllExceptionsFilter', () => {
 
       filter.catch(
         new HttpException(
-          { message: ['field1 required', 'field2 invalid'], error: 'Bad Request' },
+          {
+            message: ['field1 required', 'field2 invalid'],
+            error: 'Bad Request',
+          },
           HttpStatus.BAD_REQUEST,
         ),
         host,
@@ -140,7 +149,12 @@ describe('AllExceptionsFilter', () => {
 
     it('reads correlationId from req.correlationId when present', () => {
       const res = makeResponse();
-      const req = { url: '/', method: 'GET', headers: {}, correlationId: 'req-corr-id' };
+      const req = {
+        url: '/',
+        method: 'GET',
+        headers: {},
+        correlationId: 'req-corr-id',
+      };
       const host = makeHost(req, res);
 
       filter.catch(new HttpException('error', HttpStatus.BAD_REQUEST), host);

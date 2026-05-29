@@ -4,7 +4,9 @@ import { validateEnv } from './env.validation';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function validEnv(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function validEnv(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     NODE_ENV: 'development',
     PORT: '3000',
@@ -237,7 +239,9 @@ describe('validateEnv', () => {
 
     it('does not throw when API_CENTER_API_KEY is missing', () => {
       expect(() =>
-        validateEnv(validEnv({ API_CENTER_BASE_URL: 'http://api-center.local' })),
+        validateEnv(
+          validEnv({ API_CENTER_BASE_URL: 'http://api-center.local' }),
+        ),
       ).not.toThrow();
     });
 
@@ -248,15 +252,15 @@ describe('validateEnv', () => {
     });
 
     it('throws when API_CENTER_TIMEOUT_MS is invalid', () => {
-      expect(() => validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: 'abc' }))).toThrow(
-        /API_CENTER_TIMEOUT_MS/,
-      );
+      expect(() =>
+        validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: 'abc' })),
+      ).toThrow(/API_CENTER_TIMEOUT_MS/);
     });
 
     it('throws when API_CENTER_TIMEOUT_MS is zero', () => {
-      expect(() => validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: '0' }))).toThrow(
-        /API_CENTER_TIMEOUT_MS/,
-      );
+      expect(() =>
+        validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: '0' })),
+      ).toThrow(/API_CENTER_TIMEOUT_MS/);
     });
   });
 

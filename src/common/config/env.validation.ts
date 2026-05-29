@@ -277,13 +277,19 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
     .filter(([, value]) => !value)
     .map(([key]) => key);
 
-  if (missingDefaultSupabaseKeys.length === 3 && scopedSupabaseClientCount === 0) {
+  if (
+    missingDefaultSupabaseKeys.length === 3 &&
+    scopedSupabaseClientCount === 0
+  ) {
     throw new Error(
       '[env] Missing Supabase configuration. Provide SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY, or define at least one scoped client pair (<SERVICE>_SUPABASE_URL + <SERVICE>_SUPABASE_SECRET_KEY).',
     );
   }
 
-  if (missingDefaultSupabaseKeys.length > 0 && missingDefaultSupabaseKeys.length < 3) {
+  if (
+    missingDefaultSupabaseKeys.length > 0 &&
+    missingDefaultSupabaseKeys.length < 3
+  ) {
     if (scopedSupabaseClientCount === 0) {
       throw new Error(
         `[env] Incomplete default Supabase configuration. Missing: ${missingDefaultSupabaseKeys.join(', ')}.`,

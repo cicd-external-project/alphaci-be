@@ -46,6 +46,10 @@ on:
         description: "Preview, skip deploy/tag push"
         type: boolean
         default: false
+      require_api_center_check:
+        description: "Require checks.apiCenter=true in Render health response"
+        type: boolean
+        default: false
 
 # Minimum permissions required by the central pipeline's reusable jobs.
 # GitHub enforces the caller's permissions as a hard ceiling — called workflows
@@ -71,7 +75,7 @@ jobs:
   call-backend-orchestrator:
     # TODO: Switch @main to @v1 (or the appropriate release tag) once a stable tag is published
     #       in ImplementSprint/central-workflow to avoid unintentional breaking changes on main.
-    uses: Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/master-pipeline-be.yml@main
+    uses: ImplementSprint/central-workflow/.github/workflows/master-pipeline-be.yml@backend-external
     with:
       pipeline_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_mode || 'auto' }}
       enable_security_scan: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.enable_security_scan || 'true') || true }}
@@ -87,4 +91,21 @@ jobs:
       run_deploy: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_deploy || 'false') || github.event_name == 'push' }}
       run_promotion: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_promotion || 'true') || github.event_name == 'push' }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
-    secrets: inherit
+      require_api_center_check: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.require_api_center_check || 'false') || false }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      GH_PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+      K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
+      K6_CLOUD_PROJECT_ID: ${{ secrets.K6_CLOUD_PROJECT_ID }}
+      RENDER_DEPLOY_HOOK_URL_TEST: ${{ secrets.RENDER_DEPLOY_HOOK_URL_TEST }}
+      RENDER_DEPLOY_HOOK_URL_UAT: ${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}
+      RENDER_DEPLOY_HOOK_URL_MAIN: ${{ secrets.RENDER_DEPLOY_HOOK_URL_MAIN }}
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_HEALTHCHECK_URL_TEST: ${{ secrets.RENDER_HEALTHCHECK_URL_TEST }}
+      RENDER_HEALTHCHECK_URL_UAT: ${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}
+      RENDER_HEALTHCHECK_URL_MAIN: ${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}
+      RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

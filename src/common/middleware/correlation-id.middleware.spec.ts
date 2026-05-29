@@ -103,7 +103,9 @@ describe('CorrelationIdMiddleware', () => {
 
   describe('sanitization', () => {
     it('strips characters outside alphanumeric, hyphen, and underscore', () => {
-      const req = makeReq({ 'x-correlation-id': 'corr<script>alert(1)</script>' });
+      const req = makeReq({
+        'x-correlation-id': 'corr<script>alert(1)</script>',
+      });
       const res = makeRes();
 
       middleware.use(req, res, next);
@@ -146,7 +148,9 @@ describe('CorrelationIdMiddleware', () => {
 
     it('handles an array-valued header by falling back to a new UUID', () => {
       // Express normalises multi-value headers to arrays in some scenarios
-      const req = makeReq({ 'x-correlation-id': ['id-a', 'id-b'] as unknown as string });
+      const req = makeReq({
+        'x-correlation-id': ['id-a', 'id-b'] as unknown as string,
+      });
       const res = makeRes();
 
       middleware.use(req, res, next);
