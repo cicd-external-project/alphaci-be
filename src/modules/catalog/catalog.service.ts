@@ -1,5 +1,5 @@
 import { access, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute, resolve } from 'node:path';
 
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -102,8 +102,18 @@ export class CatalogService {
       return this.cache.templates;
     }
 
+    // Resolve the repo path relative to this source file when a relative path
+    // is configured. Using __dirname (dist/modules/catalog) keeps the anchor
+    // stable regardless of the process working directory — critical in Docker
+    // where cwd is /app, not the project root. In production, set an absolute
+    // TEMPLATE_REPO_PATH in your environment or Dockerfile to be explicit.
+    const configuredPath = this.config.templates.repoPath;
+    const anchoredRepoPath = isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(__dirname, configuredPath);
+
     const templatesRoot = join(
-      this.config.templates.repoPath,
+      anchoredRepoPath,
       this.config.templates.workflowDir,
     );
     const rootExists = await this.pathExists(templatesRoot);

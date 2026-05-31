@@ -235,26 +235,67 @@ export class AuthService {
       redirectUri: this.config.google.callbackUrl,
     });
 
-    const profile = this.decodeGoogleIdToken(tokens.idToken ?? '');
+    const profile = await this.verifyAndDecodeGoogleIdToken(tokens.idToken ?? '');
     return this.usersRepository.upsertGoogleUser(profile);
   }
 
-  private decodeGoogleIdToken(idToken: string): GoogleNormalizedUser {
+  /**
+   * Verify a Google ID token and extract its claims.
+   *
+   * Verification strategy: call Google's tokeninfo endpoint
+   * (https://oauth2.googleapis.com/tokeninfo?id_token=TOKEN). Google's servers
+   * perform full signature, expiry, issuer, and audience verification before
+   * returning claims. This avoids the need for a local JWKS cache and is the
+   * recommended approach when google-auth-library / jose are not available.
+   *
+   * Security properties guaranteed by the tokeninfo endpoint:
+   *  - RS256 signature checked against Google's published public keys
+   *  - `exp` claim verified (token not expired)
+   *  - `iss` must be accounts.google.com or https://accounts.google.com
+   *  - `aud` must match a registered Google OAuth client
+   *
+   * Note: one extra network round-trip per sign-in. Acceptable for an
+   * interactive OAuth callback. If latency becomes a concern, swap to
+   * google-auth-library (OAuth2Client.verifyIdToken).
+   */
+  private async verifyAndDecodeGoogleIdToken(
+    idToken: string,
+  ): Promise<GoogleNormalizedUser> {
     if (!idToken) {
       throw new Error('Google ID token is missing from exchange response');
     }
 
-    const payloadPart = idToken.split('.')[1];
-    if (!payloadPart) {
-      throw new Error('Malformed Google ID token');
+    const url = new URL('https://oauth2.googleapis.com/tokeninfo');
+    url.searchParams.set('id_token', idToken);
+
+    const response = await fetch(url.toString());
+
+    if (!response.ok) {
+      // 400 means the token is invalid or expired; any other non-2xx is a
+      // transient Google-side error. Treat both as verification failures.
+      throw new Error(
+        `Google ID token verification failed (tokeninfo HTTP ${String(response.status)})`,
+      );
     }
 
-    const claims = JSON.parse(
-      Buffer.from(payloadPart, 'base64url').toString('utf-8'),
-    ) as GoogleIdTokenClaims;
+    const claims = (await response.json()) as GoogleIdTokenClaims & {
+      aud?: string;
+      iss?: string;
+      exp?: string;
+    };
 
     if (!claims.sub) {
       throw new Error('Google ID token missing subject claim');
+    }
+
+    // Validate audience against configured client ID if available.
+    // This prevents tokens issued to a different OAuth client from being
+    // accepted (confused-deputy attack).
+    const expectedAud = this.config.google.clientId;
+    if (expectedAud && claims.aud !== expectedAud) {
+      throw new Error(
+        'Google ID token audience does not match configured client ID',
+      );
     }
 
     if (claims.email && claims.email_verified === false) {

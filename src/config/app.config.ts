@@ -100,7 +100,16 @@ export const appConfig = registerAs('app', (): AppConfig => {
       dbUrl: env['SUPABASE_DB_URL'],
     },
     session: {
-      secret: env['SESSION_SECRET'] ?? 'change-me-in-production',
+      secret: (() => {
+        const raw = env['SESSION_SECRET'];
+        if (!raw || raw.trim().length < 32) {
+          throw new Error(
+            '[config] SESSION_SECRET must be set and at least 32 characters long. ' +
+              'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+          );
+        }
+        return raw.trim();
+      })(),
       name: env['SESSION_NAME'] ?? 'cicd_workflow_sid',
       maxAgeMs: Number(env['SESSION_MAX_AGE_MS'] ?? 604_800_000),
       secure: env['SESSION_SECURE'] === 'true',

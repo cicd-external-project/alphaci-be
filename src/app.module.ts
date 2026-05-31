@@ -19,8 +19,6 @@ import { CatalogModule } from './modules/catalog/catalog.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 
-const shouldValidateEnv = process.env.NODE_ENV === 'production';
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -28,7 +26,10 @@ const shouldValidateEnv = process.env.NODE_ENV === 'production';
       envFilePath: ['.env.local', '.env'],
       cache: true,
       load: [appConfig],
-      ...(shouldValidateEnv ? { validate: validateEnv } : {}),
+      // validateEnv runs unconditionally in all environments so that
+      // missing/malformed secrets cause a hard crash at startup rather than
+      // silently degrading to insecure fallbacks during local development.
+      validate: validateEnv,
     }),
     SupabaseModule,
     HealthModule,
