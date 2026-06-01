@@ -10,6 +10,7 @@ export interface AppConfig {
     callbackUrl: string;
     scope: string;
     appId: string;
+    appSlug: string;
     appPrivateKey: string;
     appWebhookSecret: string;
   };
@@ -66,6 +67,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
         'http://localhost:4000/api/v1/auth/github/callback',
       scope: env['GITHUB_SCOPE'] ?? 'read:user user:email',
       appId: env['GITHUB_APP_ID'] ?? '',
+      appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
       appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
         /\\n/g,
         '\n',

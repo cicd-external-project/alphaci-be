@@ -16,6 +16,7 @@ import { SupabaseModule } from './supabase/supabase.module.js';
 // Ported Modules
 import { AuthModule } from './modules/auth/auth.module.js';
 import { CatalogModule } from './modules/catalog/catalog.module.js';
+import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 
@@ -38,6 +39,7 @@ import { WorkflowsModule } from './modules/workflows/workflows.module.js';
     // Business modules
     AuthModule,
     CatalogModule,
+    GithubModule,
     SubscriptionModule,
     WorkflowsModule,
   ],

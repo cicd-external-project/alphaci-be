@@ -17,6 +17,11 @@ import { CatalogService } from './catalog.service';
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
+  @Get('project-options')
+  getProjectOptions() {
+    return this.catalogService.getProjectOptions();
+  }
+
   @Get('categories')
   async categories() {
     return {

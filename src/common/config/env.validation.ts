@@ -342,7 +342,12 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
     validateProductionApiCenter(apiCenterConfig);
   }
 
+  // Pass all raw env vars through first so appConfig and other factories can
+  // read variables (e.g. GITHUB_CLIENT_ID) that validateEnv does not explicitly
+  // validate. Without this, @nestjs/config's assignVariablesToProcess only sets
+  // the keys returned here, leaving everything else missing from process.env.
   return {
+    ...(env as unknown as EnvironmentVariables),
     NODE_ENV,
     PORT,
     ENABLE_SWAGGER,
