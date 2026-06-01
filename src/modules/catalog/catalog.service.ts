@@ -1,11 +1,195 @@
 import { access, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute, resolve } from 'node:path';
 
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
 import type { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
+
+// ─── Project Options types ────────────────────────────────────────────────────
+
+export interface RepoShapeOption {
+  id: string;
+  label: string;
+  enabled: boolean;
+  description?: string;
+}
+
+export interface ProjectOptionSet {
+  lint?: boolean;
+  unit?: boolean;
+  build?: boolean;
+  coverage?: boolean;
+  security?: boolean;
+  docker?: boolean;
+  e2e?: boolean;
+}
+
+export interface ProjectTypeOption {
+  id: string;
+  label: string;
+  runtime?: string;
+  language: string;
+  framework: string;
+  starterPath?: string;
+  repoShapes: string[];
+  reservedRepoShapes?: string[];
+  defaultRecipe: string;
+  allowedRecipes: string[];
+  defaultOptions: ProjectOptionSet;
+}
+
+export interface WorkflowRecipeOption {
+  id: string;
+  label: string;
+  description?: string;
+  supportedProjectTypes: string[];
+  templateByProjectType: Record<string, string>;
+  mandatoryJobs?: string[];
+  supportedOptions: ProjectOptionSet;
+  optionJobs: Partial<Record<'lint' | 'unit' | 'build' | 'coverage' | 'security' | 'docker' | 'e2e', string>>;
+}
+
+export interface ProjectOptionsResult {
+  repoShapes: RepoShapeOption[];
+  projectTypes: ProjectTypeOption[];
+  recipes: WorkflowRecipeOption[];
+}
+
+// ─── Static fallback catalog ─────────────────────────────────────────────────
+
+const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
+  repoShapes: [
+    { id: 'mono', label: 'Monorepo', enabled: true, description: 'Single repo, multiple apps/packages' },
+    { id: 'multi', label: 'Multi-repo', enabled: true, description: 'Separate repo per service' },
+    { id: 'standalone', label: 'Standalone', enabled: true, description: 'Single app, single repo' },
+  ],
+  projectTypes: [
+    {
+      id: 'nextjs',
+      label: 'Next.js',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'Next.js',
+      repoShapes: ['standalone', 'mono'],
+      defaultRecipe: 'standard',
+      allowedRecipes: ['standard', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true, coverage: true },
+    },
+    {
+      id: 'react',
+      label: 'React',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'React',
+      repoShapes: ['standalone', 'mono'],
+      defaultRecipe: 'standard',
+      allowedRecipes: ['standard', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true, coverage: true },
+    },
+    {
+      id: 'nestjs',
+      label: 'NestJS',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'NestJS',
+      repoShapes: ['standalone', 'multi'],
+      defaultRecipe: 'standard',
+      allowedRecipes: ['standard', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true, coverage: true },
+    },
+    {
+      id: 'nodejs',
+      label: 'Node.js',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'Express/Fastify',
+      repoShapes: ['standalone', 'multi'],
+      defaultRecipe: 'standard',
+      allowedRecipes: ['standard', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true },
+    },
+    {
+      id: 'react-native',
+      label: 'React Native',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'React Native',
+      repoShapes: ['standalone'],
+      defaultRecipe: 'mobile',
+      allowedRecipes: ['mobile', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true },
+    },
+    {
+      id: 'expo',
+      label: 'Expo',
+      runtime: 'node',
+      language: 'TypeScript',
+      framework: 'Expo',
+      repoShapes: ['standalone'],
+      defaultRecipe: 'mobile',
+      allowedRecipes: ['mobile', 'minimal'],
+      defaultOptions: { lint: true, unit: true, build: true },
+    },
+  ],
+  recipes: [
+    {
+      id: 'standard',
+      label: 'Standard',
+      description: 'Full CI pipeline: lint, test, build, coverage, security scan',
+      supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs'],
+      templateByProjectType: {
+        nextjs: 'nextjs-standard',
+        react: 'react-standard',
+        nestjs: 'nestjs-standard',
+        nodejs: 'nodejs-standard',
+      },
+      mandatoryJobs: ['lint', 'build'],
+      supportedOptions: { lint: true, unit: true, build: true, coverage: true, security: true, docker: true, e2e: true },
+      optionJobs: {
+        lint: 'lint',
+        unit: 'test',
+        coverage: 'coverage',
+        security: 'security-scan',
+        docker: 'docker-build',
+        e2e: 'e2e',
+      },
+    },
+    {
+      id: 'minimal',
+      label: 'Minimal',
+      description: 'Lightweight CI: lint and build only',
+      supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs', 'react-native', 'expo'],
+      templateByProjectType: {
+        nextjs: 'nextjs-minimal',
+        react: 'react-minimal',
+        nestjs: 'nestjs-minimal',
+        nodejs: 'nodejs-minimal',
+        'react-native': 'react-native-minimal',
+        expo: 'expo-minimal',
+      },
+      mandatoryJobs: ['lint', 'build'],
+      supportedOptions: { lint: true, unit: true, build: true },
+      optionJobs: { lint: 'lint', unit: 'test' },
+    },
+    {
+      id: 'mobile',
+      label: 'Mobile',
+      description: 'Mobile-optimised CI: lint, test, and app build',
+      supportedProjectTypes: ['react-native', 'expo'],
+      templateByProjectType: {
+        'react-native': 'react-native-standard',
+        expo: 'expo-standard',
+      },
+      mandatoryJobs: ['lint', 'build'],
+      supportedOptions: { lint: true, unit: true, build: true, coverage: true },
+      optionJobs: { lint: 'lint', unit: 'test', coverage: 'coverage' },
+    },
+  ],
+};
+
+// ─── Template types ───────────────────────────────────────────────────────────
 
 export interface WorkflowTemplate {
   id: string;
@@ -29,6 +213,7 @@ interface WorkflowPropertiesFile {
 
 @Injectable()
 export class CatalogService {
+  private readonly logger = new Logger(CatalogService.name);
   private readonly config: AppConfig;
   private cache: { loadedAt: number; templates: WorkflowTemplate[] } | null =
     null;
@@ -36,6 +221,11 @@ export class CatalogService {
 
   constructor(private readonly configService: ConfigService) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
+  }
+
+  /** Returns the static project-options catalog (repo shapes, project types, recipes). */
+  getProjectOptions(): ProjectOptionsResult {
+    return STATIC_PROJECT_OPTIONS;
   }
 
   async listCategories() {
@@ -102,8 +292,18 @@ export class CatalogService {
       return this.cache.templates;
     }
 
+    // Resolve the repo path relative to this source file when a relative path
+    // is configured. Using __dirname (dist/modules/catalog) keeps the anchor
+    // stable regardless of the process working directory — critical in Docker
+    // where cwd is /app, not the project root. In production, set an absolute
+    // TEMPLATE_REPO_PATH in your environment or Dockerfile to be explicit.
+    const configuredPath = this.config.templates.repoPath;
+    const anchoredRepoPath = isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(__dirname, configuredPath);
+
     const templatesRoot = join(
-      this.config.templates.repoPath,
+      anchoredRepoPath,
       this.config.templates.workflowDir,
     );
     const rootExists = await this.pathExists(templatesRoot);

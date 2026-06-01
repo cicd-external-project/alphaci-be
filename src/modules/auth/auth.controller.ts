@@ -7,18 +7,26 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 
+import type { AppConfig } from '../../config/app.config';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
+  private readonly sessionCookieName: string;
+
   constructor(
     private readonly authService: AuthService,
     private readonly subscriptionService: SubscriptionService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.sessionCookieName =
+      this.configService.getOrThrow<AppConfig>('app').session.name;
+  }
 
   @Get('github/start')
   githubStart(
@@ -93,7 +101,7 @@ export class AuthController {
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.authService.logout(req);
-    res.clearCookie('cicd_workflow_sid');
+    res.clearCookie(this.sessionCookieName);
 
     return {
       ok: true,

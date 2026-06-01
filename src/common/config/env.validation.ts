@@ -27,6 +27,7 @@ export interface EnvironmentVariables {
   NODE_ENV: 'development' | 'test' | 'production';
   PORT: number;
   ENABLE_SWAGGER: string;
+  SESSION_SECRET: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -202,6 +203,22 @@ function validateProductionApiCenter(config: ApiCenterConfig): void {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Require SESSION_SECRET to be present and at least 32 characters long.
+ * Extracted into its own function to keep validateEnv's cognitive complexity
+ * within the project limit (≤ 15).
+ */
+function requireSessionSecret(env: RawEnv): string {
+  const raw = env['SESSION_SECRET'];
+  if (typeof raw !== 'string' || raw.trim().length < 32) {
+    throw new Error(
+      '[env] SESSION_SECRET must be set and at least 32 characters long. ' +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    );
+  }
+  return raw.trim();
+}
+
 function requireString(env: RawEnv, key: string): string {
   const value = env[key];
   if (typeof value !== 'string' || value.trim() === '') {
@@ -258,6 +275,12 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   ] as const);
 
   const PORT = requirePort(env, 'PORT');
+
+  // --- Required: session secret (minimum length enforced) ---
+  // A weak or missing SESSION_SECRET allows cookie forgery. We require it in
+  // all environments (not just production) so that developers are never
+  // unknowingly running with an insecure secret.
+  const SESSION_SECRET = requireSessionSecret(env);
 
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);
@@ -319,10 +342,16 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
     validateProductionApiCenter(apiCenterConfig);
   }
 
+  // Pass all raw env vars through first so appConfig and other factories can
+  // read variables (e.g. GITHUB_CLIENT_ID) that validateEnv does not explicitly
+  // validate. Without this, @nestjs/config's assignVariablesToProcess only sets
+  // the keys returned here, leaving everything else missing from process.env.
   return {
+    ...(env as unknown as EnvironmentVariables),
     NODE_ENV,
     PORT,
     ENABLE_SWAGGER,
+    SESSION_SECRET,
     ...(SUPABASE_URL ? { SUPABASE_URL } : {}),
     ...(SUPABASE_ANON_KEY ? { SUPABASE_ANON_KEY } : {}),
     ...(SUPABASE_SERVICE_ROLE_KEY ? { SUPABASE_SERVICE_ROLE_KEY } : {}),
