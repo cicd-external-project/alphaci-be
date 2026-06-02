@@ -1,4 +1,4 @@
-export type SubscriptionPlan = 'free' | 'pro' | 'enterprise';
+export type SubscriptionPlan = 'free' | 'pro';
 
 export type SubscriptionStatus = 'inactive' | 'active' | 'canceled';
 

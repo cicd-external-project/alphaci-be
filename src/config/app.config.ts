@@ -14,12 +14,6 @@ export interface AppConfig {
     appPrivateKey: string;
     appWebhookSecret: string;
   };
-  google: {
-    clientId: string;
-    clientSecret: string;
-    callbackUrl: string;
-    scope: string;
-  };
   templates: {
     repoPath: string;
     workflowDir: string;
@@ -29,7 +23,6 @@ export interface AppConfig {
     defaultPlan: SubscriptionPlan;
     seededPlans: Record<string, SubscriptionPlan>;
     proMonthlyPricePhp: number;
-    enterpriseMonthlyPricePhp: number;
   };
   supabase: {
     dbUrl: string | undefined;
@@ -74,14 +67,6 @@ export const appConfig = registerAs('app', (): AppConfig => {
       ),
       appWebhookSecret: env['GITHUB_APP_WEBHOOK_SECRET'] ?? '',
     },
-    google: {
-      clientId: env['GOOGLE_CLIENT_ID'] ?? '',
-      clientSecret: env['GOOGLE_CLIENT_SECRET'] ?? '',
-      callbackUrl:
-        env['GOOGLE_CALLBACK_URL'] ??
-        'http://localhost:4000/api/v1/auth/google/callback',
-      scope: env['GOOGLE_SCOPE'] ?? 'openid email profile',
-    },
     templates: {
       repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',
       workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates',
@@ -94,9 +79,6 @@ export const appConfig = registerAs('app', (): AppConfig => {
           | undefined) ?? 'free',
       seededPlans,
       proMonthlyPricePhp: Number(env['PRO_MONTHLY_PRICE_PHP'] ?? 300),
-      enterpriseMonthlyPricePhp: Number(
-        env['ENTERPRISE_MONTHLY_PRICE_PHP'] ?? 1200,
-      ),
     },
     supabase: {
       dbUrl: env['SUPABASE_DB_URL'],
