@@ -74,6 +74,7 @@ export class AuthService {
   }
 
   async logout(request: Request): Promise<void> {
+    delete request.session.githubAccessToken;
     await new Promise<void>((resolve, reject) => {
       request.session.destroy((error) => {
         if (error) {

@@ -13,8 +13,6 @@
  *   - Required vars cause a hard crash (fail-fast). Missing required config
  *     in a running service is a security risk: the service may silently fall
  *     back to insecure defaults.
- *   - Optional vars (API_CENTER_BASE_URL) emit a warning so the developer
- *     knows the feature will be unavailable, but local dev is not broken.
  *
  * Threat addressed:
  *   - Service starting with missing secrets and silently degrading to
@@ -32,11 +30,6 @@ export interface EnvironmentVariables {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   ALLOWED_ORIGINS: string;
-  API_CENTER_BASE_URL?: string;
-  API_CENTER_API_KEY?: string;
-  API_CENTER_TRIBE_ID?: string;
-  API_CENTER_TRIBE_SECRET?: string;
-  API_CENTER_TIMEOUT_MS?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -45,14 +38,6 @@ const SCOPED_SUPABASE_SECRET_SUFFIXES = [
   '_SUPABASE_SECRET_KEY',
   '_SUPABASE_SERVICE_ROLE_KEY',
 ] as const;
-
-interface ApiCenterConfig {
-  baseUrl: string | undefined;
-  tribeId: string | undefined;
-  tribeSecret: string | undefined;
-  apiKey: string | undefined;
-  timeoutMs: string | undefined;
-}
 
 function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   for (const key of keys) {
@@ -63,25 +48,6 @@ function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   }
 
   return undefined;
-}
-
-function resolveApiCenterConfig(env: RawEnv): ApiCenterConfig {
-  return {
-    baseUrl: getTrimmedString(env, ['API_CENTER_BASE_URL', 'APICENTER_URL']),
-    tribeId: getTrimmedString(env, [
-      'API_CENTER_TRIBE_ID',
-      'APICENTER_TRIBE_ID',
-    ]),
-    tribeSecret: getTrimmedString(env, [
-      'API_CENTER_TRIBE_SECRET',
-      'APICENTER_TRIBE_SECRET',
-    ]),
-    apiKey: getTrimmedString(env, ['API_CENTER_API_KEY']),
-    timeoutMs: getTrimmedString(env, [
-      'API_CENTER_TIMEOUT_MS',
-      'APICENTER_TIMEOUT_MS',
-    ]),
-  };
 }
 
 function extractScopedPrefix(key: string, suffix: string): string | null {
@@ -141,62 +107,6 @@ function countScopedSupabaseClients(env: RawEnv): number {
   }
 
   return count;
-}
-
-function warnApiCenterConfig(config: ApiCenterConfig): void {
-  if (!config.baseUrl) {
-    console.warn(
-      '[env] WARNING: API_CENTER_BASE_URL/APICENTER_URL is not set. Calls to APICenter will fail at runtime.',
-    );
-  }
-
-  if (!config.apiKey) {
-    console.warn(
-      '[env] WARNING: API_CENTER_API_KEY is not set. Legacy fallback disabled; prefer tribe credentials.',
-    );
-  }
-
-  if (config.tribeId && !config.tribeSecret) {
-    console.warn(
-      '[env] WARNING: API_CENTER_TRIBE_ID is set but API_CENTER_TRIBE_SECRET is missing. Tribe token flow will not work.',
-    );
-  }
-
-  if (config.tribeSecret && !config.tribeId) {
-    console.warn(
-      '[env] WARNING: API_CENTER_TRIBE_SECRET is set but API_CENTER_TRIBE_ID is missing. Tribe token flow will not work.',
-    );
-  }
-}
-
-function validateApiCenterTimeout(config: ApiCenterConfig): void {
-  if (!config.timeoutMs) {
-    return;
-  }
-
-  const parsed = Number(config.timeoutMs);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(
-      `[env] API_CENTER_TIMEOUT_MS must be a positive number when set. Got: '${config.timeoutMs}'.`,
-    );
-  }
-}
-
-function validateProductionApiCenter(config: ApiCenterConfig): void {
-  if (!config.baseUrl) {
-    throw new Error(
-      '[env] API_CENTER_BASE_URL (or APICENTER_URL) is required in production.',
-    );
-  }
-
-  const hasTribeAuth = Boolean(config.tribeId && config.tribeSecret);
-  const hasLegacyAuth = Boolean(config.apiKey);
-
-  if (!hasTribeAuth && !hasLegacyAuth) {
-    throw new Error(
-      '[env] Production APICenter auth is missing. Set API_CENTER_TRIBE_ID + API_CENTER_TRIBE_SECRET (preferred) or API_CENTER_API_KEY (legacy).',
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -330,17 +240,9 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // We require it here so misconfiguration is explicit at startup.
   const ALLOWED_ORIGINS = requireString(env, 'ALLOWED_ORIGINS');
 
-  // --- Optional with warnings ---
+  // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';
-
-  const apiCenterConfig = resolveApiCenterConfig(env);
-  warnApiCenterConfig(apiCenterConfig);
-  validateApiCenterTimeout(apiCenterConfig);
-
-  if (NODE_ENV === 'production') {
-    validateProductionApiCenter(apiCenterConfig);
-  }
 
   // Pass all raw env vars through first so appConfig and other factories can
   // read variables (e.g. GITHUB_CLIENT_ID) that validateEnv does not explicitly
@@ -356,20 +258,5 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
     ...(SUPABASE_ANON_KEY ? { SUPABASE_ANON_KEY } : {}),
     ...(SUPABASE_SERVICE_ROLE_KEY ? { SUPABASE_SERVICE_ROLE_KEY } : {}),
     ALLOWED_ORIGINS,
-    ...(apiCenterConfig.baseUrl
-      ? { API_CENTER_BASE_URL: apiCenterConfig.baseUrl }
-      : {}),
-    ...(apiCenterConfig.apiKey
-      ? { API_CENTER_API_KEY: apiCenterConfig.apiKey }
-      : {}),
-    ...(apiCenterConfig.tribeId
-      ? { API_CENTER_TRIBE_ID: apiCenterConfig.tribeId }
-      : {}),
-    ...(apiCenterConfig.tribeSecret
-      ? { API_CENTER_TRIBE_SECRET: apiCenterConfig.tribeSecret }
-      : {}),
-    ...(apiCenterConfig.timeoutMs
-      ? { API_CENTER_TIMEOUT_MS: apiCenterConfig.timeoutMs }
-      : {}),
   };
 }

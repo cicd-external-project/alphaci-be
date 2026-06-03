@@ -12,6 +12,7 @@
 FROM node:22-alpine AS builder
 
 ARG NPM_TOKEN
+ARG TEMPLATE_CLONE_TOKEN
 
 WORKDIR /app
 
@@ -30,11 +31,13 @@ COPY tsconfig*.json nest-cli.json ./
 COPY src/ ./src/
 RUN npm run build
 
-# Clone the workflow templates repo into the build stage
-# Override TEMPLATE_REPO_URL at build time if the repo is private or forked:
-#   docker build --build-arg TEMPLATE_REPO_URL=https://x-token:PAT@github.com/org/cicd-workflow.git
-ARG TEMPLATE_REPO_URL=https://github.com/ImplementSprint/cicd-workflow.git
-RUN git clone --depth 1 "${TEMPLATE_REPO_URL}" /tmp/cicd-workflow
+# Clone workflow templates — uses a separate fine-grained PAT (contents:read only)
+# scoped to ImplementSprint/cicd-workflow. Remove .git to avoid leaking the
+# credentialed remote URL into any downstream layer.
+RUN git clone --depth 1 \
+    "https://x-access-token:${TEMPLATE_CLONE_TOKEN}@github.com/cicd-external-project/cicd-workflow.git" \
+    /tmp/cicd-workflow \
+  && rm -rf /tmp/cicd-workflow/.git
 
 # ── Stage 2: production runtime ───────────────────────────────────────────────
 FROM node:22-alpine AS runner

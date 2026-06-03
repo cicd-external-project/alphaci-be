@@ -7,6 +7,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 
@@ -15,6 +16,7 @@ import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { AuthService } from './auth.service';
 
+@Throttle({ default: { ttl: 60_000, limit: 10 } })
 @Controller('auth')
 export class AuthController {
   private readonly sessionCookieName: string;

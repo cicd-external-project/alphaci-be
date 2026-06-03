@@ -1,13 +1,9 @@
 import {
   ForbiddenException,
-  Inject,
   Injectable,
-  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TribeClient } from '@implementsprint/sdk';
-import type { PaymentCheckoutSession } from '@implementsprint/sdk';
 
 import type { AppConfig } from '../../config/app.config';
 import type {
@@ -18,6 +14,14 @@ import type {
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 
+export interface PaymentCheckoutSession {
+  checkoutId?: string;
+  id?: string;
+  status: string;
+  redirectUrl?: string;
+  metadata?: Record<string, unknown>;
+}
+
 @Injectable()
 export class SubscriptionService {
   private readonly config: AppConfig;
@@ -26,7 +30,6 @@ export class SubscriptionService {
     private readonly configService: ConfigService,
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
-    @Optional() @Inject(TribeClient) private readonly apiCenter: TribeClient | null,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
@@ -56,81 +59,21 @@ export class SubscriptionService {
     return this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
   }
 
+  // Payment gateway removed — api-center no longer used.
+  // These endpoints are preserved for API compatibility but will always return 503
+  // until a direct payment provider integration is wired in.
   async createCheckoutSession(
-    user: SessionUser,
-    plan: 'pro',
+    _user: SessionUser,
+    _plan: 'pro',
   ): Promise<PaymentCheckoutSession> {
-    if (!this.apiCenter) {
-      throw new ServiceUnavailableException('Payment service is unavailable');
-    }
-
-    const pricePhp = this.config.subscription.proMonthlyPricePhp;
-    const planLabel = 'Pro Monthly';
-    const referenceId = `${user.id}-${plan}-${Date.now()}`;
-
-    return this.apiCenter.paymentCreateCheckoutSession({
-      referenceId,
-      idempotencyKey: referenceId,
-      successUrl: `${this.config.frontendUrl}/subscription/success`,
-      cancelUrl: `${this.config.frontendUrl}/subscription`,
-      lineItems: [
-        {
-          name: planLabel,
-          quantity: 1,
-          // PayMongo accepts value in centavos (smallest PHP unit)
-          amount: { value: pricePhp * 100, currency: 'PHP' },
-        },
-      ],
-      metadata: {
-        userId: user.id,
-        plan,
-      },
-    });
+    throw new ServiceUnavailableException('Payment service is unavailable');
   }
 
   async getCheckoutStatus(
-    user: SessionUser,
-    checkoutId: string,
+    _user: SessionUser,
+    _checkoutId: string,
   ): Promise<{ status: string; subscription?: SubscriptionState }> {
-    if (!this.apiCenter) {
-      throw new ServiceUnavailableException('Payment service is unavailable');
-    }
-
-    const session = await this.apiCenter.paymentGetCheckoutSession(checkoutId);
-
-    if (session.metadata?.['userId'] !== user.id) {
-      throw new ForbiddenException('Checkout not found');
-    }
-
-    if (session.status === 'paid') {
-      const rawPlan = session.metadata?.['plan'];
-      if (rawPlan !== 'pro') {
-        throw new Error(`Unexpected plan value in checkout metadata: ${String(rawPlan)}`);
-      }
-      const pricePhp = this.config.subscription.proMonthlyPricePhp;
-
-      const subscription = await this.subscriptionsRepository.activateMonthlyPlan(
-        user.id,
-        'pro_monthly',
-        pricePhp,
-        'paymongo',
-      );
-
-      await this.outboxRepository.publishLater({
-        topic: 'subscription.activated',
-        aggregateType: 'subscription',
-        aggregateId: user.id,
-        payload: {
-          userId: user.id,
-          plan: subscription.plan,
-          planCode: subscription.planCode,
-        },
-      });
-
-      return { status: 'paid', subscription };
-    }
-
-    return { status: session.status };
+    throw new ServiceUnavailableException('Payment service is unavailable');
   }
 
   async activateForUser(
@@ -180,6 +123,9 @@ export class SubscriptionService {
   }
 
   private assertMockEnabled(): void {
+    if (process.env['NODE_ENV'] === 'production') {
+      throw new ForbiddenException('Not available in production');
+    }
     if (!this.config.subscription.mockEnabled) {
       throw new ForbiddenException('Subscription mock endpoints are disabled');
     }

@@ -37,7 +37,7 @@ export class DatabaseService implements OnModuleDestroy {
 
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
-      ssl: isLocal ? false : { rejectUnauthorized: false },
+      ssl: isLocal ? false : { rejectUnauthorized: true },
       max: 10,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,
