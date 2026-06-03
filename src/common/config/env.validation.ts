@@ -155,8 +155,9 @@ function requireEnum<T extends string>(
   return raw as T;
 }
 
-function requirePort(env: RawEnv, key: string): number {
+function requirePort(env: RawEnv, key: string, defaultValue = 4000): number {
   const raw = env[key];
+  if (raw === undefined || raw === '') return defaultValue;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
     throw new Error(
