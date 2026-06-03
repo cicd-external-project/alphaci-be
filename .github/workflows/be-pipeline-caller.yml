@@ -1,111 +1,278 @@
-name: "BE Pipeline Caller"
+# ─────────────────────────────────────────────────────────────────────────────
+# be-pipeline-caller.yml  —  FlowCI Studio: NestJS backend (cicd-workflow-be)
+#
+# Triggers:
+#   push         → test, uat, main   (promotion + deploy lanes)
+#   pull_request → test, uat, main   (quality gate only)
+#
+# Reusable workflows called (all in ImplementSprint/central-workflow):
+#   quality-gate.yml   — lint + typecheck + test (coverage ≥ 80%) + build
+#   trivy-scan.yml     — Trivy HIGH/CRITICAL scan (uat + main only)
+#   render-deploy.yml  — trigger Render deploy hook + poll health check
+#   promotion.yml      — auto-create next-environment PR via gh CLI
+#
+# Permission ceiling note (GitHub enforces caller as hard ceiling):
+#   contents: write        — release-tag job creates git tags
+#   pull-requests: write   — promotion.yml creates PRs
+#   security-events: write — trivy-scan.yml uploads SARIF
+#   packages: write        — reserved; not used today but harmless for docker-build extension
+#   id-token: write        — reserved for future OIDC cloud auth
+# ─────────────────────────────────────────────────────────────────────────────
+name: "BE Pipeline — cicd-workflow-be"
 
 on:
   push:
-    branches: [test, uat, main]
+    branches:
+      - test
+      - uat
+      - main
+  pull_request:
+    branches:
+      - test
+      - uat
+      - main
   workflow_dispatch:
     inputs:
-      pipeline_mode:
-        description: "Pipeline mode (auto|single|multi)"
-        type: choice
-        options: [auto, single, multi]
-        default: auto
-      enable_security_scan:
-        description: "Run backend security scans"
-        type: boolean
-        default: true
-      enable_sonar:
-        description: "Run SonarCloud analysis"
-        type: boolean
-        default: true
-      enable_k6:
-        description: "Run Grafana k6 performance tests"
-        type: boolean
-        default: true
-      k6_script_path:
-        description: "k6 performance test path"
-        type: string
-        default: "tests/performance"
-      k6_base_url:
-        description: "Optional override base URL for k6"
-        type: string
-        default: ""
-      k6_run_only_on_branch:
-        description: "Allowed branches for k6"
-        type: string
-        default: "test,main"
       run_deploy:
-        description: "Enable central deploy lanes (staging + Render lanes)"
+        description: "Force deploy on this manual run (ignored on PR events)"
         type: boolean
         default: false
-      run_promotion:
-        description: "Enable PR promotions"
-        type: boolean
-        default: true
       dry_run:
-        description: "Preview, skip deploy/tag push"
-        type: boolean
-        default: false
-      require_api_center_check:
-        description: "Require checks.apiCenter=true in Render health response"
+        description: "Dry-run promotion (print PR body, skip creation)"
         type: boolean
         default: false
 
-# Minimum permissions required by the central pipeline's reusable jobs.
-# GitHub enforces the caller's permissions as a hard ceiling — called workflows
-# cannot exceed what the caller grants, even if they declare higher scopes internally.
-#   contents: write        — version-test creates git version tags
-#   packages: write        — docker-build-main pushes Docker image to GHCR
-#   security-events: write — docker-build-main uploads Trivy results to GitHub Security
-#   pull-requests: write   — pr-to-uat and pr-to-main jobs create promotion PRs
-#   id-token: write        — required if any job uses OIDC-based cloud authantication
+# ── Permission ceiling ─────────────────────────────────────────────────────────
+# Raise caller ceiling to cover every scope any called workflow job declares.
+# See: ~/.claude/memory/agents/release-lead/mistake_github_actions_reusable_workflow_permission_ceiling.md
 permissions:
-  contents: write
-  packages: write
-  security-events: write
-  pull-requests: write
-  id-token: write
+  contents: write        # release-tag job creates annotated git tags
+  pull-requests: write   # promotion.yml creates PRs via gh CLI
+  security-events: write # trivy-scan.yml uploads SARIF to Security tab
+  packages: write        # reserved for future GHCR image push extension
+  checks: write          # quality-gate.yml writes check annotations
+  id-token: write        # reserved for future OIDC-based cloud auth
 
-# Queue runs per branch/event so each push executes fully (no auto-cancel)
+# ── Concurrency ────────────────────────────────────────────────────────────────
+# Queue runs per event type so rapid pushes to the same branch don't cancel
+# each other and drop the authoritative promotion/deploy run.
+# Different concurrency groups for push vs PR avoids cross-cancellation.
+# See: ~/.claude/memory/agents/release-lead/mistakes/mistake_fe_promotion_push_skip_and_cancellation_loop.md
 concurrency:
-  group: backend-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  group: be-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  call-backend-orchestrator:
-    # TODO: Switch @main to @v1 (or the appropriate release tag) once a stable tag is published
-    #       in ImplementSprint/central-workflow to avoid unintentional breaking changes on main.
-    uses: ImplementSprint/central-workflow/.github/workflows/master-pipeline-be.yml@backend-external
+  # ── Job 1: Quality Gate ──────────────────────────────────────────────────────
+  # Runs on every push and every PR. This is the sole required status check
+  # for PRs targeting test/uat/main. All subsequent jobs depend on this.
+  quality-gate:
+    name: "Quality Gate"
+    # TODO: Switch @main to @v1 once ImplementSprint/central-workflow publishes a stable tag
+    uses: ImplementSprint/central-workflow/.github/workflows/quality-gate.yml@main
     with:
-      pipeline_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_mode || 'auto' }}
-      enable_security_scan: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.enable_security_scan || 'true') || true }}
-      enable_sonar: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.enable_sonar || 'true') || true }}
-      enable_k6: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.enable_k6 || 'true') || true }}
-      k6_script_path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.k6_script_path || 'tests/performance' }}
-      k6_base_url: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.k6_base_url || '' }}
-      k6_run_only_on_branch: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.k6_run_only_on_branch || 'test,main' }}
-      # Default push behavior:
-      # - push (test/uat/main): keep central deploy lanes visible
-      # - Render lane execution is centralized in master-pipeline-be.yml
-      # - workflow_dispatch keeps manual run_deploy toggle
-      run_deploy: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_deploy || 'false') || github.event_name == 'push' }}
-      run_promotion: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.run_promotion || 'true') || github.event_name == 'push' }}
-      dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
-      require_api_center_check: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.require_api_center_check || 'false') || false }}
+      service_name: "cicd-workflow-be"
+      node_version: "22"          # Node 22 LTS — see preference_node_version.md
+      working_directory: "."
+      coverage_threshold: 80
+      run_build: true
+
+  # ── Job 2: Security Scan (uat + main push only) ───────────────────────────────
+  # Trivy scans the filesystem for unfixed HIGH/CRITICAL CVEs.
+  # Respects .trivyignore for known-not-reachable suppressions.
+  # Must pass before the deploy job on uat and main.
+  trivy-scan:
+    name: "Security Scan (Trivy)"
+    needs: [quality-gate]
+    if: |
+      github.event_name == 'push' &&
+      (github.ref_name == 'uat' || github.ref_name == 'main')
+    # TODO: Switch @main to @v1 once a stable tag is published
+    uses: ImplementSprint/central-workflow/.github/workflows/trivy-scan.yml@main
+    with:
+      service_name: "cicd-workflow-be"
+      working_directory: "."
+      fail_on_severity: "HIGH,CRITICAL"
+
+  # ── Job 3: Docker Build Check (test push only) ────────────────────────────────
+  # Validates the Dockerfile can produce a buildable image.
+  # This is a build-validation check, not a push — no image is stored.
+  # Runs only on merge to test (not uat/main where trivy-scan takes precedence).
+  docker-build:
+    name: "Docker Build Check"
+    needs: [quality-gate]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'test'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Set up Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      - name: "Build Docker image (no push)"
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: cicd-workflow-be:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Pass a build-time secret for .npmrc if needed in CI
+          # secrets: |
+          #   NPM_TOKEN=${{ secrets.NPM_TOKEN }}
+
+  # ── Job 4: Deploy to Render ───────────────────────────────────────────────────
+  # Triggers the Render deploy hook for the branch's corresponding environment,
+  # then polls the health check URL until the service is healthy or times out.
+  #
+  # Environment mapping:
+  #   test  → Render staging environment
+  #   uat   → Render UAT environment
+  #   main  → Render production environment
+  #
+  # Security invariant for main: requires trivy-scan to pass (via needs[]).
+  # Security invariant for uat:  requires trivy-scan to pass (via needs[]).
+  # Security invariant for test: requires docker-build to pass (via needs[]).
+  deploy-test:
+    name: "Deploy to Render (test)"
+    needs: [docker-build]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'test'
+    # TODO: Switch @main to @v1 once a stable tag is published
+    uses: ImplementSprint/central-workflow/.github/workflows/render-deploy.yml@main
+    with:
+      environment: "test"
+      healthcheck_url: ${{ vars.RENDER_HEALTHCHECK_URL_TEST }}
+      poll_interval_sec: 15
+      poll_max_attempts: 20
     secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-      GH_PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-      K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
-      K6_CLOUD_PROJECT_ID: ${{ secrets.K6_CLOUD_PROJECT_ID }}
-      RENDER_DEPLOY_HOOK_URL_TEST: ${{ secrets.RENDER_DEPLOY_HOOK_URL_TEST }}
-      RENDER_DEPLOY_HOOK_URL_UAT: ${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}
-      RENDER_DEPLOY_HOOK_URL_MAIN: ${{ secrets.RENDER_DEPLOY_HOOK_URL_MAIN }}
-      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-      RENDER_HEALTHCHECK_URL_TEST: ${{ secrets.RENDER_HEALTHCHECK_URL_TEST }}
-      RENDER_HEALTHCHECK_URL_UAT: ${{ secrets.RENDER_HEALTHCHECK_URL_UAT }}
-      RENDER_HEALTHCHECK_URL_MAIN: ${{ secrets.RENDER_HEALTHCHECK_URL_MAIN }}
-      RENDER_HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      render_deploy_hook_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL_TEST }}
+
+  deploy-uat:
+    name: "Deploy to Render (uat)"
+    needs: [trivy-scan]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'uat'
+    uses: ImplementSprint/central-workflow/.github/workflows/render-deploy.yml@main
+    with:
+      environment: "uat"
+      healthcheck_url: ${{ vars.RENDER_HEALTHCHECK_URL_UAT }}
+      poll_interval_sec: 15
+      poll_max_attempts: 20
+    secrets:
+      render_deploy_hook_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL_UAT }}
+
+  deploy-main:
+    name: "Deploy to Render (production)"
+    needs: [trivy-scan]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'main'
+    uses: ImplementSprint/central-workflow/.github/workflows/render-deploy.yml@main
+    with:
+      environment: "production"
+      healthcheck_url: ${{ vars.RENDER_HEALTHCHECK_URL_MAIN }}
+      poll_interval_sec: 15
+      poll_max_attempts: 24   # extra headroom for cold-start on production
+    secrets:
+      render_deploy_hook_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL_MAIN }}
+
+  # ── Job 5: Auto-create PR  test → uat  ───────────────────────────────────────
+  # Runs after a successful deploy to test. Creates a promotion PR if one
+  # does not already exist (idempotent via gh pr list check).
+  promote-test-to-uat:
+    name: "Promote test → uat"
+    needs: [deploy-test]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'test'
+    uses: ImplementSprint/central-workflow/.github/workflows/promotion.yml@main
+    with:
+      source_branch: "test"
+      target_branch: "uat"
+      service_name: "cicd-workflow-be"
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
+    secrets:
+      gh_pr_token: ${{ secrets.GH_PR_TOKEN }}
+
+  # ── Job 6: Auto-create PR  uat → main  ───────────────────────────────────────
+  # Runs after a successful deploy to uat.
+  promote-uat-to-main:
+    name: "Promote uat → main"
+    needs: [deploy-uat]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'uat'
+    uses: ImplementSprint/central-workflow/.github/workflows/promotion.yml@main
+    with:
+      source_branch: "uat"
+      target_branch: "main"
+      service_name: "cicd-workflow-be"
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.dry_run || 'false') || false }}
+    secrets:
+      gh_pr_token: ${{ secrets.GH_PR_TOKEN }}
+
+  # ── Job 7: Tag release on main ────────────────────────────────────────────────
+  # After a successful production deploy, tag the commit with a semver release tag.
+  # Tag format: v{YYYY}.{MM}.{DD}-{run_number}  (CalVer for automatic tagging).
+  # Override with RELEASE_TAG repo variable for manual semver tags.
+  release-tag:
+    name: "Tag Release"
+    needs: [deploy-main]
+    if: |
+      github.event_name == 'push' && github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PR_TOKEN }}
+
+      - name: "Compute release tag"
+        id: tag
+        run: |
+          # Use RELEASE_TAG repo variable if explicitly set, else generate CalVer
+          MANUAL_TAG="${{ vars.RELEASE_TAG }}"
+          if [[ -n "$MANUAL_TAG" ]]; then
+            TAG_NAME="$MANUAL_TAG"
+          else
+            DATE=$(date -u +'%Y.%m.%d')
+            RUN_NUM="${{ github.run_number }}"
+            TAG_NAME="v${DATE}-${RUN_NUM}"
+          fi
+
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG_NAME"
+
+      - name: "Create and push annotated tag"
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.tag_name }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if tag already exists (idempotency)
+          if git ls-remote --tags origin "$TAG_NAME" | grep -q "$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists. Skipping."
+            exit 0
+          fi
+
+          git tag -a "$TAG_NAME" \
+            -m "Release $TAG_NAME — deployed to production via run #${{ github.run_number }}"
+
+          git push origin "$TAG_NAME"
+          echo "Tagged and pushed: $TAG_NAME"
+
+      - name: "Write release summary"
+        run: |
+          echo "### Release Tag Created" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag: \`${{ steps.tag.outputs.tag_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run: [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "$GITHUB_STEP_SUMMARY"
