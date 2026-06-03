@@ -38,16 +38,6 @@ export class AuthController {
     return res.redirect(redirectUrl);
   }
 
-  @Get('google/start')
-  async googleStart(
-    @Req() req: Request,
-    @Res() res: Response,
-    @Query('returnTo') returnTo?: string,
-  ) {
-    const redirectUrl = await this.authService.startGoogleAuth(req, returnTo);
-    return res.redirect(redirectUrl);
-  }
-
   @Get('github/callback')
   async githubCallback(
     @Req() req: Request,
@@ -56,21 +46,6 @@ export class AuthController {
     @Query('state') state?: string,
   ) {
     const redirectUrl = await this.authService.handleGitHubCallback(
-      req,
-      code,
-      state,
-    );
-    return res.redirect(redirectUrl);
-  }
-
-  @Get('google/callback')
-  async googleCallback(
-    @Req() req: Request,
-    @Res() res: Response,
-    @Query('code') code?: string,
-    @Query('state') state?: string,
-  ) {
-    const redirectUrl = await this.authService.handleGoogleCallback(
       req,
       code,
       state,

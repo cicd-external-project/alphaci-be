@@ -139,4 +139,121 @@ export class GithubService {
       updatedAt: repo.updated_at,
     }));
   }
+
+  async createRepo(
+    accessToken: string,
+    dto: import('./dto/create-repo.dto.js').CreateRepoDto,
+  ): Promise<{ repoUrl: string; cloneUrl: string; ownerLogin: string; repoName: string }> {
+    const response = await fetch('https://api.github.com/user/repos', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'cicd-workflow-product',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: dto.repoName,
+        description: dto.description ?? '',
+        private: dto.private,
+        auto_init: true,
+        default_branch: 'main',
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`GitHub repo creation failed (${String(response.status)}): ${err}`);
+    }
+
+    const repo = (await response.json()) as {
+      html_url: string;
+      clone_url: string;
+      owner: { login: string };
+      name: string;
+    };
+
+    return {
+      repoUrl: repo.html_url,
+      cloneUrl: repo.clone_url,
+      ownerLogin: repo.owner.login,
+      repoName: repo.name,
+    };
+  }
+
+  async createBranch(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    branchName: string,
+    fromBranch: string,
+  ): Promise<void> {
+    const refRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+    if (!refRes.ok) {
+      throw new Error(`Could not resolve ref for ${fromBranch}`);
+    }
+    const ref = (await refRes.json()) as { object: { sha: string } };
+
+    const createRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/refs`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: ref.object.sha }),
+      },
+    );
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      throw new Error(`Branch ${branchName} creation failed: ${err}`);
+    }
+  }
+
+  async applyBranchProtection(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<void> {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          required_status_checks: null,
+          enforce_admins: false,
+          required_pull_request_reviews: {
+            dismiss_stale_reviews: true,
+            require_code_owner_reviews: false,
+            required_approving_review_count: 1,
+          },
+          restrictions: null,
+          allow_force_pushes: false,
+          allow_deletions: false,
+        }),
+      },
+    );
+    if (!res.ok) {
+      this.logger.warn(`Branch protection on ${branch} failed (${String(res.status)}) — continuing`);
+    }
+  }
 }

@@ -24,6 +24,14 @@ async function bootstrap(): Promise<void> {
     bodyParser: false,
   });
 
+  // Required for Render (and any reverse-proxy deployment).
+  // Render terminates TLS at the edge and sets X-Forwarded-Proto.
+  // Without this, Express ignores the header, treats every request as plain
+  // HTTP, and the secure:true + sameSite:none cookie combination silently
+  // breaks all sessions in production.
+  // Value 1 = trust exactly one hop — prevents X-Forwarded-For spoofing.
+  app.set('trust proxy', 1);
+
   const configService = app.get(ConfigService);
   const appCfg = configService.getOrThrow<AppConfig>('app');
 
@@ -55,7 +63,10 @@ async function bootstrap(): Promise<void> {
       cookie: {
         httpOnly: true,
         secure: appCfg.session.secure,
-        sameSite: 'lax',
+        // 'none' is required when the FE and BE are on different origins
+        // (e.g. Vercel FE + Render BE). sameSite:'none' requires secure:true —
+        // the conditional prevents the invalid none+insecure combination in dev.
+        sameSite: appCfg.session.secure ? 'none' : 'lax',
         maxAge: appCfg.session.maxAgeMs,
       },
     }),

@@ -11,14 +11,6 @@ interface UpsertGitHubUserInput {
   avatarUrl?: string;
 }
 
-interface UpsertGoogleUserInput {
-  googleUserId: string;
-  login: string;
-  name?: string;
-  email?: string;
-  avatarUrl?: string;
-}
-
 interface PersistedUserRow {
   id: string;
   login: string;
@@ -34,7 +26,6 @@ export class UsersRepository {
   async upsertGitHubUser(input: UpsertGitHubUserInput): Promise<SessionUser> {
     const normalizedLogin = this.normalizeLogin(
       input.login,
-      'github',
       input.githubUserId,
     );
 
@@ -88,63 +79,6 @@ export class UsersRepository {
     return this.toSessionUser(row);
   }
 
-  async upsertGoogleUser(input: UpsertGoogleUserInput): Promise<SessionUser> {
-    const normalizedLogin = this.normalizeLogin(
-      input.login,
-      'google',
-      input.googleUserId,
-    );
-
-    const query = `
-      WITH candidate AS (
-        SELECT CASE
-          WHEN EXISTS (
-            SELECT 1
-            FROM app_users
-            WHERE login = $2
-              AND COALESCE(google_user_id, '') <> $1
-          )
-            THEN CONCAT($2, '-', SUBSTRING(md5($1) FROM 1 FOR 6))
-            ELSE $2
-        END AS safe_login
-      )
-      INSERT INTO app_users (
-        google_user_id,
-        login,
-        display_name,
-        email,
-        avatar_url,
-        provider,
-        is_dummy,
-        last_login_at
-      )
-      VALUES ($1, (SELECT safe_login FROM candidate), $3, $4, $5, 'google', false, NOW())
-      ON CONFLICT (google_user_id)
-      DO UPDATE SET
-        login = EXCLUDED.login,
-        display_name = EXCLUDED.display_name,
-        email = COALESCE(EXCLUDED.email, app_users.email),
-        avatar_url = EXCLUDED.avatar_url,
-        provider = 'google',
-        is_dummy = false,
-        last_login_at = NOW(),
-        updated_at = NOW()
-      RETURNING id, login, display_name, email, avatar_url;
-    `;
-
-    const result = await this.databaseService.query<PersistedUserRow>(query, [
-      input.googleUserId,
-      normalizedLogin,
-      input.name ?? input.login,
-      input.email ?? null,
-      input.avatarUrl ?? null,
-    ]);
-
-    const row = result.rows[0];
-    if (!row) throw new Error('Upsert returned no row');
-    return this.toSessionUser(row);
-  }
-
   async findById(userId: string): Promise<SessionUser | null> {
     const result = await this.databaseService.query<PersistedUserRow>(
       `
@@ -172,7 +106,6 @@ export class UsersRepository {
 
   private normalizeLogin(
     login: string,
-    provider: 'github' | 'google',
     providerUserId: string,
   ): string {
     const normalized = login
@@ -186,6 +119,6 @@ export class UsersRepository {
       return normalized;
     }
 
-    return `${provider}-${providerUserId.slice(0, 24)}`;
+    return `github-${providerUserId.slice(0, 24)}`;
   }
 }

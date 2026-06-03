@@ -53,32 +53,19 @@ export class SubscriptionService {
       );
     }
 
-    if (plan === 'enterprise') {
-      return this.subscriptionsRepository.activateMonthlyPlan(
-        user.id,
-        'enterprise_monthly',
-        this.config.subscription.enterpriseMonthlyPricePhp,
-        'manual',
-      );
-    }
-
     return this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
   }
 
   async createCheckoutSession(
     user: SessionUser,
-    plan: 'pro' | 'enterprise',
+    plan: 'pro',
   ): Promise<PaymentCheckoutSession> {
     if (!this.apiCenter) {
       throw new ServiceUnavailableException('Payment service is unavailable');
     }
 
-    const pricePhp =
-      plan === 'pro'
-        ? this.config.subscription.proMonthlyPricePhp
-        : this.config.subscription.enterpriseMonthlyPricePhp;
-
-    const planLabel = plan === 'pro' ? 'Pro Monthly' : 'Enterprise Monthly';
+    const pricePhp = this.config.subscription.proMonthlyPricePhp;
+    const planLabel = 'Pro Monthly';
     const referenceId = `${user.id}-${plan}-${Date.now()}`;
 
     return this.apiCenter.paymentCreateCheckoutSession({
@@ -117,18 +104,14 @@ export class SubscriptionService {
 
     if (session.status === 'paid') {
       const rawPlan = session.metadata?.['plan'];
-      if (rawPlan !== 'pro' && rawPlan !== 'enterprise') {
+      if (rawPlan !== 'pro') {
         throw new Error(`Unexpected plan value in checkout metadata: ${String(rawPlan)}`);
       }
-      const plan: 'pro' | 'enterprise' = rawPlan;
-      const pricePhp =
-        plan === 'pro'
-          ? this.config.subscription.proMonthlyPricePhp
-          : this.config.subscription.enterpriseMonthlyPricePhp;
+      const pricePhp = this.config.subscription.proMonthlyPricePhp;
 
       const subscription = await this.subscriptionsRepository.activateMonthlyPlan(
         user.id,
-        `${plan}_monthly`,
+        'pro_monthly',
         pricePhp,
         'paymongo',
       );
@@ -152,24 +135,16 @@ export class SubscriptionService {
 
   async activateForUser(
     user: SessionUser,
-    plan: SubscriptionPlan = 'pro',
+    _plan: SubscriptionPlan = 'pro',
   ): Promise<SubscriptionState> {
     this.assertMockEnabled();
 
-    const nextState =
-      plan === 'enterprise'
-        ? await this.subscriptionsRepository.activateMonthlyPlan(
-            user.id,
-            'enterprise_monthly',
-            this.config.subscription.enterpriseMonthlyPricePhp,
-            'manual',
-          )
-        : await this.subscriptionsRepository.activateMonthlyPlan(
-            user.id,
-            'pro_monthly',
-            this.config.subscription.proMonthlyPricePhp,
-            'manual',
-          );
+    const nextState = await this.subscriptionsRepository.activateMonthlyPlan(
+      user.id,
+      'pro_monthly',
+      this.config.subscription.proMonthlyPricePhp,
+      'manual',
+    );
 
     await this.outboxRepository.publishLater({
       topic: 'subscription.activated',

@@ -9,6 +9,7 @@ import {
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
+import { CreateRepoDto } from './dto/create-repo.dto.js';
 import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from './github.service';
 
@@ -80,5 +81,33 @@ export class GithubController {
 
     const repos = await this.githubService.listRepos(accessToken);
     return { repos };
+  }
+
+  /** POST /github/repos — create a new GitHub repository with branch structure */
+  @Post('repos')
+  async createRepo(@Req() req: Request, @Body() body: CreateRepoDto) {
+    const accessToken = req.session.githubAccessToken;
+    if (!accessToken) {
+      return { error: 'GitHub access token not found. Re-authenticate via GitHub OAuth.' };
+    }
+
+    const { repoUrl, cloneUrl, ownerLogin, repoName } = await this.githubService.createRepo(accessToken, body);
+
+    const branchesCreated: string[] = ['main'];
+    for (const branch of ['uat', 'test'] as const) {
+      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+      branchesCreated.push(branch);
+    }
+
+    for (const branch of ['test', 'uat', 'main'] as const) {
+      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+    }
+
+    return {
+      repoUrl,
+      cloneUrl,
+      defaultBranch: 'main',
+      branchesCreated,
+    };
   }
 }
