@@ -24,5 +24,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
-  }
+  },
+  "exclude": ["src/scripts/process-outbox.ts"]
 }
