@@ -5,7 +5,6 @@ import {
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { TribeClient } from '@implementsprint/sdk';
 import { SubscriptionService } from './subscription.service.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
 import { OutboxRepository } from '../persistence/outbox.repository.js';
@@ -41,7 +40,6 @@ const makeConfig = (overrides: Partial<{
       defaultPlan: overrides.defaultPlan ?? 'free',
       seededPlans: overrides.seededPlans ?? {},
       proMonthlyPricePhp: 300,
-      enterpriseMonthlyPricePhp: 1200,
     },
     frontendUrl: 'http://localhost:3000',
   }),
@@ -58,25 +56,9 @@ const makeSubsRepo = () =>
 const makeOutboxRepo = () =>
   ({ publishLater: jest.fn().mockResolvedValue(undefined) }) as unknown as OutboxRepository;
 
-const makeApiCenter = () =>
-  ({
-    paymentCreateCheckoutSession: jest.fn().mockResolvedValue({
-      checkoutId: 'cs_test_123',
-      status: 'pending',
-      redirectUrl: 'https://checkout.paymongo.com/test',
-    }),
-    paymentGetCheckoutSession: jest.fn().mockResolvedValue({
-      checkoutId: 'cs_test_123',
-      status: 'pending',
-      metadata: { userId: 'user-1', plan: 'pro' },
-    }),
-  }) as unknown as TribeClient;
-
 async function createService(
   configOverrides: Parameters<typeof makeConfig>[0] = {},
-  withApiCenter = true,
 ) {
-  const apiCenter = withApiCenter ? makeApiCenter() : null;
   const subsRepo = makeSubsRepo();
   const outboxRepo = makeOutboxRepo();
 
@@ -86,7 +68,6 @@ async function createService(
       { provide: ConfigService, useValue: makeConfig(configOverrides) },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
-      { provide: TribeClient, useValue: apiCenter },
     ],
   }).compile();
 
@@ -94,7 +75,6 @@ async function createService(
     service: module.get(SubscriptionService),
     subsRepo,
     outboxRepo,
-    apiCenter,
   };
 }
 
@@ -128,115 +108,22 @@ describe('SubscriptionService', () => {
       );
       expect(result.plan).toBe('pro');
     });
-
-    it('activates enterprise plan for seeded user by id', async () => {
-      const { service, subsRepo } = await createService({
-        seededPlans: { 'user-1': 'enterprise' },
-      });
-
-      await service.getForUser(fakeUser);
-      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
-        'user-1',
-        'enterprise_monthly',
-        1200,
-        'manual',
-      );
-    });
   });
 
   describe('createCheckoutSession', () => {
-    it('throws ServiceUnavailableException when apiCenter is null', async () => {
-      const { service } = await createService({}, false);
+    it('always throws ServiceUnavailableException (payment gateway removed)', async () => {
+      const { service } = await createService();
       await expect(service.createCheckoutSession(fakeUser, 'pro')).rejects.toThrow(
         ServiceUnavailableException,
-      );
-    });
-
-    it('creates a pro checkout session', async () => {
-      const { service, apiCenter } = await createService();
-      const result = await service.createCheckoutSession(fakeUser, 'pro');
-
-      expect(apiCenter!.paymentCreateCheckoutSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          lineItems: expect.arrayContaining([
-            expect.objectContaining({ amount: { value: 30000, currency: 'PHP' } }),
-          ]),
-          metadata: { userId: 'user-1', plan: 'pro' },
-        }),
-      );
-      expect((result as { checkoutId?: string }).checkoutId).toBe('cs_test_123');
-    });
-
-    it('creates an enterprise checkout session', async () => {
-      const { service, apiCenter } = await createService();
-      await service.createCheckoutSession(fakeUser, 'enterprise');
-
-      expect(apiCenter!.paymentCreateCheckoutSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          lineItems: expect.arrayContaining([
-            expect.objectContaining({ amount: { value: 120000, currency: 'PHP' } }),
-          ]),
-        }),
       );
     });
   });
 
   describe('getCheckoutStatus', () => {
-    it('throws ServiceUnavailableException when apiCenter is null', async () => {
-      const { service } = await createService({}, false);
+    it('always throws ServiceUnavailableException (payment gateway removed)', async () => {
+      const { service } = await createService();
       await expect(service.getCheckoutStatus(fakeUser, 'cs_123')).rejects.toThrow(
         ServiceUnavailableException,
-      );
-    });
-
-    it('throws ForbiddenException when userId does not match', async () => {
-      const { service, apiCenter } = await createService();
-      (apiCenter!.paymentGetCheckoutSession as jest.Mock).mockResolvedValueOnce({
-        status: 'pending',
-        metadata: { userId: 'other-user', plan: 'pro' },
-      });
-
-      await expect(service.getCheckoutStatus(fakeUser, 'cs_123')).rejects.toThrow(
-        ForbiddenException,
-      );
-    });
-
-    it('returns pending status', async () => {
-      const { service } = await createService();
-      const result = await service.getCheckoutStatus(fakeUser, 'cs_123');
-      expect(result.status).toBe('pending');
-    });
-
-    it('activates subscription and publishes event when paid', async () => {
-      const { service, apiCenter, subsRepo, outboxRepo } = await createService();
-      (apiCenter!.paymentGetCheckoutSession as jest.Mock).mockResolvedValueOnce({
-        status: 'paid',
-        metadata: { userId: 'user-1', plan: 'pro' },
-      });
-
-      const result = await service.getCheckoutStatus(fakeUser, 'cs_123');
-
-      expect(result.status).toBe('paid');
-      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
-        'user-1',
-        'pro_monthly',
-        300,
-        'paymongo',
-      );
-      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'subscription.activated' }),
-      );
-    });
-
-    it('throws when paid plan metadata is invalid', async () => {
-      const { service, apiCenter } = await createService();
-      (apiCenter!.paymentGetCheckoutSession as jest.Mock).mockResolvedValueOnce({
-        status: 'paid',
-        metadata: { userId: 'user-1', plan: 'invalid-plan' },
-      });
-
-      await expect(service.getCheckoutStatus(fakeUser, 'cs_123')).rejects.toThrow(
-        /Unexpected plan value/,
       );
     });
   });
@@ -256,18 +143,6 @@ describe('SubscriptionService', () => {
       expect(result.plan).toBe('pro');
       expect(outboxRepo.publishLater).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'subscription.activated' }),
-      );
-    });
-
-    it('activates enterprise plan', async () => {
-      const { service, subsRepo } = await createService({ mockEnabled: true });
-      await service.activateForUser(fakeUser, 'enterprise');
-
-      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
-        'user-1',
-        'enterprise_monthly',
-        1200,
-        'manual',
       );
     });
   });

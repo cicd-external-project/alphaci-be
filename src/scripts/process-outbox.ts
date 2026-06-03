@@ -4,8 +4,8 @@
  * Standalone script — not a NestJS application.
  * Run by the Render Cron Job every minute.
  *
- * Reads up to 100 pending rows from outbox_events, publishes each to Kafka
- * via api-center's Kafka broker, then marks them processed.
+ * Reads up to 100 pending rows from outbox_events, publishes each to Kafka,
+ * then marks them processed.
  * Uses SELECT FOR UPDATE SKIP LOCKED — safe under concurrent cron runs.
  *
  * Required env vars:

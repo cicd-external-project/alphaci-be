@@ -1,7 +1,6 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { TribeClient } from '@implementsprint/sdk';
 import { AuthService } from './auth.service.js';
 import { UsersRepository } from '../persistence/users.repository.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
@@ -27,17 +26,12 @@ const makeConfig = (withGitHub = true) => ({
       callbackUrl: 'http://localhost:4000/api/v1/auth/github/callback',
       scope: 'read:user user:email',
     },
-    google: {
-      callbackUrl: 'http://localhost:4000/api/v1/auth/google/callback',
-      scope: 'openid email profile',
-    },
   }),
 }) as unknown as ConfigService;
 
 const makeUsersRepo = () =>
   ({
     upsertGitHubUser: jest.fn().mockResolvedValue(fakeUser),
-    upsertGoogleUser: jest.fn().mockResolvedValue(fakeUser),
     findById: jest.fn().mockResolvedValue(fakeUser),
   }) as unknown as UsersRepository;
 
@@ -49,21 +43,6 @@ const makeSubsRepo = () =>
 const makeOutboxRepo = () =>
   ({ publishLater: jest.fn().mockResolvedValue(undefined) }) as unknown as OutboxRepository;
 
-const makeApiCenter = () =>
-  ({
-    gauthGetAuthorizationUrl: jest.fn().mockResolvedValue({
-      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
-    }),
-    gauthExchangeCode: jest.fn().mockResolvedValue({
-      idToken: buildFakeIdToken({ sub: 'google-123', email: 'test@example.com', email_verified: true, name: 'Test User' }),
-    }),
-  }) as unknown as TribeClient;
-
-function buildFakeIdToken(claims: Record<string, unknown>): string {
-  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
-  return `header.${payload}.signature`;
-}
-
 const makeSession = (data: Record<string, unknown> = {}) => ({
   ...data,
   regenerate: jest.fn().mockImplementation((cb: (err: null) => void) => cb(null)),
@@ -74,11 +53,10 @@ const makeSession = (data: Record<string, unknown> = {}) => ({
 const makeRequest = (sessionData: Record<string, unknown> = {}) =>
   ({ session: makeSession(sessionData) }) as unknown as Request;
 
-async function createService(withGitHub = true, withApiCenter = true) {
+async function createService(withGitHub = true) {
   const usersRepo = makeUsersRepo();
   const subsRepo = makeSubsRepo();
   const outboxRepo = makeOutboxRepo();
-  const apiCenter = withApiCenter ? makeApiCenter() : null;
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
@@ -87,7 +65,6 @@ async function createService(withGitHub = true, withApiCenter = true) {
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
-      { provide: TribeClient, useValue: apiCenter },
     ],
   }).compile();
 
@@ -96,7 +73,6 @@ async function createService(withGitHub = true, withApiCenter = true) {
     usersRepo,
     subsRepo,
     outboxRepo,
-    apiCenter,
   };
 }
 
@@ -137,22 +113,6 @@ describe('AuthService', () => {
       expect((req.session as Record<string, unknown>).oauthReturnTo).toBe(
         'http://localhost:3000',
       );
-    });
-  });
-
-  describe('startGoogleAuth', () => {
-    it('returns Google auth URL via gauth SDK', async () => {
-      const { service } = await createService();
-      const req = makeRequest();
-      const url = await service.startGoogleAuth(req);
-      expect(url).toContain('accounts.google.com');
-    });
-
-    it('returns unavailable URL when apiCenter is null', async () => {
-      const { service } = await createService(true, false);
-      const req = makeRequest();
-      const url = await service.startGoogleAuth(req);
-      expect(url).toContain('auth=unavailable');
     });
   });
 
@@ -252,57 +212,6 @@ describe('AuthService', () => {
 
       const url = await service.handleGitHubCallback(req, 'c1', 's1');
       expect(url).toContain('auth=success');
-    });
-  });
-
-  describe('handleGoogleCallback', () => {
-    it('returns invalid_state when state mismatch', async () => {
-      const { service } = await createService();
-      const req = makeRequest({ oauthState: 'correct', oauthProvider: 'google', oauthReturnTo: 'http://localhost:3000' });
-      const url = await service.handleGoogleCallback(req, 'code', 'wrong');
-      expect(url).toContain('auth=invalid_state');
-    });
-
-    it('returns success after Google OAuth flow', async () => {
-      const { service } = await createService();
-      const req = makeRequest({
-        oauthState: 'g-state',
-        oauthProvider: 'google',
-        oauthReturnTo: 'http://localhost:3000',
-      });
-
-      const url = await service.handleGoogleCallback(req, 'g-code', 'g-state');
-      expect(url).toContain('auth=success');
-    });
-
-    it('returns failed when idToken is missing', async () => {
-      const { service, apiCenter } = await createService();
-      (apiCenter!.gauthExchangeCode as jest.Mock).mockResolvedValueOnce({ idToken: null });
-
-      const req = makeRequest({
-        oauthState: 'g-state',
-        oauthProvider: 'google',
-        oauthReturnTo: 'http://localhost:3000',
-      });
-
-      const url = await service.handleGoogleCallback(req, 'g-code', 'g-state');
-      expect(url).toContain('auth=failed');
-    });
-
-    it('returns failed when email is not verified', async () => {
-      const { service, apiCenter } = await createService();
-      (apiCenter!.gauthExchangeCode as jest.Mock).mockResolvedValueOnce({
-        idToken: buildFakeIdToken({ sub: 'g-123', email: 'test@example.com', email_verified: false }),
-      });
-
-      const req = makeRequest({
-        oauthState: 'g-state',
-        oauthProvider: 'google',
-        oauthReturnTo: 'http://localhost:3000',
-      });
-
-      const url = await service.handleGoogleCallback(req, 'g-code', 'g-state');
-      expect(url).toContain('auth=failed');
     });
   });
 

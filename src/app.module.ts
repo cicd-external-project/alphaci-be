@@ -3,9 +3,10 @@ import {
   Module,
   type NestModule,
 } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { appConfig } from './config/app.config.js';
-import { ApiCenterSdkModule } from './api-center/api-center-sdk.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { validateEnv } from './common/config/env.validation.js';
@@ -32,9 +33,11 @@ import { WorkflowsModule } from './modules/workflows/workflows.module.js';
       // silently degrading to insecure fallbacks during local development.
       validate: validateEnv,
     }),
+    ThrottlerModule.forRoot([
+      { name: 'default', ttl: 60_000, limit: 60 },
+    ]),
     SupabaseModule,
     HealthModule,
-    ApiCenterSdkModule,
 
     // Business modules
     AuthModule,
@@ -44,7 +47,10 @@ import { WorkflowsModule } from './modules/workflows/workflows.module.js';
     WorkflowsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
