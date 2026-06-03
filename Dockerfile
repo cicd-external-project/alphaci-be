@@ -11,14 +11,18 @@
 # ── Stage 1: compile TypeScript + fetch templates ────────────────────────────
 FROM node:22-alpine AS builder
 
+ARG NPM_TOKEN
+
 WORKDIR /app
 
 # git is needed to clone the template repo
 RUN apk add --no-cache git
 
 # Install deps first — layer is cached until package.json changes
-COPY package*.json .npmrc* ./
-RUN npm install
+COPY package*.json ./
+RUN echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > .npmrc \
+  && npm install \
+  && rm -f .npmrc
 
 # Compile source
 COPY tsconfig*.json nest-cli.json ./
@@ -34,6 +38,8 @@ RUN git clone --depth 1 "${TEMPLATE_REPO_URL}" /tmp/cicd-workflow
 # ── Stage 2: production runtime ───────────────────────────────────────────────
 FROM node:22-alpine AS runner
 
+ARG NPM_TOKEN
+
 ENV NODE_ENV=production
 # Absolute path — CatalogService reads from TEMPLATE_REPO_PATH/TEMPLATE_WORKFLOW_DIR
 ENV TEMPLATE_REPO_PATH=/app/templates
@@ -41,11 +47,12 @@ ENV TEMPLATE_REPO_PATH=/app/templates
 
 WORKDIR /app
 
-COPY package*.json .npmrc* ./
+COPY package*.json ./
 
-RUN apk upgrade --no-cache zlib \
+RUN echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > .npmrc \
+  && apk upgrade --no-cache zlib \
   && npm install --omit=dev \
-  && rm -f package-lock.json .npmrc \
+  && rm -f .npmrc \
   && addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nestjs
 
