@@ -20,7 +20,8 @@ RUN apk add --no-cache git
 
 # Install deps first — layer is cached until package.json changes
 COPY package*.json ./
-RUN echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > .npmrc \
+RUN echo "@implementsprint:registry=https://npm.pkg.github.com" > .npmrc \
+  && echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" >> .npmrc \
   && npm install \
   && rm -f .npmrc
 
@@ -49,7 +50,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" > .npmrc \
+RUN echo "@implementsprint:registry=https://npm.pkg.github.com" > .npmrc \
+  && echo "//npm.pkg.github.com/:_authToken=${NPM_TOKEN}" >> .npmrc \
   && apk upgrade --no-cache zlib \
   && npm install --omit=dev \
   && rm -f .npmrc \
