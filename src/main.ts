@@ -114,7 +114,7 @@ async function bootstrap(): Promise<void> {
     logger.log('Swagger docs available at /api/v1/docs');
   }
 
-  const port = configService.get<number>('PORT') ?? 3000;
+  const port = parseInt(process.env['PORT'] ?? '4000', 10);
   await app.listen(port, '0.0.0.0');
   logger.log(`Application running on 0.0.0.0:${String(port)}`);
 }

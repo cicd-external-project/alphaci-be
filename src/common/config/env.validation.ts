@@ -241,6 +241,17 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // We require it here so misconfiguration is explicit at startup.
   const ALLOWED_ORIGINS = requireString(env, 'ALLOWED_ORIGINS');
 
+  // --- Required: frontend URL ---
+  // FRONTEND_URL is the redirect target after OAuth. If missing, every login
+  // silently redirects to localhost:3000 — invisible in logs, fatal in prod.
+  requireString(env, 'FRONTEND_URL');
+
+  // --- Required: GitHub OAuth credentials ---
+  // Both must be set; a missing secret causes silent login failure at runtime
+  // rather than a hard crash at startup.
+  requireString(env, 'GITHUB_CLIENT_ID');
+  requireString(env, 'GITHUB_CLIENT_SECRET');
+
   // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';

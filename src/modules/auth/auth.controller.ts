@@ -7,7 +7,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 
@@ -55,6 +55,7 @@ export class AuthController {
     return res.redirect(redirectUrl);
   }
 
+  @SkipThrottle()
   @UseGuards(SessionAuthGuard)
   @Get('me')
   async me(@Req() req: Request) {
