@@ -11,6 +11,14 @@ interface UpsertGitHubUserInput {
   avatarUrl?: string;
 }
 
+interface UpsertGoogleUserInput {
+  googleUserId: string;
+  login: string;
+  name?: string;
+  email?: string;
+  avatarUrl?: string;
+}
+
 interface PersistedUserRow {
   id: string;
   login: string;
@@ -79,6 +87,48 @@ export class UsersRepository {
     return this.toSessionUser(row);
   }
 
+  async upsertGoogleUser(input: UpsertGoogleUserInput): Promise<SessionUser> {
+    const normalizedLogin = this.normalizeLogin(
+      input.login,
+      input.googleUserId,
+      'google',
+    );
+
+    const query = `
+      INSERT INTO app_users (
+        login,
+        display_name,
+        email,
+        avatar_url,
+        provider,
+        is_dummy,
+        last_login_at
+      )
+      VALUES ($1, $2, $3, $4, 'google', false, NOW())
+      ON CONFLICT (login)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        email = COALESCE(EXCLUDED.email, app_users.email),
+        avatar_url = EXCLUDED.avatar_url,
+        provider = 'google',
+        is_dummy = false,
+        last_login_at = NOW(),
+        updated_at = NOW()
+      RETURNING id, login, display_name, email, avatar_url;
+    `;
+
+    const result = await this.databaseService.query<PersistedUserRow>(query, [
+      normalizedLogin,
+      input.name ?? input.login,
+      input.email ?? null,
+      input.avatarUrl ?? null,
+    ]);
+
+    const row = result.rows[0];
+    if (!row) throw new Error('Upsert returned no row');
+    return this.toSessionUser(row);
+  }
+
   async findById(userId: string): Promise<SessionUser | null> {
     const result = await this.databaseService.query<PersistedUserRow>(
       `
@@ -107,6 +157,7 @@ export class UsersRepository {
   private normalizeLogin(
     login: string,
     providerUserId: string,
+    provider = 'github',
   ): string {
     const normalized = login
       .trim()
@@ -119,6 +170,6 @@ export class UsersRepository {
       return normalized;
     }
 
-    return `github-${providerUserId.slice(0, 24)}`;
+    return `${provider}-${providerUserId.slice(0, 24)}`;
   }
 }
