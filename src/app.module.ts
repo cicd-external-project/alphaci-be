@@ -20,6 +20,7 @@ import { CatalogModule } from './modules/catalog/catalog.module.js';
 import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
+import { ProjectsModule } from './modules/projects/projects.module.js';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { WorkflowsModule } from './modules/workflows/workflows.module.js';
     GithubModule,
     SubscriptionModule,
     WorkflowsModule,
+    ProjectsModule,
   ],
   controllers: [AppController],
   providers: [
