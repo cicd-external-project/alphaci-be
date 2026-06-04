@@ -16,7 +16,7 @@ const makeRequest = (
     session: {
       user,
       userId: user?.id,
-    githubAccessToken,
+      githubAccessToken,
     },
   }) as unknown as Request;
 
@@ -86,15 +86,22 @@ describe('ProjectsController', () => {
     expect(result).toMatchObject({ repoFullName: 'testuser/orders-api' });
   });
 
-  it('throws when project creation has no GitHub access token', async () => {
-    await expect(
-      controller.createProject(makeRequest(fakeUser, undefined), {
-        repoName: 'orders-api',
-        visibility: 'private',
-        projectTypeId: 'nestjs-api',
-        serviceName: 'orders-api',
-      }),
-    ).rejects.toThrow(UnauthorizedException);
+  it('delegates project creation with null OAuth token so service can use GitHub App fallback', async () => {
+    const body = {
+      repoName: 'orders-api',
+      visibility: 'private' as const,
+      projectTypeId: 'nestjs-api',
+      serviceName: 'orders-api',
+    };
+
+    await controller.createProject(makeRequest(fakeUser, undefined), body);
+
+    expect(service.createProject).toHaveBeenCalledWith(
+      'user-1',
+      'testuser',
+      null,
+      body,
+    );
   });
 
   it('passes the requested project list limit to the service', async () => {

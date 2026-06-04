@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import yaml from 'js-yaml';
@@ -82,11 +83,13 @@ export class ProjectsService {
   async createProject(
     userId: string,
     userLogin: string,
-    accessToken: string,
+    accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
+    const provisioningToken = await this.resolveProvisioningToken(userId, accessToken);
+
     if (dto.repoShape === 'microservices') {
-      return this.createMicroservicesProject(userId, userLogin, accessToken, dto);
+      return this.createMicroservicesProject(userId, userLogin, provisioningToken, dto);
     }
 
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
@@ -104,7 +107,7 @@ export class ProjectsService {
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
     const { repoUrl, ownerLogin, repoName } = await this.githubService.createRepo(
-      accessToken,
+      provisioningToken,
       {
         repoName: dto.repoName,
         private: dto.visibility === 'private',
@@ -115,18 +118,18 @@ export class ProjectsService {
 
     // 4. Create uat and test branches from main
     for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+      await this.githubService.createBranch(provisioningToken, ownerLogin, repoName, branch, 'main');
     }
 
     // 5. Apply branch protection to all three branches
     for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+      await this.githubService.applyBranchProtection(provisioningToken, ownerLogin, repoName, branch);
     }
 
     // 6. Push the workflow YAML to .github/workflows/{outputFileName} on main
     const workflowPath = `.github/workflows/${outputFileName}`;
     const { commitSha, commitUrl } = await this.pushWorkflowFile(
-      accessToken,
+      provisioningToken,
       ownerLogin,
       repoName,
       workflowPath,
@@ -381,6 +384,26 @@ export class ProjectsService {
    * Uses the recipe's templateByProjectType mapping. Falls back to
    * "{projectTypeId}-standard" when no recipe is supplied.
    */
+  private async resolveProvisioningToken(
+    userId: string,
+    oauthAccessToken: string | null | undefined,
+  ): Promise<string> {
+    const installationToken =
+      await this.githubService.getInstallationAccessTokenForUser(userId);
+
+    if (installationToken) {
+      return installationToken;
+    }
+
+    if (oauthAccessToken) {
+      return oauthAccessToken;
+    }
+
+    throw new UnauthorizedException(
+      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
+    );
+  }
+
   private resolveTemplateId(projectTypeId: string, workflowRecipeId?: string): string {
     const { recipes } = this.catalogService.getProjectOptions();
     const recipeId = workflowRecipeId ?? 'standard';

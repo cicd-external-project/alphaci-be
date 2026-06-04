@@ -1,4 +1,13 @@
-import { BadGatewayException, ForbiddenException, Injectable, Logger, Optional, UnprocessableEntityException } from '@nestjs/common';
+import { createSign } from 'node:crypto';
+
+import {
+  BadGatewayException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  Optional,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
@@ -19,6 +28,18 @@ interface GitHubRepoResponse {
   updated_at: string;
 }
 
+interface GitHubInstallationMetadataResponse {
+  account?: {
+    login?: string | null;
+    id?: number | null;
+  };
+  repository_selection?: 'all' | 'selected';
+}
+
+interface GitHubInstallationRepositoriesResponse {
+  repositories?: Array<{ full_name?: string }>;
+}
+
 export interface GitHubRepo {
   id: number;
   name: string;
@@ -33,46 +54,135 @@ export interface GitHubRepo {
 @Injectable()
 export class GithubService {
   private readonly logger = new Logger(GithubService.name);
+  private readonly appId: string;
   private readonly appSlug: string;
+  private readonly appPrivateKey: string;
 
   constructor(
     @Optional() private readonly configService: ConfigService | null,
     @Optional() private readonly githubInstallationsRepository: GithubInstallationsRepository | null,
   ) {
     const config = this.configService?.get<AppConfig>('app');
+    this.appId = config?.github.appId ?? '';
     this.appSlug = config?.github.appSlug ?? 'my-github-app';
+    this.appPrivateKey = config?.github.appPrivateKey ?? '';
   }
 
-  /** Build the GitHub App installation URL from the configured app slug. */
   getAppInstallUrl(): string {
     return `https://github.com/apps/${this.appSlug}/installations/new`;
   }
 
-  /**
-   * Fetch installation metadata from GitHub and persist it for the given user.
-   * Falls back gracefully when the DB is unavailable.
-   */
+  createAppJwt(nowSeconds = Math.floor(Date.now() / 1000)): string {
+    if (!this.appId || !this.appPrivateKey) {
+      throw new UnprocessableEntityException(
+        'GitHub App credentials are not configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.',
+      );
+    }
+
+    const header = this.base64UrlJson({ alg: 'RS256', typ: 'JWT' });
+    const payload = this.base64UrlJson({
+      iat: nowSeconds - 60,
+      exp: nowSeconds + 540,
+      iss: this.appId,
+    });
+    const unsigned = `${header}.${payload}`;
+    const signature = createSign('RSA-SHA256')
+      .update(unsigned)
+      .sign(this.appPrivateKey, 'base64url');
+
+    return `${unsigned}.${signature}`;
+  }
+
+  async createInstallationAccessToken(installationId: number): Promise<string> {
+    const response = await fetch(
+      `https://api.github.com/app/installations/${String(installationId)}/access_tokens`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.createAppJwt()}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub installation token request failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as { token?: string };
+    if (!payload.token) {
+      throw new BadGatewayException('GitHub installation token response did not include a token');
+    }
+
+    return payload.token;
+  }
+
+  async getInstallationAccessTokenForUser(userId: string): Promise<string | null> {
+    if (!this.githubInstallationsRepository) return null;
+
+    const installations = await this.githubInstallationsRepository.findByUserId(userId);
+    const installation =
+      installations.find((item) => item.repositorySelection === 'all') ?? installations[0];
+
+    if (!installation) return null;
+
+    try {
+      return await this.createInstallationAccessToken(installation.installationId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not create installation token for user ${userId}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   async linkInstallation(
     userId: string,
     installationId: number,
   ): Promise<{ reposLinked: number; repositorySelection: 'all' | 'selected' }> {
-    // A production implementation would call
-    //   GET /app/installations/:installation_id  (GitHub App JWT auth)
-    // to obtain account_login, account_id, repository_selection, etc.
-
     let reposLinked = 0;
     let repositorySelection: 'all' | 'selected' = 'selected';
+    let accountLogin: string | null = null;
+    let accountId: number | null = null;
+    let repoFullNames: string[] = [];
+
+    try {
+      const metadata = await this.fetchInstallationMetadata(installationId);
+      accountLogin = metadata.account?.login ?? null;
+      accountId = metadata.account?.id ?? null;
+      repositorySelection = metadata.repository_selection ?? 'selected';
+
+      const installationToken = await this.createInstallationAccessToken(installationId);
+      repoFullNames = await this.fetchInstallationRepositories(installationToken);
+      reposLinked = repoFullNames.length;
+    } catch (error) {
+      this.logger.warn(
+        `Could not fully inspect installation ${installationId}: ${(error as Error).message}`,
+      );
+    }
 
     if (this.githubInstallationsRepository) {
       try {
         const saved = await this.githubInstallationsRepository.upsert(
           userId,
           installationId,
-          null,   // accountLogin — resolved asynchronously in a full implementation
-          null,   // accountId
+          accountLogin,
+          accountId,
           repositorySelection,
           reposLinked,
         );
+
+        if (repoFullNames.length > 0) {
+          await this.githubInstallationsRepository.replaceRepos(
+            installationId,
+            repoFullNames,
+          );
+        }
+
         reposLinked = saved.reposLinked;
         repositorySelection = saved.repositorySelection;
       } catch (error) {
@@ -85,7 +195,6 @@ export class GithubService {
     return { reposLinked, repositorySelection };
   }
 
-  /** Return repos linked via GitHub App installations for the given user. */
   async listLinkedRepos(userId: string): Promise<GithubInstallationRepo[]> {
     if (!this.githubInstallationsRepository) return [];
     try {
@@ -98,7 +207,6 @@ export class GithubService {
     }
   }
 
-  /** Return GitHub App installation accounts for the given user. */
   async listInstallationAccounts(userId: string): Promise<GithubInstallation[]> {
     if (!this.githubInstallationsRepository) return [];
     try {
@@ -199,8 +307,6 @@ export class GithubService {
     branchName: string,
     fromBranch: string,
   ): Promise<void> {
-    // GitHub initialises the default branch asynchronously after repo creation.
-    // Retry resolving the ref for up to ~10 s before giving up.
     let ref: { object: { sha: string } } | null = null;
     for (let attempt = 0; attempt < 5; attempt++) {
       if (attempt > 0) {
@@ -224,7 +330,7 @@ export class GithubService {
     if (!ref) {
       throw new BadGatewayException(
         `Could not resolve '${fromBranch}' branch on GitHub after retries. ` +
-        `The repository may not have initialised yet — please retry in a few seconds.`,
+        'The repository may not have initialised yet; please retry in a few seconds.',
       );
     }
 
@@ -278,7 +384,60 @@ export class GithubService {
       },
     );
     if (!res.ok) {
-      this.logger.warn(`Branch protection on ${branch} failed (${String(res.status)}) — continuing`);
+      this.logger.warn(`Branch protection on ${branch} failed (${String(res.status)}); continuing`);
     }
+  }
+
+  private async fetchInstallationMetadata(
+    installationId: number,
+  ): Promise<GitHubInstallationMetadataResponse> {
+    const response = await fetch(
+      `https://api.github.com/app/installations/${String(installationId)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.createAppJwt()}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub installation metadata request failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    return (await response.json()) as GitHubInstallationMetadataResponse;
+  }
+
+  private async fetchInstallationRepositories(accessToken: string): Promise<string[]> {
+    const response = await fetch(
+      'https://api.github.com/installation/repositories?per_page=100',
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub installation repositories request failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as GitHubInstallationRepositoriesResponse;
+    return (payload.repositories ?? [])
+      .map((repo) => repo.full_name)
+      .filter((repoFullName): repoFullName is string => Boolean(repoFullName));
+  }
+
+  private base64UrlJson(value: Record<string, unknown>): string {
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
   }
 }

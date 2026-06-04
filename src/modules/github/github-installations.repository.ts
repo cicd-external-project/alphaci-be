@@ -128,6 +128,36 @@ export class GithubInstallationsRepository {
     }));
   }
 
+  async replaceRepos(
+    installationId: number,
+    repoFullNames: string[],
+  ): Promise<void> {
+    await this.databaseService.query(
+      'DELETE FROM github_installation_repos WHERE installation_id = $1;',
+      [installationId],
+    );
+
+    if (repoFullNames.length === 0) {
+      return;
+    }
+
+    const values: unknown[] = [];
+    const placeholders = repoFullNames.map((repoFullName, index) => {
+      values.push(installationId, repoFullName);
+      const base = index * 2;
+      return `($${base + 1}, $${base + 2})`;
+    });
+
+    await this.databaseService.query(
+      `
+        INSERT INTO github_installation_repos (installation_id, repo_full_name)
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (installation_id, repo_full_name) DO NOTHING;
+      `,
+      values,
+    );
+  }
+
   private toInstallation(row: GithubInstallationRow): GithubInstallation {
     return {
       installationId: row.installation_id,
