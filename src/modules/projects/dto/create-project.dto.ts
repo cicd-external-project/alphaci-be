@@ -9,7 +9,40 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class MicroserviceSlotDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  projectTypeId!: string;
+
+  @IsOptional()
+  @IsString()
+  workflowRecipeId?: string;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  serviceName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  servicePath?: string;
+}
+
+export class MicroservicesConfigDto {
+  @ValidateNested()
+  @Type(() => MicroserviceSlotDto)
+  backend!: MicroserviceSlotDto;
+
+  @ValidateNested()
+  @Type(() => MicroserviceSlotDto)
+  frontend!: MicroserviceSlotDto;
+}
 
 export class CreateProjectDto {
   @IsString()
@@ -60,4 +93,9 @@ export class CreateProjectDto {
   @IsString()
   @MaxLength(200)
   outputFileName?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MicroservicesConfigDto)
+  microservicesConfig?: MicroservicesConfigDto;
 }

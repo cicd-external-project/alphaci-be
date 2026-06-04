@@ -55,6 +55,25 @@ export class AuthController {
     return res.redirect(redirectUrl);
   }
 
+  /** GET /auth/config-check — non-sensitive config diagnostic (no secrets exposed) */
+  @SkipThrottle()
+  @Get('config-check')
+  configCheck() {
+    const cfg = this.configService.getOrThrow<AppConfig>('app');
+    return {
+      githubScope:        cfg.github.scope        || '(empty)',
+      githubAppSlug:      cfg.github.appSlug       || '(empty)',
+      githubClientId:     cfg.github.clientId ? `${cfg.github.clientId.slice(0, 6)}…` : '(not set)',
+      callbackUrl:        cfg.github.callbackUrl   || '(empty)',
+      frontendUrl:        cfg.frontendUrl          || '(empty)',
+      sessionDriver:      cfg.session.storeDriver,
+      sessionSecure:      cfg.session.secure,
+      supabaseDbUrl:      cfg.supabase.dbUrl ? 'set' : '(not set)',
+      mockEnabled:        cfg.subscription.mockEnabled,
+      defaultPlan:        cfg.subscription.defaultPlan,
+    };
+  }
+
   @SkipThrottle()
   @UseGuards(SessionAuthGuard)
   @Get('me')

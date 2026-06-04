@@ -70,6 +70,33 @@ export class GithubController {
     return { accounts };
   }
 
+  // ─── Token diagnostics ─────────────────────────────────────────────────
+
+  /** GET /github/token-scopes — returns the scopes on the current OAuth token */
+  @Get('token-scopes')
+  async tokenScopes(@Req() req: Request) {
+    const accessToken = req.session.githubAccessToken;
+    if (!accessToken) {
+      return { hasToken: false, scopes: null };
+    }
+
+    const res = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'cicd-workflow-product',
+      },
+    });
+
+    const scopes = res.headers.get('x-oauth-scopes') ?? res.headers.get('X-OAuth-Scopes');
+    return {
+      hasToken: true,
+      scopes: scopes ? scopes.split(',').map((s) => s.trim()) : [],
+      status: res.status,
+      hasRepoScope: scopes ? scopes.split(',').map((s) => s.trim()).some((s) => s === 'repo') : false,
+    };
+  }
+
   // ─── OAuth repos (existing) ─────────────────────────────────────────────
 
   @Get('repos')
