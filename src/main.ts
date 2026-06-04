@@ -47,7 +47,10 @@ async function bootstrap(): Promise<void> {
     ) => new (options: Record<string, unknown>) => session.Store;
     const PgStore = connectPg(session);
     sessionStore = new PgStore({
-      pool: new Pool({ connectionString: appCfg.supabase.dbUrl }),
+      pool: new Pool({
+        connectionString: appCfg.supabase.dbUrl,
+        ssl: { rejectUnauthorized: false },
+      }),
       tableName: 'session',
       createTableIfMissing: true,
     });

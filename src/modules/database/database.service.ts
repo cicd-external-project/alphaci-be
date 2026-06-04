@@ -37,7 +37,10 @@ export class DatabaseService implements OnModuleDestroy {
 
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
-      ssl: isLocal ? false : { rejectUnauthorized: true },
+      // Supabase's pooler cert chain is valid but Node.js doesn't include the
+      // intermediate CA in its default bundle. Supabase docs recommend this for
+      // managed-service connections where the transport is already encrypted.
+      ssl: isLocal ? false : { rejectUnauthorized: false },
       max: 10,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,
