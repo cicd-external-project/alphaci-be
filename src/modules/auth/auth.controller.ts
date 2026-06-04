@@ -31,12 +31,12 @@ export class AuthController {
   }
 
   @Get('github/start')
-  githubStart(
+  async githubStart(
     @Req() req: Request,
     @Res() res: Response,
     @Query('returnTo') returnTo?: string,
   ) {
-    const redirectUrl = this.authService.startGitHubAuth(req, returnTo);
+    const redirectUrl = await this.authService.startGitHubAuth(req, returnTo);
     return res.redirect(redirectUrl);
   }
 
