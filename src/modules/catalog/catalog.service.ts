@@ -64,6 +64,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
     { id: 'mono', label: 'Monorepo', enabled: true, description: 'Single repo, multiple apps/packages' },
     { id: 'multi', label: 'Multi-repo', enabled: true, description: 'Separate repo per service' },
     { id: 'standalone', label: 'Standalone', enabled: true, description: 'Single app, single repo' },
+    { id: 'microservices', label: 'Microservices', enabled: true, description: 'Single repo, backend + frontend services with separate CI workflows' },
   ],
   projectTypes: [
     {
@@ -72,7 +73,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'Next.js',
-      repoShapes: ['standalone', 'mono'],
+      repoShapes: ['standalone', 'mono', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -83,7 +84,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'React',
-      repoShapes: ['standalone', 'mono'],
+      repoShapes: ['standalone', 'mono', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -94,7 +95,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'NestJS',
-      repoShapes: ['standalone', 'multi'],
+      repoShapes: ['standalone', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -105,7 +106,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'Express/Fastify',
-      repoShapes: ['standalone', 'multi'],
+      repoShapes: ['standalone', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true },
@@ -140,10 +141,10 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       description: 'Full CI pipeline: lint, test, build, coverage, security scan',
       supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs'],
       templateByProjectType: {
-        nextjs: 'nextjs-standard',
-        react: 'react-standard',
-        nestjs: 'nestjs-standard',
-        nodejs: 'nodejs-standard',
+        nextjs: 'nextjs-service-pipeline',
+        react: 'react-service-pipeline',
+        nestjs: 'nest-service-pipeline',
+        nodejs: 'nodejs-service-pipeline',
       },
       mandatoryJobs: ['lint', 'build'],
       supportedOptions: { lint: true, unit: true, build: true, coverage: true, security: true, docker: true, e2e: true },
@@ -162,12 +163,12 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       description: 'Lightweight CI: lint and build only',
       supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs', 'react-native', 'expo'],
       templateByProjectType: {
-        nextjs: 'nextjs-minimal',
-        react: 'react-minimal',
-        nestjs: 'nestjs-minimal',
-        nodejs: 'nodejs-minimal',
-        'react-native': 'react-native-minimal',
-        expo: 'expo-minimal',
+        nextjs: 'nextjs-service-pipeline',
+        react: 'react-service-pipeline',
+        nestjs: 'nest-service-pipeline',
+        nodejs: 'nodejs-service-pipeline',
+        'react-native': 'react-native-service-pipeline',
+        expo: 'expo-service-pipeline',
       },
       mandatoryJobs: ['lint', 'build'],
       supportedOptions: { lint: true, unit: true, build: true },
@@ -179,8 +180,8 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       description: 'Mobile-optimised CI: lint, test, and app build',
       supportedProjectTypes: ['react-native', 'expo'],
       templateByProjectType: {
-        'react-native': 'react-native-standard',
-        expo: 'expo-standard',
+        'react-native': 'react-native-service-pipeline',
+        expo: 'expo-service-pipeline',
       },
       mandatoryJobs: ['lint', 'build'],
       supportedOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -396,7 +397,10 @@ export class CatalogService {
       return 'nextjs';
     }
 
-    if (normalizedId.includes('nestjs')) {
+    if (
+      (normalizedId.includes('nest') && !normalizedId.includes('react-native')) ||
+      normalizedCategories.includes('nestjs')
+    ) {
       return 'nestjs';
     }
 

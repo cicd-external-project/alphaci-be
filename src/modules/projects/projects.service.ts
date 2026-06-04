@@ -26,6 +26,7 @@ export interface CreateProjectResponse {
   githubCommitUrl: string | null;
   projectTypeId: string;
   workflowRecipeId: string;
+  additionalWorkflowPaths?: string[];
 }
 
 export interface SetupProjectResponse {
@@ -84,6 +85,10 @@ export class ProjectsService {
     accessToken: string,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
+    if (dto.repoShape === 'microservices') {
+      return this.createMicroservicesProject(userId, userLogin, accessToken, dto);
+    }
+
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
     const templateId = this.resolveTemplateId(dto.projectTypeId, dto.workflowRecipeId);
 
@@ -156,6 +161,154 @@ export class ProjectsService {
       githubCommitUrl: commitUrl,
       projectTypeId: dto.projectTypeId,
       workflowRecipeId: dto.workflowRecipeId ?? '',
+    };
+  }
+
+  // ─── POST /projects (microservices shape) ─────────────────────────────────
+
+  private async createMicroservicesProject(
+    userId: string,
+    _userLogin: string,
+    accessToken: string,
+    dto: CreateProjectDto,
+  ): Promise<CreateProjectResponse> {
+    if (!dto.microservicesConfig) {
+      throw new UnprocessableEntityException(
+        'microservicesConfig is required for microservices shape',
+      );
+    }
+
+    const { backend, frontend } = dto.microservicesConfig;
+
+    // 1. Resolve template IDs for both slots
+    const backendTemplateId = this.resolveTemplateId(
+      backend.projectTypeId,
+      backend.workflowRecipeId,
+    );
+    const frontendTemplateId = this.resolveTemplateId(
+      frontend.projectTypeId,
+      frontend.workflowRecipeId,
+    );
+
+    // 2. Build workflow YAML for both slots
+    const { generatedYaml: backendYaml, outputFileName: backendOutputFileName } =
+      await this.buildWorkflowYaml(
+        backendTemplateId,
+        backend.serviceName,
+        backend.servicePath,
+        dto.nodeVersion,
+        dto.coverageThreshold,
+      );
+
+    const { generatedYaml: frontendYaml, outputFileName: frontendOutputFileName } =
+      await this.buildWorkflowYaml(
+        frontendTemplateId,
+        frontend.serviceName,
+        frontend.servicePath,
+        dto.nodeVersion,
+        dto.coverageThreshold,
+      );
+
+    // 3. Create the GitHub repository once
+    const { repoUrl, ownerLogin, repoName } = await this.githubService.createRepo(
+      accessToken,
+      {
+        repoName: dto.repoName,
+        private: dto.visibility === 'private',
+      },
+    );
+
+    const repoFullName = `${ownerLogin}/${repoName}`;
+
+    // 4. Create uat and test branches from main once
+    for (const branch of ['uat', 'test'] as const) {
+      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+    }
+
+    // 5. Apply branch protection to all three branches once
+    for (const branch of ['test', 'uat', 'main'] as const) {
+      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+    }
+
+    // 6. Push backend workflow file
+    const backendWorkflowPath = `.github/workflows/${backendOutputFileName}`;
+    const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
+      await this.pushWorkflowFile(
+        accessToken,
+        ownerLogin,
+        repoName,
+        backendWorkflowPath,
+        backendYaml,
+      );
+
+    // 7. Save backend DB row
+    const backendRow = await this.projectsRepository.create({
+      userId,
+      repoFullName,
+      templateId: backendTemplateId,
+      serviceName: backend.serviceName,
+      workflowPath: backendWorkflowPath,
+      status: 'provisioned',
+      githubCommitSha: backendCommitSha,
+      githubCommitUrl: backendCommitUrl,
+      repoUrl,
+      visibility: dto.visibility,
+      repoShape: dto.repoShape ?? null,
+      projectTypeId: backend.projectTypeId,
+      workflowRecipeId: backend.workflowRecipeId ?? null,
+      projectOptions: dto.tests ? { tests: dto.tests } : {},
+    });
+
+    // 8. Push frontend workflow file + save frontend DB row.
+    //    Wrapped in try/catch: a failure here should not prevent returning the backend row.
+    const frontendWorkflowPath = `.github/workflows/${frontendOutputFileName}`;
+    const additionalWorkflowPaths: string[] = [];
+
+    try {
+      const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
+        await this.pushWorkflowFile(
+          accessToken,
+          ownerLogin,
+          repoName,
+          frontendWorkflowPath,
+          frontendYaml,
+        );
+
+      await this.projectsRepository.create({
+        userId,
+        repoFullName,
+        templateId: frontendTemplateId,
+        serviceName: frontend.serviceName,
+        workflowPath: frontendWorkflowPath,
+        status: 'provisioned',
+        githubCommitSha: frontendCommitSha,
+        githubCommitUrl: frontendCommitUrl,
+        repoUrl,
+        visibility: dto.visibility,
+        repoShape: dto.repoShape ?? null,
+        projectTypeId: frontend.projectTypeId,
+        workflowRecipeId: frontend.workflowRecipeId ?? null,
+        projectOptions: {},
+      });
+
+      additionalWorkflowPaths.push(frontendWorkflowPath);
+    } catch (err) {
+      this.logger.warn(
+        `Microservices project created but frontend workflow push/save failed: ${String(err)}`,
+      );
+    }
+
+    return {
+      id: backendRow.id,
+      repoFullName,
+      repoUrl,
+      status: 'provisioned',
+      workflowPath: backendWorkflowPath,
+      githubCommitSha: backendCommitSha,
+      githubCommitUrl: backendCommitUrl,
+      projectTypeId: backend.projectTypeId,
+      workflowRecipeId: backend.workflowRecipeId ?? '',
+      additionalWorkflowPaths,
     };
   }
 
