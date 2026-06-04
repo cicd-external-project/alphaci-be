@@ -188,20 +188,31 @@ export class GithubService {
     branchName: string,
     fromBranch: string,
   ): Promise<void> {
-    const refRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
+    // GitHub initialises the default branch asynchronously after repo creation.
+    // Retry resolving the ref for up to ~10 s before giving up.
+    let ref: { object: { sha: string } } | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+      }
+      const refRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
         },
-      },
-    );
-    if (!refRes.ok) {
-      throw new Error(`Could not resolve ref for ${fromBranch}`);
+      );
+      if (refRes.ok) {
+        ref = (await refRes.json()) as { object: { sha: string } };
+        break;
+      }
     }
-    const ref = (await refRes.json()) as { object: { sha: string } };
+    if (!ref) {
+      throw new Error(`Could not resolve ref for ${fromBranch} after retries`);
+    }
 
     const createRes = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/git/refs`,
