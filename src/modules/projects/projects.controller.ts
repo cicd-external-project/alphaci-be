@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -77,12 +78,15 @@ export class ProjectsController {
    */
   @Get()
   @UseGuards(SessionAuthGuard)
-  async listProjects(@Req() req: Request) {
+  async listProjects(@Req() req: Request, @Query('limit') limit?: string) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
 
-    return this.projectsService.listProjects(userId);
+    const parsedLimit = Number.parseInt(limit ?? '25', 10);
+    const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
+
+    return this.projectsService.listProjects(userId, safeLimit);
   }
 }

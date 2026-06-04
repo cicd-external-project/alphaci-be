@@ -214,8 +214,8 @@ export class ProjectsService {
 
   // ─── GET /projects ─────────────────────────────────────────────────────────
 
-  async listProjects(userId: string): Promise<ProvisionedProjectsResponse> {
-    const rows = await this.projectsRepository.listByUser(userId);
+  async listProjects(userId: string, limit = 25): Promise<ProvisionedProjectsResponse> {
+    const rows = await this.projectsRepository.listByUser(userId, limit);
     return {
       items: rows.map((row) => this.toProvisionedProject(row)),
     };
