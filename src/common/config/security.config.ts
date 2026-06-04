@@ -103,24 +103,19 @@ export const helmetConfigSwagger = {
 /**
  * corsOptions — CORS configuration factory.
  *
- * @param allowedOriginsEnv  The raw value of process.env.ALLOWED_ORIGINS —
- *                           a comma-separated list of allowed origins.
- *                           Example: "http://localhost:5173,https://app.example.com"
+ * @param allowedOriginsEnv   Comma-separated exact origins.
+ *                            Example: "http://localhost:3000,https://app.example.com"
+ * @param allowedPatternsEnv  Comma-separated regex patterns for origins that
+ *                            change per deployment (e.g. Vercel preview URLs).
+ *                            Example: "https://my-app-[^.]+\\.vercel\\.app"
  *
- * Threat addressed:
- *   - Cross-origin request forgery and data exfiltration via permissive CORS
- *   - Credential leakage to unapproved origins
- *
- * Security invariants enforced:
- *   1. Origins are whitelisted explicitly — wildcard (*) is never returned for
- *      credentialed requests.
- *   2. If ALLOWED_ORIGINS is absent or empty, CORS is denied for all origins
- *      (fails secure — the service operates in an API-only mode where the
- *      caller is responsible for network-level access control).
- *   3. Origin matching is exact string comparison (no prefix/suffix matching
- *      that could be bypassed with evil.example.com tricks).
+ * Security invariants:
+ *   1. Exact-match whitelist is checked first.
+ *   2. Pattern matching requires HTTPS — plain-HTTP patterns are rejected.
+ *   3. Wildcard (*) is never returned for credentialed requests.
+ *   4. No origin → allowed (server-to-server / health probes).
  */
-export function corsOptions(allowedOriginsEnv?: string): CorsOptions {
+export function corsOptions(allowedOriginsEnv?: string, allowedPatternsEnv?: string): CorsOptions {
   const whitelist = new Set(
     (allowedOriginsEnv ?? '')
       .split(',')
@@ -128,28 +123,40 @@ export function corsOptions(allowedOriginsEnv?: string): CorsOptions {
       .filter(Boolean),
   );
 
+  // Compile patterns once at startup — invalid regex is silently skipped.
+  const patterns: RegExp[] = (allowedPatternsEnv ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .flatMap((p) => {
+      try {
+        return [new RegExp(`^${p}$`)];
+      } catch {
+        return [];
+      }
+    });
+
+  function isAllowed(origin: string): boolean {
+    if (whitelist.has(origin)) return true;
+    // Only allow HTTPS origins via pattern — never plain HTTP in production.
+    if (origin.startsWith('https://')) {
+      return patterns.some((re) => re.test(origin));
+    }
+    return false;
+  }
+
   return {
     origin: (
       requestOrigin: string | undefined,
       callback: (err: Error | null, origin?: boolean | string) => void,
     ) => {
-      // Server-to-server / internal callers: browsers always send an Origin
-      // header, so a missing Origin means the request originates from a
-      // backend service, CLI tool, or health-check probe — not a browser.
-      // Allowing these is intentional and correct.
-      //
-      // SECURITY ASSUMPTION: this service is deployed behind an internal
-      // network boundary (VPC, private subnet, or mTLS peer authentication).
-      // It must NOT be exposed directly to the public internet without a
-      // network-level access control (e.g. API Gateway, load-balancer ACL,
-      // or service mesh policy) in front of it. CORS is a browser-only
-      // mechanism and provides zero protection against non-browser callers.
       if (!requestOrigin) {
+        // Server-to-server / CLI / health-check probe — no browser origin.
         callback(null, true);
         return;
       }
 
-      if (whitelist.has(requestOrigin)) {
+      if (isAllowed(requestOrigin)) {
         callback(null, true);
       } else {
         callback(new Error(`CORS: origin '${requestOrigin}' is not allowed`));
@@ -164,6 +171,6 @@ export function corsOptions(allowedOriginsEnv?: string): CorsOptions {
     ],
     exposedHeaders: ['X-Correlation-ID', 'X-Request-Id'],
     credentials: true,
-    maxAge: 86400, // 24 h preflight cache
+    maxAge: 86400,
   };
 }

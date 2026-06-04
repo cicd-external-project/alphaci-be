@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { BadGatewayException, ForbiddenException, Injectable, Logger, Optional, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
@@ -162,8 +162,19 @@ export class GithubService {
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`GitHub repo creation failed (${String(response.status)}): ${err}`);
+      const body = await response.text();
+      if (response.status === 403 || response.status === 401) {
+        throw new ForbiddenException(
+          `GitHub rejected repo creation (${String(response.status)}). ` +
+          `Ensure your OAuth token includes the 'repo' scope, then sign out and sign back in.`,
+        );
+      }
+      if (response.status === 422) {
+        throw new UnprocessableEntityException(
+          `Repository already exists or name is invalid: ${body}`,
+        );
+      }
+      throw new BadGatewayException(`GitHub repo creation failed (${String(response.status)}): ${body}`);
     }
 
     const repo = (await response.json()) as {
@@ -188,20 +199,34 @@ export class GithubService {
     branchName: string,
     fromBranch: string,
   ): Promise<void> {
-    const refRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
+    // GitHub initialises the default branch asynchronously after repo creation.
+    // Retry resolving the ref for up to ~10 s before giving up.
+    let ref: { object: { sha: string } } | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+      }
+      const refRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
         },
-      },
-    );
-    if (!refRes.ok) {
-      throw new Error(`Could not resolve ref for ${fromBranch}`);
+      );
+      if (refRes.ok) {
+        ref = (await refRes.json()) as { object: { sha: string } };
+        break;
+      }
     }
-    const ref = (await refRes.json()) as { object: { sha: string } };
+    if (!ref) {
+      throw new BadGatewayException(
+        `Could not resolve '${fromBranch}' branch on GitHub after retries. ` +
+        `The repository may not have initialised yet — please retry in a few seconds.`,
+      );
+    }
 
     const createRes = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/git/refs`,
@@ -218,7 +243,7 @@ export class GithubService {
     );
     if (!createRes.ok) {
       const err = await createRes.text();
-      throw new Error(`Branch ${branchName} creation failed: ${err}`);
+      throw new BadGatewayException(`Branch '${branchName}' creation failed (${String(createRes.status)}): ${err}`);
     }
   }
 

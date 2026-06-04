@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
@@ -39,6 +39,7 @@ interface GitHubNormalizedUser {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly config: AppConfig;
 
   constructor(
@@ -50,7 +51,7 @@ export class AuthService {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
 
-  startGitHubAuth(request: Request, returnTo?: string): string {
+  async startGitHubAuth(request: Request, returnTo?: string): Promise<string> {
     const safeReturnTo = this.normalizeReturnTo(returnTo);
 
     if (!this.hasGitHubCredentials()) {
@@ -61,6 +62,13 @@ export class AuthService {
     request.session.oauthState = state;
     request.session.oauthReturnTo = safeReturnTo;
     request.session.oauthProvider = 'github';
+
+    // Explicitly save the session before redirecting so the oauth state is
+    // guaranteed to be in the store when GitHub calls back — avoids a race
+    // where NestJS flushes the response before express-session's res.end hook.
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((err) => (err ? reject(err) : resolve()));
+    });
 
     return this.buildGitHubAuthorizationUrl(state);
   }
@@ -149,7 +157,11 @@ export class AuthService {
       });
 
       return this.withQuery(returnTo, 'auth', 'success');
-    } catch {
+    } catch (err) {
+      this.logger.error(
+        `OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
       return this.withQuery(returnTo, 'auth', 'failed');
     }
   }
