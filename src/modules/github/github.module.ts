@@ -11,5 +11,6 @@ import { GithubService } from './github.service';
   imports: [DatabaseModule, PersistenceModule],
   controllers: [GithubController],
   providers: [GithubService, GithubInstallationsRepository, SessionAuthGuard],
+  exports: [GithubService],
 })
 export class GithubModule {}
