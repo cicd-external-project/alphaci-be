@@ -37,6 +37,7 @@ const makeSubscriptionService = () =>
       redirectUrl: 'https://checkout.paymongo.com/test',
     }),
     getCheckoutStatus: jest.fn().mockResolvedValue({ status: 'pending' }),
+    handlePayMongoWebhook: jest.fn().mockResolvedValue({ received: true }),
     activateForUser: jest.fn().mockResolvedValue(fakeProSub),
     cancelForUser: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionService;
@@ -105,9 +106,23 @@ describe('SubscriptionController', () => {
       expect(result).toEqual({ subscription: fakeProSub });
     });
 
-    it('activates enterprise when specified', async () => {
-      await controller.activateMonthly(makeRequest(), { plan: 'enterprise' });
-      expect(service.activateForUser).toHaveBeenCalledWith(fakeUser, 'enterprise');
+    it('activates pro when specified', async () => {
+      await controller.activateMonthly(makeRequest(), { plan: 'pro' });
+      expect(service.activateForUser).toHaveBeenCalledWith(fakeUser, 'pro');
+    });
+  });
+
+  describe('handlePayMongoWebhook', () => {
+    it('delegates PayMongo webhook payload to service', async () => {
+      const payload = { data: { type: 'checkout_session.payment.paid' } };
+
+      const result = await controller.handlePayMongoWebhook(payload, 'whsec_test_123');
+
+      expect(service.handlePayMongoWebhook).toHaveBeenCalledWith(
+        payload,
+        'whsec_test_123',
+      );
+      expect(result).toEqual({ received: true });
     });
   });
 

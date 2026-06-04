@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Req,
@@ -17,11 +18,11 @@ import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { SubscriptionService } from './subscription.service';
 
 @Controller('subscription')
-@UseGuards(SessionAuthGuard)
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 
   @Get('me')
+  @UseGuards(SessionAuthGuard)
   async getSubscription(@Req() req: Request) {
     const user = this.getUser(req);
 
@@ -31,12 +32,14 @@ export class SubscriptionController {
   }
 
   @Post('checkout')
+  @UseGuards(SessionAuthGuard)
   async createCheckout(@Req() req: Request, @Body() body: CreateCheckoutDto) {
     const user = this.getUser(req);
     return this.subscriptionService.createCheckoutSession(user, body.plan);
   }
 
   @Get('checkout/:checkoutId/status')
+  @UseGuards(SessionAuthGuard)
   async getCheckoutStatus(
     @Req() req: Request,
     @Param('checkoutId') checkoutId: string,
@@ -46,6 +49,7 @@ export class SubscriptionController {
   }
 
   @Post('monthly/activate')
+  @UseGuards(SessionAuthGuard)
   async activateMonthly(
     @Req() req: Request,
     @Body() body: ActivateSubscriptionDto,
@@ -54,8 +58,17 @@ export class SubscriptionController {
   }
 
   @Post('monthly/cancel')
+  @UseGuards(SessionAuthGuard)
   async cancelMonthly(@Req() req: Request) {
     return this.cancelInternal(req);
+  }
+
+  @Post('webhooks/paymongo')
+  async handlePayMongoWebhook(
+    @Body() body: unknown,
+    @Headers('x-paymongo-signature') signature?: string,
+  ) {
+    return this.subscriptionService.handlePayMongoWebhook(body, signature);
   }
 
   private async activateInternal(req: Request, body: ActivateSubscriptionDto) {

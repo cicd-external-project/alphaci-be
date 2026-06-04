@@ -274,7 +274,9 @@ export class SubscriptionsRepository {
     row: PersistedSubscriptionRow,
   ): SubscriptionState {
     const provider: SubscriptionState['provider'] =
-      row.provider === 'manual' || row.provider === 'mock'
+      row.provider === 'manual' ||
+      row.provider === 'mock' ||
+      row.provider === 'paymongo'
         ? row.provider
         : 'supabase';
 

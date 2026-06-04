@@ -33,6 +33,8 @@ const makeConfig = (overrides: Partial<{
   mockEnabled: boolean;
   defaultPlan: string;
   seededPlans: Record<string, string>;
+  paymentProvider: string;
+  paymongoSecretKey: string;
 }> = {}) => ({
   getOrThrow: jest.fn().mockReturnValue({
     subscription: {
@@ -40,6 +42,13 @@ const makeConfig = (overrides: Partial<{
       defaultPlan: overrides.defaultPlan ?? 'free',
       seededPlans: overrides.seededPlans ?? {},
       proMonthlyPricePhp: 300,
+      paymentProvider: overrides.paymentProvider ?? 'none',
+      successUrl: 'http://localhost:3000/subscribe?status=success',
+      cancelUrl: 'http://localhost:3000/subscribe?status=cancelled',
+      paymongo: {
+        secretKey: overrides.paymongoSecretKey ?? '',
+        webhookSecret: 'whsec_test_123',
+      },
     },
     frontendUrl: 'http://localhost:3000',
   }),
@@ -79,6 +88,19 @@ async function createService(
 }
 
 describe('SubscriptionService', () => {
+  let fetchMock: jest.Mock;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
   describe('getForUser', () => {
     it('returns existing subscription when one exists', async () => {
       const { service, subsRepo } = await createService();
@@ -111,19 +133,136 @@ describe('SubscriptionService', () => {
   });
 
   describe('createCheckoutSession', () => {
-    it('always throws ServiceUnavailableException (payment gateway removed)', async () => {
+    it('throws ServiceUnavailableException when payment provider is not configured', async () => {
       const { service } = await createService();
       await expect(service.createCheckoutSession(fakeUser, 'pro')).rejects.toThrow(
         ServiceUnavailableException,
       );
     });
+
+    it('creates a PayMongo hosted checkout session for Pro Monthly', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'cs_paymongo_123',
+            attributes: {
+              status: 'active',
+              checkout_url: 'https://checkout.paymongo.com/cs_paymongo_123',
+              metadata: { userId: 'user-1', plan: 'pro' },
+            },
+          },
+        }),
+      } as unknown as Response);
+
+      const { service } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      const result = await service.createCheckoutSession(fakeUser, 'pro');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.paymongo.com/v2/checkout_sessions',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: expect.stringMatching(/^Basic /),
+          }),
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        data: {
+          attributes: {
+            line_items: [
+              {
+                currency: 'PHP',
+                amount: 30000,
+                name: 'FlowCI Studio Pro Monthly',
+                quantity: 1,
+              },
+            ],
+            success_url: 'http://localhost:3000/subscribe?status=success',
+            cancel_url: 'http://localhost:3000/subscribe?status=cancelled',
+            payment_method_types: ['card', 'gcash', 'qrph'],
+            metadata: { userId: 'user-1', plan: 'pro' },
+          },
+        },
+      });
+      expect(result).toEqual({
+        checkoutId: 'cs_paymongo_123',
+        status: 'active',
+        redirectUrl: 'https://checkout.paymongo.com/cs_paymongo_123',
+        metadata: { userId: 'user-1', plan: 'pro' },
+      });
+    });
   });
 
   describe('getCheckoutStatus', () => {
-    it('always throws ServiceUnavailableException (payment gateway removed)', async () => {
-      const { service } = await createService();
-      await expect(service.getCheckoutStatus(fakeUser, 'cs_123')).rejects.toThrow(
-        ServiceUnavailableException,
+    it('activates Pro after a paid PayMongo checkout session', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'cs_paymongo_123',
+            attributes: {
+              status: 'paid',
+              metadata: { userId: 'user-1', plan: 'pro' },
+            },
+          },
+        }),
+      } as unknown as Response);
+
+      const { service, subsRepo, outboxRepo } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      const result = await service.getCheckoutStatus(fakeUser, 'cs_paymongo_123');
+
+      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
+        'user-1',
+        'pro_monthly',
+        300,
+        'paymongo',
+      );
+      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'subscription.activated' }),
+      );
+      expect(result.status).toBe('paid');
+      expect(result.subscription?.plan).toBe('pro');
+    });
+  });
+
+  describe('handlePayMongoWebhook', () => {
+    it('activates Pro when PayMongo sends a paid checkout webhook', async () => {
+      const { service, subsRepo, outboxRepo } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      await expect(
+        service.handlePayMongoWebhook({
+          data: {
+            type: 'checkout_session.payment.paid',
+            data: {
+              attributes: {
+                metadata: { userId: 'user-1', plan: 'pro' },
+              },
+            },
+          },
+        }, 'whsec_test_123'),
+      ).resolves.toEqual({ received: true });
+
+      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
+        'user-1',
+        'pro_monthly',
+        300,
+        'paymongo',
+      );
+      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'subscription.activated' }),
       );
     });
   });
