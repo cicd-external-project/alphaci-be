@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join, isAbsolute, resolve } from 'node:path';
 
@@ -29,6 +30,7 @@ export interface ProjectOptionSet {
 export interface ProjectTypeOption {
   id: string;
   label: string;
+  kind?: 'frontend' | 'backend';
   runtime?: string;
   language: string;
   framework: string;
@@ -46,6 +48,7 @@ export interface WorkflowRecipeOption {
   description?: string;
   supportedProjectTypes: string[];
   templateByProjectType: Record<string, string>;
+  workflowRefByProjectType?: Record<string, string>;
   mandatoryJobs?: string[];
   supportedOptions: ProjectOptionSet;
   optionJobs: Partial<Record<'lint' | 'unit' | 'build' | 'coverage' | 'security' | 'docker' | 'e2e', string>>;
@@ -212,21 +215,48 @@ interface WorkflowPropertiesFile {
   filePatterns?: string[];
 }
 
+interface EngineStackFile {
+  key?: string;
+  label?: string;
+  kind?: 'frontend' | 'backend' | string;
+  runtime?: string;
+  serviceWorkflow?: string;
+}
+
+interface EngineWorkflowRefsFile {
+  currentStable?: string;
+  repository?: string;
+  workflows?: Record<string, string>;
+}
+
 @Injectable()
 export class CatalogService {
   private readonly logger = new Logger(CatalogService.name);
   private readonly config: AppConfig;
   private cache: { loadedAt: number; templates: WorkflowTemplate[] } | null =
     null;
+  private projectOptionsCache: ProjectOptionsResult | null = null;
   private readonly cacheTtlMs = 20_000;
 
   constructor(private readonly configService: ConfigService) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
 
-  /** Returns the static project-options catalog (repo shapes, project types, recipes). */
   getProjectOptions(): ProjectOptionsResult {
-    return STATIC_PROJECT_OPTIONS;
+    if (this.projectOptionsCache) {
+      return this.projectOptionsCache;
+    }
+
+    try {
+      const options = this.loadEngineProjectOptions();
+      this.projectOptionsCache = options;
+      return options;
+    } catch (error) {
+      this.logger.warn(
+        `Could not load engine project catalog; using static fallback: ${(error as Error).message}`,
+      );
+      return STATIC_PROJECT_OPTIONS;
+    }
   }
 
   async listCategories() {
@@ -298,10 +328,7 @@ export class CatalogService {
     // stable regardless of the process working directory — critical in Docker
     // where cwd is /app, not the project root. In production, set an absolute
     // TEMPLATE_REPO_PATH in your environment or Dockerfile to be explicit.
-    const configuredPath = this.config.templates.repoPath;
-    const anchoredRepoPath = isAbsolute(configuredPath)
-      ? configuredPath
-      : resolve(__dirname, configuredPath);
+    const anchoredRepoPath = this.resolveTemplateRepoPath();
 
     const templatesRoot = join(
       anchoredRepoPath,
@@ -372,6 +399,152 @@ export class CatalogService {
     };
 
     return templates;
+  }
+
+  private loadEngineProjectOptions(): ProjectOptionsResult {
+    const catalogRoot = join(this.resolveTemplateRepoPath(), 'catalog');
+    const stacks = this.readCatalogJson<EngineStackFile[]>(catalogRoot, 'stacks.json');
+    this.readCatalogJson<unknown[]>(catalogRoot, 'actions.json');
+    this.readCatalogJson<unknown[]>(catalogRoot, 'providers.json');
+    this.readCatalogJson<unknown[]>(catalogRoot, 'plans.json');
+    const workflowRefs = this.readCatalogJson<EngineWorkflowRefsFile>(
+      catalogRoot,
+      'workflow-refs.json',
+    );
+
+    const usableStacks = stacks.filter(
+      (stack): stack is Required<Pick<EngineStackFile, 'key' | 'label'>> &
+        EngineStackFile =>
+        typeof stack.key === 'string' &&
+        stack.key.length > 0 &&
+        typeof stack.label === 'string' &&
+        stack.label.length > 0,
+    );
+
+    if (usableStacks.length === 0) {
+      throw new Error('stacks.json did not contain usable stacks');
+    }
+
+    const projectTypes = usableStacks.map((stack) => {
+      const repoShapes =
+        stack.kind === 'backend'
+          ? ['standalone', 'multi', 'microservices']
+          : ['standalone', 'mono', 'microservices'];
+
+      return {
+        id: stack.key,
+        label: stack.label,
+        kind: stack.kind === 'backend' ? 'backend' : 'frontend',
+        runtime: stack.runtime ?? 'node',
+        language: 'TypeScript',
+        framework: stack.label,
+        repoShapes,
+        defaultRecipe: 'standard',
+        allowedRecipes: ['standard', 'minimal'],
+        defaultOptions: { lint: true, unit: true, build: true, coverage: true },
+      } satisfies ProjectTypeOption;
+    });
+
+    const templateByProjectType = Object.fromEntries(
+      usableStacks.map((stack) => [
+        stack.key,
+        this.templateIdForStack(stack.key, stack.serviceWorkflow),
+      ]),
+    );
+    const workflowRefByProjectType = Object.fromEntries(
+      usableStacks.map((stack) => [
+        stack.key,
+        this.workflowRefForStack(stack.serviceWorkflow, workflowRefs),
+      ]),
+    );
+    const supportedProjectTypes = usableStacks.map((stack) => stack.key);
+
+    return {
+      repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
+      projectTypes,
+      recipes: [
+        {
+          id: 'standard',
+          label: 'Standard',
+          description: 'Full CI pipeline generated from the workflow engine catalog.',
+          supportedProjectTypes,
+          templateByProjectType,
+          workflowRefByProjectType,
+          mandatoryJobs: ['lint', 'build'],
+          supportedOptions: {
+            lint: true,
+            unit: true,
+            build: true,
+            coverage: true,
+            security: true,
+            docker: true,
+            e2e: true,
+          },
+          optionJobs: {
+            lint: 'lint',
+            unit: 'test',
+            coverage: 'coverage',
+            security: 'security-scan',
+            docker: 'docker-build',
+            e2e: 'e2e',
+          },
+        },
+        {
+          id: 'minimal',
+          label: 'Minimal',
+          description: 'Lightweight CI generated from the workflow engine catalog.',
+          supportedProjectTypes,
+          templateByProjectType,
+          workflowRefByProjectType,
+          mandatoryJobs: ['lint', 'build'],
+          supportedOptions: { lint: true, unit: true, build: true },
+          optionJobs: { lint: 'lint', unit: 'test' },
+        },
+      ],
+    };
+  }
+
+  private readCatalogJson<T>(catalogRoot: string, fileName: string): T {
+    const raw = readFileSync(join(catalogRoot, fileName), 'utf8');
+    return JSON.parse(raw) as T;
+  }
+
+  private resolveTemplateRepoPath(): string {
+    const configuredPath = this.config.templates.repoPath;
+    return isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(__dirname, configuredPath);
+  }
+
+  private templateIdForStack(stackKey: string, serviceWorkflow?: string): string {
+    const workflowKeyMap: Record<string, string> = {
+      nextjsService: 'nextjs-service-pipeline',
+      nestjsService: 'nest-service-pipeline',
+      nodeService: 'nodejs-service-pipeline',
+      reactService: 'react-service-pipeline',
+      reactNativeService: 'react-native-service-pipeline',
+      expoService: 'expo-service-pipeline',
+    };
+
+    return serviceWorkflow
+      ? workflowKeyMap[serviceWorkflow] ?? `${stackKey}-service-pipeline`
+      : `${stackKey}-service-pipeline`;
+  }
+
+  private workflowRefForStack(
+    serviceWorkflow: string | undefined,
+    refs: EngineWorkflowRefsFile,
+  ): string {
+    if (!serviceWorkflow || !refs.repository || !refs.currentStable) {
+      return '';
+    }
+
+    const workflowPath = refs.workflows?.[serviceWorkflow];
+    if (!workflowPath) {
+      return '';
+    }
+
+    return `${refs.repository}/${workflowPath}@${refs.currentStable}`;
   }
 
   private inferStack(
