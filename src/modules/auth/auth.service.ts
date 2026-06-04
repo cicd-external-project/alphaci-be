@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
@@ -39,6 +39,7 @@ interface GitHubNormalizedUser {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly config: AppConfig;
 
   constructor(
@@ -149,7 +150,11 @@ export class AuthService {
       });
 
       return this.withQuery(returnTo, 'auth', 'success');
-    } catch {
+    } catch (err) {
+      this.logger.error(
+        `OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
       return this.withQuery(returnTo, 'auth', 'failed');
     }
   }
