@@ -32,16 +32,22 @@ export class GithubController {
     @Req() req: Request,
     @Body() body: LinkInstallationDto,
   ) {
-    // SessionAuthGuard guarantees req.session.user is populated before this runs.
-    const userId = req.session.user!.id;
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      return { reposLinked: 0, repositorySelection: 'selected' };
+    }
+
     return this.githubService.linkInstallation(userId, body.installationId);
   }
 
   /** GET /github/installations/repos — list repos linked via GitHub App */
   @Get('installations/repos')
   async listLinkedRepos(@Req() req: Request) {
-    // SessionAuthGuard guarantees req.session.user is populated before this runs.
-    const userId = req.session.user!.id;
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      return { repos: [] };
+    }
+
     const repos = await this.githubService.listLinkedRepos(userId);
     return { repos };
   }
@@ -49,8 +55,11 @@ export class GithubController {
   /** GET /github/installations/accounts — list GitHub App installation accounts */
   @Get('installations/accounts')
   async listInstallationAccounts(@Req() req: Request) {
-    // SessionAuthGuard guarantees req.session.user is populated before this runs.
-    const userId = req.session.user!.id;
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      return { accounts: [] };
+    }
+
     const installations = await this.githubService.listInstallationAccounts(userId);
     const accounts = installations.map((inst) => ({
       installationId: inst.installationId,

@@ -93,13 +93,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.url,
     };
 
-    if (statusCode === 429) {
-      // Add Retry-After so clients (including browsers following redirects) can
-      // back off intelligently. The ThrottlerGuard TTL is 60 s; we default to
-      // that value rather than parsing the specific guard configuration here.
-      response.setHeader('Retry-After', '60');
-    }
-
     response.status(statusCode).json(body);
   }
 }

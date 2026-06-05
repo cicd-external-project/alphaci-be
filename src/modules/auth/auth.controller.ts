@@ -12,7 +12,6 @@ import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 
 import type { AppConfig } from '../../config/app.config';
-import { DevOnlyGuard } from '../../common/guards/dev-only.guard';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { AuthService } from './auth.service';
@@ -41,7 +40,6 @@ export class AuthController {
     return res.redirect(redirectUrl);
   }
 
-  @SkipThrottle()
   @Get('github/callback')
   async githubCallback(
     @Req() req: Request,
@@ -59,7 +57,6 @@ export class AuthController {
 
   /** GET /auth/config-check — non-sensitive config diagnostic (no secrets exposed) */
   @SkipThrottle()
-  @UseGuards(DevOnlyGuard)
   @Get('config-check')
   configCheck() {
     const cfg = this.configService.getOrThrow<AppConfig>('app');
