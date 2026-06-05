@@ -61,6 +61,7 @@ const makeOutboxRepo = () =>
 const makeOAuthStateRepo = (overrides?: Partial<OAuthStateRepository>) =>
   ({
     save: jest.fn().mockResolvedValue(undefined),
+    pruneExpired: jest.fn().mockResolvedValue(0),
     findAndDelete: jest.fn().mockResolvedValue({
       returnTo: 'http://localhost:3000',
       provider: 'github',

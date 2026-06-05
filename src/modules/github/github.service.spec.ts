@@ -44,6 +44,7 @@ const appConfig: AppConfig = {
     workflowDir: 'workflow-templates',
   },
   subscription: {
+    gateEnabled: true,
     mockEnabled: true,
     defaultPlan: 'free',
     seededPlans: {},
