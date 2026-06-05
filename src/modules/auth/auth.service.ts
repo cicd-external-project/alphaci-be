@@ -67,6 +67,14 @@ export class AuthService {
     // because state lives in Supabase, not the session store.
     await this.oauthStateRepository.save(state, safeReturnTo, 'github');
 
+    // Probabilistic cleanup: prune expired rows on ~5% of login starts.
+    // This keeps the table lean without adding a cron dependency. The prune
+    // is fire-and-forget (errors are caught inside pruneExpired) so it never
+    // blocks or fails the login flow.
+    if (Math.random() < 0.05) {
+      void this.oauthStateRepository.pruneExpired();
+    }
+
     return this.buildGitHubAuthorizationUrl(state);
   }
 
@@ -143,6 +151,21 @@ export class AuthService {
       );
       await this.establishSession(request, persistedUser);
       request.session.githubAccessToken = result.accessToken;
+      // Persist the access token to the store. `session.regenerate()` inside
+      // `establishSession` saves userId + user, but subsequent writes to
+      // `request.session` after the regenerate promise resolves are NOT
+      // automatically flushed with `resave: false`. An explicit save is
+      // required to guarantee the token reaches the session store before we
+      // redirect the browser.
+      await new Promise<void>((resolve, reject) => {
+        request.session.save((err) => {
+          if (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
+          resolve();
+        });
+      });
 
       await this.outboxRepository.publishLater({
         topic: 'user.signed_in',

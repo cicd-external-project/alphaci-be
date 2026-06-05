@@ -50,4 +50,27 @@ export class OAuthStateRepository {
 
     return { returnTo: row.return_to, provider: row.provider };
   }
+
+  /**
+   * pruneExpired — deletes all rows with expires_at <= NOW().
+   *
+   * Delegates to the clean_expired_oauth_states() DB function defined in
+   * 20260605_oauth_states.sql. This is a best-effort fire-and-forget call;
+   * failures are logged but do not affect the caller.
+   *
+   * Call this periodically from application code (e.g. probabilistic on save)
+   * or wire pg_cron to run it automatically in the database.
+   */
+  async pruneExpired(): Promise<void> {
+    try {
+      await this.databaseService.query(
+        `SELECT clean_expired_oauth_states();`,
+        [],
+      );
+    } catch (err) {
+      this.logger.warn(
+        `OAuth state prune failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
