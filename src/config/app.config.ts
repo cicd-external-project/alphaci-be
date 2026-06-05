@@ -19,6 +19,7 @@ export interface AppConfig {
     workflowDir: string;
   };
   subscription: {
+    gateEnabled: boolean;
     mockEnabled: boolean;
     defaultPlan: SubscriptionPlan;
     seededPlans: Record<string, SubscriptionPlan>;
@@ -79,6 +80,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       workflowDir: env['TEMPLATE_WORKFLOW_DIR'] ?? 'workflow-templates',
     },
     subscription: {
+      gateEnabled: env['SUBSCRIPTION_GATE_ENABLED'] !== 'false',
       mockEnabled: env['SUBSCRIPTION_MOCK_ENABLED'] === 'true',
       defaultPlan:
         (env['SUBSCRIPTION_MOCK_DEFAULT_PLAN'] as

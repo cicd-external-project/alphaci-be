@@ -58,6 +58,21 @@ export class SubscriptionService {
   }
 
   async getForUser(user: SessionUser): Promise<SubscriptionState> {
+    if (this.config.subscription.gateEnabled === false) {
+      return {
+        plan: 'pro' as SubscriptionPlan,
+        status: 'active' as const,
+        provider: 'manual' as const,
+        updatedAt: new Date().toISOString(),
+        planCode: 'pro_monthly',
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        amountPhp: 0,
+        interval: 'month' as const,
+      };
+    }
+
     const existing = await this.subscriptionsRepository.getCurrentByUserId(
       user.id,
     );
