@@ -21,6 +21,7 @@ import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
+import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { ProjectsModule } from './modules/projects/projects.module.js';
     SubscriptionModule,
     WorkflowsModule,
     ProjectsModule,
+    ExistingReposModule,
   ],
   controllers: [AppController],
   providers: [

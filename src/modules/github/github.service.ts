@@ -40,6 +40,22 @@ interface GitHubInstallationRepositoriesResponse {
   repositories?: Array<{ full_name?: string }>;
 }
 
+interface GitHubContentResponse {
+  content?: string;
+  encoding?: string;
+  sha?: string;
+}
+
+interface GitHubContentsWriteResponse {
+  content?: { html_url?: string };
+  commit?: { sha?: string; html_url?: string };
+}
+
+interface GitHubPullRequestResponse {
+  number?: number;
+  html_url?: string;
+}
+
 export interface GitHubRepo {
   id: number;
   name: string;
@@ -351,6 +367,149 @@ export class GithubService {
       const err = await createRes.text();
       throw new BadGatewayException(`Branch '${branchName}' creation failed (${String(createRes.status)}): ${err}`);
     }
+  }
+
+  async getFileContent(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    filePath: string,
+    ref: string,
+  ): Promise<string | null> {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub file read failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as GitHubContentResponse;
+    if (!payload.content || payload.encoding !== 'base64') {
+      return null;
+    }
+
+    return Buffer.from(payload.content, 'base64').toString('utf8');
+  }
+
+  async putFileContent(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    filePath: string,
+    content: string,
+    branch: string,
+    message: string,
+  ): Promise<{ commitSha: string; commitUrl: string | null }> {
+    const encodedContent = Buffer.from(content, 'utf8').toString('base64');
+    let existingSha: string | undefined;
+
+    const checkRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (checkRes.ok) {
+      const existing = (await checkRes.json()) as GitHubContentResponse;
+      existingSha = existing.sha;
+    } else if (checkRes.status !== 404) {
+      const body = await checkRes.text();
+      throw new BadGatewayException(
+        `GitHub file lookup failed (${String(checkRes.status)}): ${body}`,
+      );
+    }
+
+    const body: Record<string, unknown> = {
+      message,
+      content: encodedContent,
+      branch,
+    };
+
+    if (existingSha) {
+      body.sha = existingSha;
+    }
+
+    const putRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (!putRes.ok) {
+      const errorBody = await putRes.text();
+      throw new BadGatewayException(
+        `GitHub file write failed (${String(putRes.status)}): ${errorBody}`,
+      );
+    }
+
+    const payload = (await putRes.json()) as GitHubContentsWriteResponse;
+    return {
+      commitSha: payload.commit?.sha ?? '',
+      commitUrl: payload.commit?.html_url ?? payload.content?.html_url ?? null,
+    };
+  }
+
+  async createPullRequest(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    pullRequest: { title: string; head: string; base: string; body?: string },
+  ): Promise<{ number: number; htmlUrl: string }> {
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(pullRequest),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub pull request creation failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as GitHubPullRequestResponse;
+    if (!payload.number || !payload.html_url) {
+      throw new BadGatewayException('GitHub pull request response was incomplete');
+    }
+
+    return { number: payload.number, htmlUrl: payload.html_url };
   }
 
   async applyBranchProtection(
