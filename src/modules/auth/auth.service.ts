@@ -6,6 +6,7 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '../../config/app.config';
 import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import { OAuthStateRepository } from '../persistence/oauth-state.repository';
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 import { UsersRepository } from '../persistence/users.repository';
@@ -47,6 +48,7 @@ export class AuthService {
     private readonly usersRepository: UsersRepository,
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
+    private readonly oauthStateRepository: OAuthStateRepository,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
@@ -59,16 +61,11 @@ export class AuthService {
     }
 
     const state = randomUUID();
-    request.session.oauthState = state;
-    request.session.oauthReturnTo = safeReturnTo;
-    request.session.oauthProvider = 'github';
 
-    // Explicitly save the session before redirecting so the oauth state is
-    // guaranteed to be in the store when GitHub calls back — avoids a race
-    // where NestJS flushes the response before express-session's res.end hook.
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    // Store OAuth state in DB — eliminates the session cookie dependency for
+    // state verification. The cookie race condition on cold starts is moot
+    // because state lives in Supabase, not the session store.
+    await this.oauthStateRepository.save(state, safeReturnTo, 'github');
 
     return this.buildGitHubAuthorizationUrl(state);
   }
@@ -118,18 +115,19 @@ export class AuthService {
     code?: string,
     state?: string,
   ): Promise<string> {
-    const returnTo = request.session.oauthReturnTo ?? this.config.frontendUrl;
+    // Look up and atomically delete the state record from DB.
+    // This is the authoritative source — session state is no longer consulted.
+    const oauthRecord =
+      code && state
+        ? await this.oauthStateRepository.findAndDelete(state)
+        : null;
+
+    const returnTo = oauthRecord?.returnTo ?? this.config.frontendUrl;
 
     const isInvalidState =
-      !code ||
-      !state ||
-      state !== request.session.oauthState ||
-      request.session.oauthProvider !== 'github';
+      !code || !state || oauthRecord?.provider !== 'github';
 
     if (isInvalidState) {
-      delete request.session.oauthState;
-      delete request.session.oauthReturnTo;
-      delete request.session.oauthProvider;
       return this.withQuery(returnTo, 'auth', 'invalid_state');
     }
 
