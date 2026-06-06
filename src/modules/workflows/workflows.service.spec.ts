@@ -142,6 +142,12 @@ describe('WorkflowsService', () => {
       expect(result.workflowFiles[1]?.yaml).toContain(
         "conclusion == 'success'",
       );
+      expect(result.workflowFiles[1]?.yaml).toContain(
+        'cicd-external-project/cicd-workflow/.github/workflows/backend-tests.yml@v1',
+      );
+      expect(result.workflowFiles[1]?.yaml).toContain(
+        'https://flowci-be-test.onrender.com/api/v1/ci/validate',
+      );
       expect(result.workflowFiles[2]?.yaml).toContain('FlowCI Quality');
       expect(result.workflowFiles[2]?.yaml).toContain(
         "conclusion == 'success'",
