@@ -56,12 +56,12 @@ export class GithubService {
     userId: string,
     installationId: number,
   ): Promise<{ reposLinked: number; repositorySelection: 'all' | 'selected' }> {
-    // A production implementation would call
-    //   GET /app/installations/:installation_id  (GitHub App JWT auth)
-    // to obtain account_login, account_id, repository_selection, etc.
+    // TODO: call GET /app/installations/:installation_id (GitHub App JWT auth) to obtain
+    // account_login, account_id, and repository_selection from GitHub rather than defaulting.
+    // Defaulting to 'all' unblocks repo creation until real JWT verification is implemented.
 
     let reposLinked = 0;
-    let repositorySelection: 'all' | 'selected' = 'selected';
+    let repositorySelection: 'all' | 'selected' = 'all';
 
     if (this.githubInstallationsRepository) {
       try {
