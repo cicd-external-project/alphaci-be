@@ -73,6 +73,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'Next.js',
+      starterPath: 'starters/nextjs',
       repoShapes: ['standalone', 'mono', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
@@ -84,6 +85,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'React',
+      starterPath: 'starters/react',
       repoShapes: ['standalone', 'mono', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
@@ -95,6 +97,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'NestJS',
+      starterPath: 'starters/nestjs',
       repoShapes: ['standalone', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
@@ -106,6 +109,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'Express/Fastify',
+      starterPath: 'starters/nodejs',
       repoShapes: ['standalone', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
@@ -117,6 +121,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'React Native',
+      starterPath: 'starters/react-native',
       repoShapes: ['standalone'],
       defaultRecipe: 'mobile',
       allowedRecipes: ['mobile', 'minimal'],
@@ -128,6 +133,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       runtime: 'node',
       language: 'TypeScript',
       framework: 'Expo',
+      starterPath: 'starters/expo',
       repoShapes: ['standalone'],
       defaultRecipe: 'mobile',
       allowedRecipes: ['mobile', 'minimal'],
@@ -286,6 +292,20 @@ export class CatalogService {
   async getTemplateById(templateId: string): Promise<WorkflowTemplate | null> {
     const templates = await this.getTemplates();
     return templates.find((template) => template.id === templateId) ?? null;
+  }
+
+  getResolvedStarterPath(projectTypeId: string): string | null {
+    const option = STATIC_PROJECT_OPTIONS.projectTypes.find(
+      (pt) => pt.id === projectTypeId,
+    );
+    if (!option?.starterPath) return null;
+
+    const configuredPath = this.config.templates.repoPath;
+    const anchoredRepoPath = isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(__dirname, configuredPath);
+
+    return join(anchoredRepoPath, option.starterPath);
   }
 
   private async getTemplates(): Promise<WorkflowTemplate[]> {

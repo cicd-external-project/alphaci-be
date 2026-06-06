@@ -44,6 +44,16 @@ export class MicroservicesConfigDto {
   frontend!: MicroserviceSlotDto;
 }
 
+export class MultiRepoConfigDto {
+  @ValidateNested()
+  @Type(() => MicroserviceSlotDto)
+  backend!: MicroserviceSlotDto;
+
+  @ValidateNested()
+  @Type(() => MicroserviceSlotDto)
+  frontend!: MicroserviceSlotDto;
+}
+
 export class CreateProjectDto {
   @IsString()
   @MinLength(1)
@@ -98,4 +108,9 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => MicroservicesConfigDto)
   microservicesConfig?: MicroservicesConfigDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MultiRepoConfigDto)
+  multiRepoConfig?: MultiRepoConfigDto;
 }
