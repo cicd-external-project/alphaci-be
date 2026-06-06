@@ -6,6 +6,7 @@ import { OutboxRepository } from './outbox.repository';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import { UsersRepository } from './users.repository';
 import { WorkflowHistoryRepository } from './workflow-history.repository';
+import { CiTokensRepository } from '../ci/ci-tokens.repository';
 
 @Module({
   imports: [DatabaseModule],
@@ -15,6 +16,7 @@ import { WorkflowHistoryRepository } from './workflow-history.repository';
     WorkflowHistoryRepository,
     OutboxRepository,
     OAuthStateRepository,
+    CiTokensRepository,
   ],
   exports: [
     UsersRepository,
@@ -22,6 +24,7 @@ import { WorkflowHistoryRepository } from './workflow-history.repository';
     WorkflowHistoryRepository,
     OutboxRepository,
     OAuthStateRepository,
+    CiTokensRepository,
   ],
 })
 export class PersistenceModule {}
