@@ -26,7 +26,10 @@ export interface StagedWorkflowBundle {
 }
 
 const CENTRAL_WORKFLOW_REF =
-  'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows';
+  'cicd-external-project/cicd-workflow/.github/workflows';
+
+const CI_VALIDATE_URL =
+  'https://flowci-be-test.onrender.com/api/v1/ci/validate';
 
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
@@ -58,7 +61,7 @@ export function buildStagedWorkflowBundle(
         },
         permissions: { contents: 'read' },
         env: {
-          CI_VALIDATE_URL: 'https://api.implementsprint.com/api/v1/ci/validate',
+          CI_VALIDATE_URL,
         },
         jobs: {
           'validate-access': validationJob('access'),
@@ -84,7 +87,7 @@ export function buildStagedWorkflowBundle(
           'security-events': 'write',
         },
         env: {
-          CI_VALIDATE_URL: 'https://api.implementsprint.com/api/v1/ci/validate',
+          CI_VALIDATE_URL,
         },
         jobs: {
           'validate-access': {
@@ -152,7 +155,7 @@ export function buildStagedWorkflowBundle(
           packages: 'write',
         },
         env: {
-          CI_VALIDATE_URL: 'https://api.implementsprint.com/api/v1/ci/validate',
+          CI_VALIDATE_URL,
         },
         jobs: {
           'validate-access': {
