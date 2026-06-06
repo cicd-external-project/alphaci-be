@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import {
   Injectable,
@@ -27,6 +28,8 @@ export interface CreateProjectResponse {
   projectTypeId: string;
   workflowRecipeId: string;
   additionalWorkflowPaths?: string[];
+  secondaryRepoFullName?: string;
+  secondaryRepoUrl?: string;
 }
 
 export interface SetupProjectResponse {
@@ -89,6 +92,10 @@ export class ProjectsService {
       return this.createMicroservicesProject(userId, userLogin, accessToken, dto);
     }
 
+    if (dto.repoShape === 'multi') {
+      return this.createMultiRepoProject(userId, userLogin, accessToken, dto);
+    }
+
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
     const templateId = this.resolveTemplateId(dto.projectTypeId, dto.workflowRecipeId);
 
@@ -113,17 +120,10 @@ export class ProjectsService {
 
     const repoFullName = `${ownerLogin}/${repoName}`;
 
-    // 4. Create uat and test branches from main
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
-    }
+    // 4. Push starter files to main so all subsequent branches inherit them
+    await this.pushStarterFiles(accessToken, ownerLogin, repoName, dto.repoName, dto.projectTypeId);
 
-    // 5. Apply branch protection to all three branches
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
-    }
-
-    // 6. Push the workflow YAML to .github/workflows/{outputFileName} on main
+    // 5. Push the workflow YAML to .github/workflows/{outputFileName} on main
     const workflowPath = `.github/workflows/${outputFileName}`;
     const { commitSha, commitUrl } = await this.pushWorkflowFile(
       accessToken,
@@ -133,7 +133,17 @@ export class ProjectsService {
       generatedYaml,
     );
 
-    // 7. Persist
+    // 6. Create uat and test branches from main (now contains starter files + workflow)
+    for (const branch of ['uat', 'test'] as const) {
+      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+    }
+
+    // 7. Apply branch protection to all three branches
+    for (const branch of ['test', 'uat', 'main'] as const) {
+      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+    }
+
+    // 8. Persist
     const row = await this.projectsRepository.create({
       userId,
       repoFullName,
@@ -220,17 +230,10 @@ export class ProjectsService {
 
     const repoFullName = `${ownerLogin}/${repoName}`;
 
-    // 4. Create uat and test branches from main once
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
-    }
+    // 4. Push starter files to main so all subsequent branches inherit them
+    await this.pushStarterFiles(accessToken, ownerLogin, repoName, dto.repoName, backend.projectTypeId);
 
-    // 5. Apply branch protection to all three branches once
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
-    }
-
-    // 6. Push backend workflow file
+    // 5. Push backend workflow file to main
     const backendWorkflowPath = `.github/workflows/${backendOutputFileName}`;
     const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
       await this.pushWorkflowFile(
@@ -241,7 +244,37 @@ export class ProjectsService {
         backendYaml,
       );
 
-    // 7. Save backend DB row
+    // 6. Push frontend workflow file to main (wrapped: failure should not block backend)
+    const frontendWorkflowPath = `.github/workflows/${frontendOutputFileName}`;
+    const additionalWorkflowPaths: string[] = [];
+    let frontendPushResult: { commitSha: string; commitUrl: string | null } | undefined;
+
+    try {
+      frontendPushResult = await this.pushWorkflowFile(
+        accessToken,
+        ownerLogin,
+        repoName,
+        frontendWorkflowPath,
+        frontendYaml,
+      );
+      additionalWorkflowPaths.push(frontendWorkflowPath);
+    } catch (err) {
+      this.logger.warn(
+        `Microservices project: frontend workflow push failed: ${String(err)}`,
+      );
+    }
+
+    // 7. Create uat and test branches from main (now contains starter files + both workflows)
+    for (const branch of ['uat', 'test'] as const) {
+      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+    }
+
+    // 8. Apply branch protection to all three branches once
+    for (const branch of ['test', 'uat', 'main'] as const) {
+      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+    }
+
+    // 9. Save backend DB row
     const backendRow = await this.projectsRepository.create({
       userId,
       repoFullName,
@@ -259,43 +292,30 @@ export class ProjectsService {
       projectOptions: dto.tests ? { tests: dto.tests } : {},
     });
 
-    // 8. Push frontend workflow file + save frontend DB row.
-    //    Wrapped in try/catch: a failure here should not prevent returning the backend row.
-    const frontendWorkflowPath = `.github/workflows/${frontendOutputFileName}`;
-    const additionalWorkflowPaths: string[] = [];
-
-    try {
-      const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
-        await this.pushWorkflowFile(
-          accessToken,
-          ownerLogin,
-          repoName,
-          frontendWorkflowPath,
-          frontendYaml,
+    // 10. Save frontend DB row if the push succeeded
+    if (frontendPushResult !== undefined) {
+      try {
+        await this.projectsRepository.create({
+          userId,
+          repoFullName,
+          templateId: frontendTemplateId,
+          serviceName: frontend.serviceName,
+          workflowPath: frontendWorkflowPath,
+          status: 'provisioned',
+          githubCommitSha: frontendPushResult.commitSha,
+          githubCommitUrl: frontendPushResult.commitUrl,
+          repoUrl,
+          visibility: dto.visibility,
+          repoShape: dto.repoShape ?? null,
+          projectTypeId: frontend.projectTypeId,
+          workflowRecipeId: frontend.workflowRecipeId ?? null,
+          projectOptions: {},
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Microservices project: frontend DB row save failed: ${String(err)}`,
         );
-
-      await this.projectsRepository.create({
-        userId,
-        repoFullName,
-        templateId: frontendTemplateId,
-        serviceName: frontend.serviceName,
-        workflowPath: frontendWorkflowPath,
-        status: 'provisioned',
-        githubCommitSha: frontendCommitSha,
-        githubCommitUrl: frontendCommitUrl,
-        repoUrl,
-        visibility: dto.visibility,
-        repoShape: dto.repoShape ?? null,
-        projectTypeId: frontend.projectTypeId,
-        workflowRecipeId: frontend.workflowRecipeId ?? null,
-        projectOptions: {},
-      });
-
-      additionalWorkflowPaths.push(frontendWorkflowPath);
-    } catch (err) {
-      this.logger.warn(
-        `Microservices project created but frontend workflow push/save failed: ${String(err)}`,
-      );
+      }
     }
 
     return {
@@ -480,6 +500,7 @@ export class ProjectsService {
     repo: string,
     filePath: string,
     content: string,
+    commitMessage = 'ci: add FlowCI Studio workflow',
   ): Promise<{ commitSha: string; commitUrl: string | null }> {
     const encodedContent = Buffer.from(content, 'utf8').toString('base64');
 
@@ -506,7 +527,7 @@ export class ProjectsService {
     }
 
     const body: Record<string, unknown> = {
-      message: 'ci: add FlowCI Studio workflow',
+      message: commitMessage,
       content: encodedContent,
       branch: 'main',
     };
@@ -541,6 +562,286 @@ export class ProjectsService {
     const commitUrl = response.commit?.html_url ?? null;
 
     return { commitSha, commitUrl };
+  }
+
+  /**
+   * Push a README.md and .gitignore to the repository on main.
+   * Called immediately after createRepo() so that all downstream branches
+   * branch off a commit that already contains these files.
+   */
+  private async pushStarterFiles(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    projectName: string,
+    projectTypeId?: string,
+  ): Promise<void> {
+    // Push scaffold files for the selected project type
+    if (projectTypeId) {
+      const starterDir = this.catalogService.getResolvedStarterPath(projectTypeId);
+      if (starterDir) {
+        try {
+          const entries = await readdir(starterDir, { withFileTypes: true, recursive: true });
+          for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            const absoluteFilePath = join(
+              (entry as typeof entry & { parentPath: string }).parentPath,
+              entry.name,
+            );
+            const repoFilePath = absoluteFilePath
+              .slice(starterDir.length + 1)
+              .replaceAll('\\', '/');
+            const content = await readFile(absoluteFilePath, 'utf8');
+            await this.pushWorkflowFile(
+              accessToken,
+              owner,
+              repo,
+              repoFilePath,
+              content,
+              'chore: initialize project scaffold',
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Starter scaffold not found for '${projectTypeId}': ${String(err)}`,
+          );
+        }
+      }
+    }
+
+    // Always push README.md and .gitignore
+    const readmeContent = [
+      `# ${projectName}`,
+      '',
+      'This repository was created and configured by FlowCI Studio.',
+      '',
+      '## Branch strategy',
+      '',
+      '| Branch | Purpose |',
+      '|--------|---------|',
+      '| main   | Stable baseline — protected |',
+      '| uat    | Pre-production gate — protected |',
+      '| test   | Integration target — protected |',
+      '',
+      '## CI/CD',
+      '',
+      'Workflow files live in `.github/workflows/`. Push to `test` to trigger your first run.',
+      '',
+      '## Getting started',
+      '',
+      'Clone this repository, install dependencies, and push your code to a feature branch targeting `test` to activate the CI pipeline.',
+    ].join('\n');
+
+    const gitignoreContent = [
+      'node_modules/',
+      'dist/',
+      'build/',
+      '.env',
+      '.env.local',
+      '.env.*.local',
+      'coverage/',
+      '*.log',
+      'npm-debug.log*',
+      '.DS_Store',
+      '.turbo/',
+      '.next/',
+      'out/',
+    ].join('\n');
+
+    await this.pushWorkflowFile(
+      accessToken,
+      owner,
+      repo,
+      'README.md',
+      readmeContent,
+      'chore: add project metadata',
+    );
+
+    await this.pushWorkflowFile(
+      accessToken,
+      owner,
+      repo,
+      '.gitignore',
+      gitignoreContent,
+      'chore: add project metadata',
+    );
+  }
+
+  /**
+   * Create two separate GitHub repositories (backend + frontend) each with
+   * starter files, a workflow file, protected branches, and a DB row.
+   */
+  private async createMultiRepoProject(
+    userId: string,
+    _userLogin: string,
+    accessToken: string,
+    dto: CreateProjectDto,
+  ): Promise<CreateProjectResponse> {
+    if (!dto.multiRepoConfig) {
+      throw new UnprocessableEntityException(
+        'multiRepoConfig is required for multi-repo shape',
+      );
+    }
+
+    const { backend, frontend } = dto.multiRepoConfig;
+
+    // Derive repo names — avoid double-suffixing if caller already appended -be
+    const beRepoName = dto.repoName.endsWith('-be') ? dto.repoName : `${dto.repoName}-be`;
+    const feRepoName = beRepoName.replace(/-be$/, '-fe');
+
+    // ── Backend repository ──────────────────────────────────────────────────
+
+    const backendTemplateId = this.resolveTemplateId(backend.projectTypeId, backend.workflowRecipeId);
+    const { generatedYaml: backendYaml, outputFileName: backendOutputFileName } =
+      await this.buildWorkflowYaml(
+        backendTemplateId,
+        backend.serviceName,
+        backend.servicePath,
+        dto.nodeVersion,
+        dto.coverageThreshold,
+      );
+
+    const {
+      repoUrl: beRepoUrl,
+      ownerLogin,
+      repoName: actualBeRepoName,
+    } = await this.githubService.createRepo(accessToken, {
+      repoName: beRepoName,
+      private: dto.visibility === 'private',
+    });
+
+    const beRepoFullName = `${ownerLogin}/${actualBeRepoName}`;
+
+    await this.pushStarterFiles(
+      accessToken,
+      ownerLogin,
+      actualBeRepoName,
+      backend.serviceName || actualBeRepoName,
+      backend.projectTypeId,
+    );
+
+    const backendWorkflowPath = `.github/workflows/${backendOutputFileName}`;
+    const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
+      await this.pushWorkflowFile(accessToken, ownerLogin, actualBeRepoName, backendWorkflowPath, backendYaml);
+
+    for (const branch of ['uat', 'test'] as const) {
+      await this.githubService.createBranch(accessToken, ownerLogin, actualBeRepoName, branch, 'main');
+    }
+
+    for (const branch of ['test', 'uat', 'main'] as const) {
+      await this.githubService.applyBranchProtection(accessToken, ownerLogin, actualBeRepoName, branch);
+    }
+
+    const backendRow = await this.projectsRepository.create({
+      userId,
+      repoFullName: beRepoFullName,
+      templateId: backendTemplateId,
+      serviceName: backend.serviceName,
+      workflowPath: backendWorkflowPath,
+      status: 'provisioned',
+      githubCommitSha: backendCommitSha,
+      githubCommitUrl: backendCommitUrl,
+      repoUrl: beRepoUrl,
+      visibility: dto.visibility,
+      repoShape: dto.repoShape ?? null,
+      projectTypeId: backend.projectTypeId,
+      workflowRecipeId: backend.workflowRecipeId ?? null,
+      projectOptions: dto.tests ? { tests: dto.tests } : {},
+    });
+
+    // ── Frontend repository (non-fatal on failure) ──────────────────────────
+
+    let feRepoFullName: string | undefined;
+    let feRepoUrl: string | undefined;
+
+    try {
+      const frontendTemplateId = this.resolveTemplateId(
+        frontend.projectTypeId,
+        frontend.workflowRecipeId,
+      );
+      const { generatedYaml: frontendYaml, outputFileName: frontendOutputFileName } =
+        await this.buildWorkflowYaml(
+          frontendTemplateId,
+          frontend.serviceName,
+          frontend.servicePath,
+          dto.nodeVersion,
+          dto.coverageThreshold,
+        );
+
+      const {
+        repoUrl: resolvedFeRepoUrl,
+        ownerLogin: feOwnerLogin,
+        repoName: actualFeRepoName,
+      } = await this.githubService.createRepo(accessToken, {
+        repoName: feRepoName,
+        private: dto.visibility === 'private',
+      });
+
+      feRepoFullName = `${feOwnerLogin}/${actualFeRepoName}`;
+      feRepoUrl = resolvedFeRepoUrl;
+
+      await this.pushStarterFiles(
+        accessToken,
+        feOwnerLogin,
+        actualFeRepoName,
+        frontend.serviceName || actualFeRepoName,
+        frontend.projectTypeId,
+      );
+
+      const frontendWorkflowPath = `.github/workflows/${frontendOutputFileName}`;
+      const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
+        await this.pushWorkflowFile(
+          accessToken,
+          feOwnerLogin,
+          actualFeRepoName,
+          frontendWorkflowPath,
+          frontendYaml,
+        );
+
+      for (const branch of ['uat', 'test'] as const) {
+        await this.githubService.createBranch(accessToken, feOwnerLogin, actualFeRepoName, branch, 'main');
+      }
+
+      for (const branch of ['test', 'uat', 'main'] as const) {
+        await this.githubService.applyBranchProtection(accessToken, feOwnerLogin, actualFeRepoName, branch);
+      }
+
+      await this.projectsRepository.create({
+        userId,
+        repoFullName: feRepoFullName,
+        templateId: frontendTemplateId,
+        serviceName: frontend.serviceName,
+        workflowPath: frontendWorkflowPath,
+        status: 'provisioned',
+        githubCommitSha: frontendCommitSha,
+        githubCommitUrl: frontendCommitUrl,
+        repoUrl: feRepoUrl,
+        visibility: dto.visibility,
+        repoShape: dto.repoShape ?? null,
+        projectTypeId: frontend.projectTypeId,
+        workflowRecipeId: frontend.workflowRecipeId ?? null,
+        projectOptions: {},
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
+      );
+    }
+
+    return {
+      id: backendRow.id,
+      repoFullName: beRepoFullName,
+      repoUrl: beRepoUrl,
+      status: 'provisioned',
+      workflowPath: backendWorkflowPath,
+      githubCommitSha: backendCommitSha,
+      githubCommitUrl: backendCommitUrl,
+      projectTypeId: backend.projectTypeId,
+      workflowRecipeId: backend.workflowRecipeId ?? '',
+      additionalWorkflowPaths: [],
+      ...(feRepoFullName !== undefined && { secondaryRepoFullName: feRepoFullName }),
+      ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
+    };
   }
 
   private parseRepoFullName(repoFullName: string): [string, string] {
