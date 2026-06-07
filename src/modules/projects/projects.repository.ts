@@ -164,8 +164,8 @@ export class ProjectsRepository {
   async markOrphaned(ids: string[], userId: string): Promise<number> {
     if (ids.length === 0) return 0;
 
-    // Build $3, $4, … placeholders for the id list
-    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
+    // Build $2, $3, … placeholders for the id list ($1 = userId)
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
 
     const result = await this.databaseService.query(
       `
@@ -187,7 +187,7 @@ export class ProjectsRepository {
   async markReachable(ids: string[], userId: string): Promise<number> {
     if (ids.length === 0) return 0;
 
-    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
+    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
 
     const result = await this.databaseService.query(
       `

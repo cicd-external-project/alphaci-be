@@ -1,5 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import {
   Injectable,
@@ -25,6 +24,10 @@ import {
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
+import {
+  buildProjectScaffold,
+  defaultIncludeDocker,
+} from './scaffold.builder';
 
 // ─── Response shapes (match FE contracts exactly) ────────────────────────────
 
@@ -140,6 +143,15 @@ export class ProjectsService {
       });
 
     const repoFullName = `${ownerLogin}/${repoName}`;
+
+    // 3.5 Push scaffold + README to main so all downstream branches inherit them
+    await this.pushStarterFiles(
+      provisioningToken,
+      ownerLogin,
+      repoName,
+      dto.serviceName,
+      dto.projectTypeId,
+    );
 
     // 4. Create uat and test branches from main
     for (const branch of ['uat', 'test'] as const) {
@@ -830,42 +842,31 @@ export class ProjectsService {
     owner: string,
     repo: string,
     projectName: string,
-    projectTypeId?: string,
+    stack = 'nodejs',
   ): Promise<void> {
-    // Push scaffold files for the selected project type
-    if (projectTypeId) {
-      const starterDir =
-        this.catalogService.getResolvedStarterPath(projectTypeId);
-      if (starterDir) {
-        try {
-          const entries = await readdir(starterDir, {
-            withFileTypes: true,
-            recursive: true,
-          });
-          for (const entry of entries) {
-            if (!entry.isFile()) continue;
-            const absoluteFilePath = join(
-              (entry as typeof entry & { parentPath: string }).parentPath,
-              entry.name,
-            );
-            const repoFilePath = absoluteFilePath
-              .slice(starterDir.length + 1)
-              .replaceAll('\\', '/');
-            const content = await readFile(absoluteFilePath, 'utf8');
-            await this.pushWorkflowFile(
-              accessToken,
-              owner,
-              repo,
-              repoFilePath,
-              content,
-              'chore: initialize project scaffold',
-            );
-          }
-        } catch (err) {
-          this.logger.warn(
-            `Starter scaffold not found for '${projectTypeId}': ${String(err)}`,
-          );
-        }
+    // Generate scaffold files programmatically from the project type.
+    // This avoids a dependency on physical starter directories that may not
+    // exist in production (e.g. on Render).
+    const scaffoldFiles = buildProjectScaffold({
+      serviceName: projectName,
+      stack,
+      includeDocker: defaultIncludeDocker(stack),
+    });
+
+    for (const file of scaffoldFiles) {
+      try {
+        await this.pushWorkflowFile(
+          accessToken,
+          owner,
+          repo,
+          file.path,
+          file.content,
+          'chore: initialize project scaffold',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to push scaffold file ${file.path}: ${String(err)}`,
+        );
       }
     }
 
@@ -892,37 +893,12 @@ export class ProjectsService {
       'Clone this repository, install dependencies, and push your code to a feature branch targeting `test` to activate the CI pipeline.',
     ].join('\n');
 
-    const gitignoreContent = [
-      'node_modules/',
-      'dist/',
-      'build/',
-      '.env',
-      '.env.local',
-      '.env.*.local',
-      'coverage/',
-      '*.log',
-      'npm-debug.log*',
-      '.DS_Store',
-      '.turbo/',
-      '.next/',
-      'out/',
-    ].join('\n');
-
     await this.pushWorkflowFile(
       accessToken,
       owner,
       repo,
       'README.md',
       readmeContent,
-      'chore: add project metadata',
-    );
-
-    await this.pushWorkflowFile(
-      accessToken,
-      owner,
-      repo,
-      '.gitignore',
-      gitignoreContent,
       'chore: add project metadata',
     );
   }
