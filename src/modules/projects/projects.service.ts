@@ -16,6 +16,7 @@ import { GithubService } from '../github/github.service';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
+  type ProvisionedProjectStatus,
 } from './projects.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
@@ -60,7 +61,7 @@ export interface ProvisionedProject {
   serviceName: string;
   workflowPath: string;
   workflowFiles?: WorkflowFileMetadata[] | null;
-  status: 'provisioning' | 'provisioned' | 'failed';
+  status: ProvisionedProjectStatus;
   githubCommitSha: string | null;
   githubCommitUrl: string | null;
   failureReason: string | null;
@@ -70,6 +71,12 @@ export interface ProvisionedProject {
   projectTypeId?: string | null;
   workflowRecipeId?: string | null;
   projectOptions?: Record<string, unknown> | null;
+}
+
+export interface SyncProjectsResponse {
+  orphaned: number;
+  reachable: number;
+  total: number;
 }
 
 export interface ProvisionedProjectsResponse {
@@ -146,35 +153,14 @@ export class ProjectsService {
 
     // 6. Push the workflow YAML to .github/workflows/{outputFileName} on main
     const workflowPath = `.github/workflows/${outputFileName}`;
-    const { commitSha, commitUrl } = await this.pushWorkflowFile(
+    const { commitSha, commitUrl } = await this.pushWorkflowFiles(
       provisioningToken,
       ownerLogin,
       repoName,
       workflowFiles,
     );
 
-    // 6. Create uat and test branches from main (now contains starter files + workflow)
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(
-        accessToken,
-        ownerLogin,
-        repoName,
-        branch,
-        'main',
-      );
-    }
-
-    // 7. Apply branch protection to all three branches
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(
-        accessToken,
-        ownerLogin,
-        repoName,
-        branch,
-      );
-    }
-
-    // 8. Persist
+    // 7. Persist
     const row = await this.projectsRepository.create({
       userId,
       repoFullName,
@@ -197,7 +183,7 @@ export class ProjectsService {
 
     const ciToken = await this.ciService.issueProjectToken(row.id);
     await this.githubService.setActionsSecret(
-      accessToken,
+      provisioningToken,
       ownerLogin,
       repoName,
       'CI_TOKEN',
@@ -488,6 +474,83 @@ export class ProjectsService {
     const rows = await this.projectsRepository.listByUser(userId, limit);
     return {
       items: rows.map((row) => this.toProvisionedProject(row)),
+    };
+  }
+
+  // ─── DELETE /projects/:id ──────────────────────────────────────────────────
+
+  /**
+   * Removes a provisioned_projects record from FlowCI's database.
+   * The GitHub repository, its workflow YAML files, and its GitHub Secrets
+   * are NOT touched — this is a FlowCI tracking disconnect only.
+   * CASCADE deletes project_ci_tokens automatically via the FK.
+   */
+  async disconnectProject(projectId: string, userId: string): Promise<void> {
+    const deleted = await this.projectsRepository.deleteByIdAndUser(projectId, userId);
+    if (!deleted) {
+      throw new NotFoundException(
+        `Project '${projectId}' not found or does not belong to the current user.`,
+      );
+    }
+  }
+
+  // ─── POST /projects/sync ───────────────────────────────────────────────────
+
+  /**
+   * Checks each provisioned project against the GitHub API to see if its
+   * repository still exists. Projects whose repos have been deleted are marked
+   * 'orphaned'; orphaned projects whose repos reappear are restored to
+   * 'provisioned'. Requires a valid GitHub access token in session.
+   */
+  async syncProjects(
+    userId: string,
+    accessToken: string,
+  ): Promise<SyncProjectsResponse> {
+    const rows = await this.projectsRepository.listByUser(userId, 100);
+    if (rows.length === 0) {
+      return { orphaned: 0, reachable: 0, total: 0 };
+    }
+
+    const orphanedIds: string[] = [];
+    const reachableIds: string[] = [];
+
+    // Check repos concurrently — cap at 10 parallel requests to avoid GitHub
+    // secondary rate-limit triggers on large project lists.
+    const CONCURRENCY = 10;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      const batch = rows.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (row) => {
+          try {
+            const exists = await this.githubService.repoExists(
+              accessToken,
+              row.repo_full_name,
+            );
+            if (exists) {
+              reachableIds.push(row.id);
+            } else {
+              orphanedIds.push(row.id);
+            }
+          } catch (err) {
+            // If GitHub API errors (e.g. 5xx), skip — do not mark as orphaned
+            // to avoid false-positives from transient failures.
+            this.logger.warn(
+              `Sync: GitHub check failed for ${row.repo_full_name}: ${String(err)}`,
+            );
+          }
+        }),
+      );
+    }
+
+    const [orphanedCount, reachableCount] = await Promise.all([
+      this.projectsRepository.markOrphaned(orphanedIds, userId),
+      this.projectsRepository.markReachable(reachableIds, userId),
+    ]);
+
+    return {
+      orphaned: orphanedCount,
+      reachable: reachableCount,
+      total: rows.length,
     };
   }
 

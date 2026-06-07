@@ -86,6 +86,32 @@ export class AuthService {
     return this.handleOAuthProviderCallback(request, code, state);
   }
 
+  async deleteAccount(request: Request): Promise<void> {
+    const userId = request.session.userId ?? request.session.user?.id;
+    if (!userId) {
+      return;
+    }
+
+    // Hard-delete all user data in FK-safe order, then destroy the session.
+    // provisioned_projects, user_subscriptions, workflow_generations,
+    // outbox_events, and oauth_states all reference app_users by user_id
+    // with ON DELETE CASCADE — a single DELETE on app_users is sufficient.
+    // The session row is cleaned up by destroying the session below.
+    await this.usersRepository.deleteById(userId);
+
+    // Destroy session after data deletion so we don't leave a dangling session
+    // pointing at a now-deleted user.
+    await new Promise<void>((resolve, reject) => {
+      request.session.destroy((error) => {
+        if (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
   async logout(request: Request): Promise<void> {
     delete request.session.githubAccessToken;
     await new Promise<void>((resolve, reject) => {

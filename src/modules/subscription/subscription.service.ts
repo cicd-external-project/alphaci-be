@@ -223,8 +223,6 @@ export class SubscriptionService {
   }
 
   async cancelForUser(user: SessionUser): Promise<SubscriptionState> {
-    this.assertMockEnabled();
-
     const nextState = await this.subscriptionsRepository.cancelCurrent(user.id);
 
     await this.outboxRepository.publishLater({

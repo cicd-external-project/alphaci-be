@@ -1,10 +1,12 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Query,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
@@ -106,5 +108,22 @@ export class AuthController {
     return {
       ok: true,
     };
+  }
+
+  @UseGuards(SessionAuthGuard)
+  @Delete('account')
+  async deleteAccount(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    await this.authService.deleteAccount(req);
+    res.clearCookie(this.sessionCookieName);
+
+    return { ok: true };
   }
 }
