@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Headers,
+  HttpCode,
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ export class CiController {
   constructor(private readonly ciService: CiService) {}
 
   @Post('validate')
+  @HttpCode(200)
   async validate(
     @Headers('authorization') authorization: string | undefined,
     @Body() body: ValidateCiRunDto,
