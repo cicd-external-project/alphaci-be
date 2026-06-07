@@ -24,6 +24,13 @@ export interface AppConfig {
     defaultPlan: SubscriptionPlan;
     seededPlans: Record<string, SubscriptionPlan>;
     proMonthlyPricePhp: number;
+    paymentProvider: 'none' | 'paymongo';
+    successUrl: string;
+    cancelUrl: string;
+    paymongo: {
+      secretKey: string;
+      webhookSecret: string;
+    };
   };
   supabase: {
     dbUrl: string | undefined;
@@ -81,6 +88,18 @@ export const appConfig = registerAs('app', (): AppConfig => {
           | undefined) ?? 'free',
       seededPlans,
       proMonthlyPricePhp: Number(env['PRO_MONTHLY_PRICE_PHP'] ?? 300),
+      paymentProvider:
+        env['PAYMENT_PROVIDER'] === 'paymongo' ? 'paymongo' : 'none',
+      successUrl:
+        env['PAYMENT_SUCCESS_URL'] ??
+        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/subscribe?status=success`,
+      cancelUrl:
+        env['PAYMENT_CANCEL_URL'] ??
+        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/subscribe?status=cancelled`,
+      paymongo: {
+        secretKey: env['PAYMONGO_SECRET_KEY'] ?? '',
+        webhookSecret: env['PAYMONGO_WEBHOOK_SECRET'] ?? '',
+      },
     },
     supabase: {
       dbUrl: env['SUPABASE_DB_URL'],

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -28,13 +29,6 @@ export class ProjectsController {
   @Post()
   @UseGuards(SessionAuthGuard, SubscriptionGuard)
   async createProject(@Req() req: Request, @Body() body: CreateProjectDto) {
-    const accessToken = req.session.githubAccessToken;
-    if (!accessToken) {
-      throw new UnauthorizedException(
-        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
-      );
-    }
-
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -45,6 +39,7 @@ export class ProjectsController {
       throw new UnauthorizedException('GitHub login not found in session. Re-authenticate.');
     }
 
+    const accessToken = req.session.githubAccessToken ?? null;
     return this.projectsService.createProject(userId, userLogin, accessToken, body);
   }
 
@@ -77,12 +72,15 @@ export class ProjectsController {
    */
   @Get()
   @UseGuards(SessionAuthGuard)
-  async listProjects(@Req() req: Request) {
+  async listProjects(@Req() req: Request, @Query('limit') limit?: string) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
 
-    return this.projectsService.listProjects(userId);
+    const parsedLimit = Number.parseInt(limit ?? '25', 10);
+    const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
+
+    return this.projectsService.listProjects(userId, safeLimit);
   }
 }

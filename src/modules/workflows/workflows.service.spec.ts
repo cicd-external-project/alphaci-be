@@ -45,10 +45,26 @@ const makeCatalogService = (template: WorkflowTemplate | null = fakeTemplate) =>
   }) as unknown as CatalogService;
 
 const makeHistoryRepo = () =>
-  ({ create: jest.fn().mockResolvedValue(undefined) }) as unknown as WorkflowHistoryRepository;
+  ({
+    create: jest.fn().mockResolvedValue(undefined),
+  }) as unknown as WorkflowHistoryRepository;
 
 const makeOutboxRepo = () =>
-  ({ publishLater: jest.fn().mockResolvedValue(undefined) }) as unknown as OutboxRepository;
+  ({
+    publishLater: jest.fn().mockResolvedValue(undefined),
+  }) as unknown as OutboxRepository;
+
+const toWorkflowMetadata = (file: {
+  stage: 'access' | 'quality' | 'package';
+  name: string;
+  path: string;
+  gated: boolean;
+}) => ({
+  stage: file.stage,
+  name: file.name,
+  path: file.path,
+  gated: file.gated,
+});
 
 describe('WorkflowsService', () => {
   let service: WorkflowsService;
@@ -62,7 +78,7 @@ describe('WorkflowsService', () => {
     historyRepo = makeHistoryRepo();
     outboxRepo = makeOutboxRepo();
 
-    mockFs.readFile.mockResolvedValue(baseYaml as unknown as Buffer);
+    mockFs.readFile.mockResolvedValue(baseYaml);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -81,7 +97,10 @@ describe('WorkflowsService', () => {
       (catalogService.getTemplateById as jest.Mock).mockResolvedValueOnce(null);
 
       await expect(
-        service.generate('user-1', { templateId: 'missing', serviceName: 'my-svc' }),
+        service.generate('user-1', {
+          templateId: 'missing',
+          serviceName: 'my-svc',
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -97,16 +116,63 @@ describe('WorkflowsService', () => {
       expect(result.metadata.outputFileName).toBe('my-service-nestjs-be.yml');
     });
 
+    it('returns a three-stage workflow bundle with every stage gated', async () => {
+      const result = await service.generate('user-1', {
+        templateId: 'nestjs-be',
+        serviceName: 'my-service',
+        servicePath: '.',
+        nodeVersion: '24',
+      });
+
+      expect(result.workflowFiles).toHaveLength(3);
+      expect(result.workflowFiles.map((file) => file.stage)).toEqual([
+        'access',
+        'quality',
+        'package',
+      ]);
+      expect(result.workflowFiles.map((file) => file.path)).toEqual([
+        '.github/workflows/00-flowci-access.yml',
+        '.github/workflows/10-flowci-quality.yml',
+        '.github/workflows/20-flowci-package.yml',
+      ]);
+      expect(result.workflowFiles.every((file) => file.gated)).toBe(true);
+      expect(result.workflowFiles[1]?.yaml).toContain('workflow_run:');
+      expect(result.workflowFiles[1]?.yaml).toContain('workflows:');
+      expect(result.workflowFiles[1]?.yaml).toContain('FlowCI Access Gate');
+      expect(result.workflowFiles[1]?.yaml).toContain(
+        "conclusion == 'success'",
+      );
+      expect(result.workflowFiles[1]?.yaml).toContain(
+        'cicd-external-project/cicd-workflow/.github/workflows/backend-tests.yml@v1',
+      );
+      expect(result.workflowFiles[1]?.yaml).toContain(
+        'https://flowci-be-test.onrender.com/api/v1/ci/validate',
+      );
+      expect(result.workflowFiles[2]?.yaml).toContain('FlowCI Quality');
+      expect(result.workflowFiles[2]?.yaml).toContain(
+        "conclusion == 'success'",
+      );
+      expect(result.metadata.workflowFiles).toEqual(
+        result.workflowFiles.map(toWorkflowMetadata),
+      );
+    });
+
     it('saves to history and publishes outbox event', async () => {
       await service.generate('user-1', {
         templateId: 'nestjs-be',
         serviceName: 'my-service',
       });
 
-      expect(historyRepo.create).toHaveBeenCalledWith(
+      const createHistory = (historyRepo as unknown as { create: jest.Mock })
+        .create;
+      const publishLater = (
+        outboxRepo as unknown as { publishLater: jest.Mock }
+      ).publishLater;
+
+      expect(createHistory).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'user-1', templateId: 'nestjs-be' }),
       );
-      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
+      expect(publishLater).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'workflow.generated' }),
       );
     });
@@ -119,7 +185,9 @@ describe('WorkflowsService', () => {
       });
 
       expect(result.yaml).toContain('run-playwright: false');
-      expect(result.metadata.enhancementsApplied).toContain('disablePlaywright');
+      expect(result.metadata.enhancementsApplied).toContain(
+        'disablePlaywright',
+      );
     });
 
     it('applies disableK6 enhancement', async () => {
@@ -161,9 +229,15 @@ describe('WorkflowsService', () => {
         coverageThreshold: 90,
       });
 
-      expect(result.metadata.substitutionsApplied).toContain('service_path.default');
-      expect(result.metadata.substitutionsApplied).toContain('node_version.default');
-      expect(result.metadata.substitutionsApplied).toContain('coverage_threshold.default');
+      expect(result.metadata.substitutionsApplied).toContain(
+        'service_path.default',
+      );
+      expect(result.metadata.substitutionsApplied).toContain(
+        'node_version.default',
+      );
+      expect(result.metadata.substitutionsApplied).toContain(
+        'coverage_threshold.default',
+      );
     });
   });
 
@@ -186,7 +260,8 @@ describe('WorkflowsService', () => {
       ];
 
       const listByUser = jest.fn().mockResolvedValue(entries);
-      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser = listByUser;
+      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser =
+        listByUser;
 
       const result = await service.getHistory('user-1', 10);
       expect(result).toEqual(entries);
@@ -195,7 +270,8 @@ describe('WorkflowsService', () => {
 
     it('clamps limit to safe range', async () => {
       const listByUser = jest.fn().mockResolvedValue([]);
-      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser = listByUser;
+      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser =
+        listByUser;
 
       await service.getHistory('user-1', 200);
       expect(listByUser).toHaveBeenCalledWith('user-1', 100);
@@ -203,7 +279,8 @@ describe('WorkflowsService', () => {
 
     it('defaults limit to 25 for NaN input', async () => {
       const listByUser = jest.fn().mockResolvedValue([]);
-      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser = listByUser;
+      (historyRepo as unknown as { listByUser: jest.Mock }).listByUser =
+        listByUser;
 
       await service.getHistory('user-1', NaN);
       expect(listByUser).toHaveBeenCalledWith('user-1', 25);

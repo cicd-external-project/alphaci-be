@@ -2,19 +2,19 @@ import { appConfig } from './app.config.js';
 
 describe('appConfig factory', () => {
   const originalEnv = process.env;
+  const validSessionSecret = 'a'.repeat(32);
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
+    process.env = { ...originalEnv, SESSION_SECRET: validSessionSecret };
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  it('returns defaults when no env vars are set', () => {
+  it('returns defaults when only the required session secret is set', () => {
     delete process.env['FRONTEND_URL'];
     delete process.env['GITHUB_CLIENT_ID'];
-    delete process.env['SESSION_SECRET'];
     delete process.env['SUBSCRIPTION_MOCK_ENABLED'];
     delete process.env['SESSION_STORE_DRIVER'];
 
@@ -22,7 +22,7 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
     expect(config.github.clientId).toBe('');
-    expect(config.session.secret).toBe('change-me-in-production');
+    expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
     expect(config.session.storeDriver).toBe('memory');
   });

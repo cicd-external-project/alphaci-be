@@ -97,7 +97,9 @@ export class ProjectsRepository {
   }
 
   async listByUser(userId: string, limit = 50): Promise<ProvisionedProjectRow[]> {
-    const safeLimit = Math.max(1, Math.min(200, limit));
+    const safeLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, Math.trunc(limit)))
+      : 25;
 
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `

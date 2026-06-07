@@ -21,6 +21,7 @@ import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
+import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 
 @Module({
   imports: [
@@ -34,9 +35,7 @@ import { ProjectsModule } from './modules/projects/projects.module.js';
       // silently degrading to insecure fallbacks during local development.
       validate: validateEnv,
     }),
-    ThrottlerModule.forRoot([
-      { name: 'default', ttl: 60_000, limit: 60 },
-    ]),
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
     SupabaseModule,
     HealthModule,
 
@@ -45,14 +44,13 @@ import { ProjectsModule } from './modules/projects/projects.module.js';
     CatalogModule,
     GithubModule,
     SubscriptionModule,
+    CiModule,
     WorkflowsModule,
     ProjectsModule,
+    ExistingReposModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
-  ],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

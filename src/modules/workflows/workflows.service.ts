@@ -11,6 +11,7 @@ import {
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { WorkflowHistoryRepository } from '../persistence/workflow-history.repository';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
+import { buildStagedWorkflowBundle } from './staged-workflow.builder';
 
 type Enhancement =
   | 'strictProductionApproval'
@@ -35,6 +36,7 @@ export class WorkflowsService {
     const source = await readFile(template.workflowPath, 'utf8');
     const { generatedYaml, substitutionsApplied, enhancementsApplied } =
       this.buildWorkflow(source, template, dto);
+    const workflowBundle = buildStagedWorkflowBundle(template, dto);
 
     const sha256 = createHash('sha256').update(generatedYaml).digest('hex');
     const lineCount = generatedYaml.split(/\r?\n/).length;
@@ -81,7 +83,9 @@ export class WorkflowsService {
         sourcePropertiesFile: template.propertiesPath,
         sourceWorkflowFile: template.workflowPath,
         outputFileName,
+        workflowFiles: workflowBundle.metadata,
       },
+      workflowFiles: workflowBundle.workflowFiles,
     };
   }
 

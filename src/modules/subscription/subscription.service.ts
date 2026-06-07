@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   ForbiddenException,
   Injectable,
   ServiceUnavailableException,
@@ -20,6 +21,28 @@ export interface PaymentCheckoutSession {
   status: string;
   redirectUrl?: string;
   metadata?: Record<string, unknown>;
+}
+
+interface PayMongoCheckoutSessionResponse {
+  data?: {
+    id?: string;
+    attributes?: {
+      status?: string;
+      checkout_url?: string;
+      metadata?: Record<string, unknown>;
+    };
+  };
+}
+
+interface PayMongoWebhookPayload {
+  data?: {
+    type?: string;
+    data?: {
+      attributes?: {
+        metadata?: Record<string, unknown>;
+      };
+    };
+  };
 }
 
 @Injectable()
@@ -78,17 +101,118 @@ export class SubscriptionService {
   // These endpoints are preserved for API compatibility but will always return 503
   // until a direct payment provider integration is wired in.
   async createCheckoutSession(
-    _user: SessionUser,
-    _plan: 'pro',
+    user: SessionUser,
+    plan: 'pro',
   ): Promise<PaymentCheckoutSession> {
-    throw new ServiceUnavailableException('Payment service is unavailable');
+    this.assertPayMongoConfigured();
+
+    const amountPhp = this.config.subscription.proMonthlyPricePhp;
+    const response = await fetch(
+      'https://api.paymongo.com/v2/checkout_sessions',
+      {
+        method: 'POST',
+        headers: this.paymongoHeaders(),
+        body: JSON.stringify({
+          data: {
+            attributes: {
+              line_items: [
+                {
+                  currency: 'PHP',
+                  amount: amountPhp * 100,
+                  name: 'FlowCI Studio Pro Monthly',
+                  quantity: 1,
+                },
+              ],
+              payment_method_types: ['card', 'gcash', 'qrph'],
+              success_url: this.config.subscription.successUrl,
+              cancel_url: this.config.subscription.cancelUrl,
+              metadata: {
+                userId: user.id,
+                login: user.login,
+                plan,
+              },
+            },
+          },
+        }),
+      },
+    );
+
+    const payload = await this.readPayMongoResponse(response);
+    const data = payload.data;
+
+    if (!data?.id || !data.attributes?.checkout_url) {
+      throw new BadGatewayException(
+        'PayMongo checkout response did not include a checkout URL',
+      );
+    }
+
+    const checkoutSession: PaymentCheckoutSession = {
+      checkoutId: data.id,
+      status: data.attributes.status ?? 'created',
+      redirectUrl: data.attributes.checkout_url,
+    };
+    if (data.attributes.metadata) {
+      checkoutSession.metadata = data.attributes.metadata;
+    }
+
+    return checkoutSession;
   }
 
   async getCheckoutStatus(
-    _user: SessionUser,
-    _checkoutId: string,
+    user: SessionUser,
+    checkoutId: string,
   ): Promise<{ status: string; subscription?: SubscriptionState }> {
-    throw new ServiceUnavailableException('Payment service is unavailable');
+    this.assertPayMongoConfigured();
+
+    const response = await fetch(
+      `https://api.paymongo.com/v2/checkout_sessions/${encodeURIComponent(checkoutId)}`,
+      {
+        headers: this.paymongoHeaders(),
+      },
+    );
+    const payload = await this.readPayMongoResponse(response);
+    const attributes = payload.data?.attributes;
+    const status = attributes?.status ?? 'unknown';
+
+    if (status !== 'paid') {
+      return { status };
+    }
+
+    const metadataUserId = attributes?.metadata?.['userId'];
+    if (typeof metadataUserId === 'string' && metadataUserId !== user.id) {
+      throw new ForbiddenException('Checkout session belongs to another user');
+    }
+
+    const subscription = await this.activatePaidPlan(user.id);
+    return { status, subscription };
+  }
+
+  async handlePayMongoWebhook(
+    rawPayload: unknown,
+    signature: string | undefined,
+  ): Promise<{ received: true; ignored?: boolean }> {
+    if (
+      !this.config.subscription.paymongo.webhookSecret ||
+      signature !== this.config.subscription.paymongo.webhookSecret
+    ) {
+      throw new ForbiddenException('Invalid PayMongo webhook signature');
+    }
+
+    const payload = rawPayload as PayMongoWebhookPayload;
+    if (payload.data?.type !== 'checkout_session.payment.paid') {
+      return { received: true, ignored: true };
+    }
+
+    const metadata = payload.data.data?.attributes?.metadata;
+    const userId = metadata?.['userId'];
+    const plan = metadata?.['plan'];
+
+    if (typeof userId !== 'string' || plan !== 'pro') {
+      return { received: true, ignored: true };
+    }
+
+    await this.activatePaidPlan(userId);
+    return { received: true };
   }
 
   async activateForUser(
@@ -97,25 +221,7 @@ export class SubscriptionService {
   ): Promise<SubscriptionState> {
     this.assertMockEnabled();
 
-    const nextState = await this.subscriptionsRepository.activateMonthlyPlan(
-      user.id,
-      'pro_monthly',
-      this.config.subscription.proMonthlyPricePhp,
-      'manual',
-    );
-
-    await this.outboxRepository.publishLater({
-      topic: 'subscription.activated',
-      aggregateType: 'subscription',
-      aggregateId: user.id,
-      payload: {
-        userId: user.id,
-        plan: nextState.plan,
-        planCode: nextState.planCode,
-      },
-    });
-
-    return nextState;
+    return this.activatePaidPlan(user.id, 'manual');
   }
 
   async cancelForUser(user: SessionUser): Promise<SubscriptionState> {
@@ -144,5 +250,71 @@ export class SubscriptionService {
     if (!this.config.subscription.mockEnabled) {
       throw new ForbiddenException('Subscription mock endpoints are disabled');
     }
+  }
+
+  private assertPayMongoConfigured(): void {
+    if (this.config.subscription.paymentProvider !== 'paymongo') {
+      throw new ServiceUnavailableException('Payment service is unavailable');
+    }
+
+    if (!this.config.subscription.paymongo.secretKey) {
+      throw new ServiceUnavailableException(
+        'PayMongo secret key is not configured',
+      );
+    }
+  }
+
+  private paymongoHeaders(): HeadersInit {
+    const token = Buffer.from(
+      `${this.config.subscription.paymongo.secretKey}:`,
+      'utf8',
+    ).toString('base64');
+
+    return {
+      Authorization: `Basic ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+  }
+
+  private async readPayMongoResponse(
+    response: Response,
+  ): Promise<PayMongoCheckoutSessionResponse> {
+    const payload = (await response.json()) as PayMongoCheckoutSessionResponse;
+
+    if (!response.ok) {
+      throw new BadGatewayException({
+        message: 'PayMongo request failed',
+        status: response.status,
+        paymongo: payload,
+      });
+    }
+
+    return payload;
+  }
+
+  private async activatePaidPlan(
+    userId: string,
+    provider: 'manual' | 'paymongo' = 'paymongo',
+  ): Promise<SubscriptionState> {
+    const nextState = await this.subscriptionsRepository.activateMonthlyPlan(
+      userId,
+      'pro_monthly',
+      this.config.subscription.proMonthlyPricePhp,
+      provider,
+    );
+
+    await this.outboxRepository.publishLater({
+      topic: 'subscription.activated',
+      aggregateType: 'subscription',
+      aggregateId: userId,
+      payload: {
+        userId,
+        plan: nextState.plan,
+        planCode: nextState.planCode,
+      },
+    });
+
+    return nextState;
   }
 }
