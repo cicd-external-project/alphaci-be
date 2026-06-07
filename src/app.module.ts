@@ -21,7 +21,7 @@ import { GithubModule } from './modules/github/github.module.js';
 import { SubscriptionModule } from './modules/subscription/subscription.module.js';
 import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
-import { CiModule } from './modules/ci/ci.module.js';
+import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 
 @Module({
   imports: [
@@ -47,6 +47,7 @@ import { CiModule } from './modules/ci/ci.module.js';
     CiModule,
     WorkflowsModule,
     ProjectsModule,
+    ExistingReposModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

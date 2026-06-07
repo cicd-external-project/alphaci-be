@@ -3,6 +3,7 @@ import type { TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { SubscriptionService } from '../subscription/subscription.service.js';
+import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import type { SessionUser, SubscriptionState } from '../../common/interfaces/session-user.interface.js';
 
@@ -29,9 +30,7 @@ const makeResponse = () => {
 const makeAuthService = () =>
   ({
     startGitHubAuth: jest.fn().mockReturnValue('https://github.com/login/oauth/authorize?mock=1'),
-    startGoogleAuth: jest.fn().mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?mock=1'),
     handleGitHubCallback: jest.fn().mockResolvedValue('http://localhost:3000?auth=success'),
-    handleGoogleCallback: jest.fn().mockResolvedValue('http://localhost:3000?auth=success'),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
     logout: jest.fn().mockResolvedValue(undefined),
   }) as unknown as AuthService;
@@ -40,6 +39,11 @@ const makeSubscriptionService = () =>
   ({
     getForUser: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionService;
+
+const makeConfigService = () =>
+  ({
+    getOrThrow: jest.fn().mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
+  }) as unknown as ConfigService;
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -55,6 +59,7 @@ describe('AuthController', () => {
       providers: [
         { provide: AuthService, useValue: authService },
         { provide: SubscriptionService, useValue: subscriptionService },
+        { provide: ConfigService, useValue: makeConfigService() },
       ],
     })
       .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
@@ -69,23 +74,12 @@ describe('AuthController', () => {
   });
 
   describe('githubStart', () => {
-    it('redirects to GitHub auth URL', () => {
+    it('redirects to GitHub auth URL', async () => {
       const req = makeRequest();
       const res = makeResponse();
-      controller.githubStart(req, res);
+      await controller.githubStart(req, res);
       expect(res.redirect).toHaveBeenCalledWith(
         'https://github.com/login/oauth/authorize?mock=1',
-      );
-    });
-  });
-
-  describe('googleStart', () => {
-    it('redirects to Google auth URL', async () => {
-      const req = makeRequest();
-      const res = makeResponse();
-      await controller.googleStart(req, res);
-      expect(res.redirect).toHaveBeenCalledWith(
-        'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
       );
     });
   });
@@ -99,20 +93,6 @@ describe('AuthController', () => {
         req,
         'code123',
         'state-abc',
-      );
-      expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000?auth=success');
-    });
-  });
-
-  describe('googleCallback', () => {
-    it('redirects to success URL after callback', async () => {
-      const req = makeRequest();
-      const res = makeResponse();
-      await controller.googleCallback(req, res, 'g-code', 'g-state');
-      expect(authService.handleGoogleCallback).toHaveBeenCalledWith(
-        req,
-        'g-code',
-        'g-state',
       );
       expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000?auth=success');
     });

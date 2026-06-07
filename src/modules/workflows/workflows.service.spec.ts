@@ -78,7 +78,7 @@ describe('WorkflowsService', () => {
     historyRepo = makeHistoryRepo();
     outboxRepo = makeOutboxRepo();
 
-    mockFs.readFile.mockResolvedValue(baseYaml as unknown as Buffer);
+    mockFs.readFile.mockResolvedValue(baseYaml);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

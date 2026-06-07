@@ -5,10 +5,15 @@ import { ConfigService } from '@nestjs/config';
 import { CatalogService } from './catalog.service.js';
 
 jest.mock('node:fs/promises');
+jest.mock('node:fs', () => ({
+  readFileSync: jest.fn(),
+}));
 
 import * as fs from 'node:fs/promises';
+import * as syncFs from 'node:fs';
 
 const mockFs = fs as jest.Mocked<typeof fs>;
+const mockSyncFs = syncFs as jest.Mocked<typeof syncFs>;
 
 const makeConfigService = () =>
   ({
@@ -26,6 +31,14 @@ const makeEntry = (name: string) =>
     isFile: () => true,
     isDirectory: () => false,
   } as unknown as import('node:fs').Dirent);
+
+const mockReaddir = (entries: import('node:fs').Dirent[]) => {
+  mockFs.readdir.mockResolvedValue(entries as never);
+};
+
+const mockReadFile = (value: string) => {
+  mockFs.readFile.mockResolvedValue(value as never);
+};
 
 const sampleProperties = JSON.stringify({
   name: 'NestJS Backend Pipeline',
@@ -51,6 +64,96 @@ describe('CatalogService', () => {
     service = module.get(CatalogService);
   });
 
+  describe('getProjectOptions', () => {
+    it('derives project types and stable workflow refs from the engine catalog', () => {
+      mockSyncFs.readFileSync.mockImplementation((path) => {
+        const normalized = String(path).replaceAll('\\', '/');
+        if (normalized.endsWith('/catalog/stacks.json')) {
+          return JSON.stringify([
+            {
+              key: 'nextjs',
+              label: 'Next.js',
+              kind: 'frontend',
+              runtime: 'node',
+              masterWorkflow: 'frontendMaster',
+              serviceWorkflow: 'nextjsService',
+            },
+            {
+              key: 'nestjs',
+              label: 'NestJS',
+              kind: 'backend',
+              runtime: 'node',
+              masterWorkflow: 'backendMaster',
+              serviceWorkflow: 'nestjsService',
+            },
+          ]);
+        }
+
+        if (normalized.endsWith('/catalog/workflow-refs.json')) {
+          return JSON.stringify({
+            currentStable: 'v1',
+            repository: 'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow',
+            workflows: {
+              frontendMaster: '.github/workflows/master-pipeline-fe.yml',
+              backendMaster: '.github/workflows/master-pipeline-be.yml',
+              nextjsService: '.github/workflows/service-nextjs.yml',
+              nestjsService: '.github/workflows/service-nestjs.yml',
+            },
+          });
+        }
+
+        if (
+          normalized.endsWith('/catalog/actions.json') ||
+          normalized.endsWith('/catalog/providers.json') ||
+          normalized.endsWith('/catalog/plans.json')
+        ) {
+          return '[]';
+        }
+
+        throw new Error(`Unexpected catalog read: ${normalized}`);
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.projectTypes.map((projectType) => projectType.id)).toEqual([
+        'nextjs',
+        'nestjs',
+      ]);
+      expect(result.recipes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'standard',
+            templateByProjectType: expect.objectContaining({
+              nextjs: 'nextjs-service-pipeline',
+              nestjs: 'nest-service-pipeline',
+            }),
+            workflowRefByProjectType: expect.objectContaining({
+              nextjs:
+                'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/service-nextjs.yml@v1',
+              nestjs:
+                'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/service-nestjs.yml@v1',
+            }),
+          }),
+        ]),
+      );
+    });
+
+    it('falls back to static project options when engine catalog files cannot be read', () => {
+      mockSyncFs.readFileSync.mockImplementation(() => {
+        throw new Error('ENOENT');
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.projectTypes.map((projectType) => projectType.id)).toEqual(
+        expect.arrayContaining(['nextjs', 'nestjs']),
+      );
+      expect(result.recipes[0]?.templateByProjectType.nextjs).toBe(
+        'nextjs-service-pipeline',
+      );
+    });
+  });
+
   describe('listTemplates', () => {
     it('throws ServiceUnavailableException when template folder does not exist', async () => {
       mockFs.access.mockRejectedValue(new Error('ENOENT'));
@@ -62,7 +165,7 @@ describe('CatalogService', () => {
 
     it('returns empty array when no property files exist', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([] as unknown as import('node:fs').Dirent[]);
+      mockReaddir([]);
 
       const result = await service.listTemplates();
       expect(result).toEqual([]);
@@ -70,10 +173,10 @@ describe('CatalogService', () => {
 
     it('loads and returns templates from property files', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const result = await service.listTemplates();
 
@@ -90,9 +193,9 @@ describe('CatalogService', () => {
       mockFs.access
         .mockResolvedValueOnce(undefined)  // root folder
         .mockRejectedValueOnce(new Error('ENOENT')); // workflow file missing
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
+      ]);
 
       const result = await service.listTemplates();
       expect(result).toEqual([]);
@@ -100,10 +203,10 @@ describe('CatalogService', () => {
 
     it('skips templates with malformed JSON in properties file', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('bad-template.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue('not json' as unknown as Buffer);
+      ]);
+      mockReadFile('not json');
 
       const result = await service.listTemplates();
       expect(result).toEqual([]);
@@ -111,10 +214,10 @@ describe('CatalogService', () => {
 
     it('returns cached results on second call within TTL', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       await service.listTemplates();
       await service.listTemplates();
@@ -124,10 +227,10 @@ describe('CatalogService', () => {
 
     it('filters by stack', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const result = await service.listTemplates({ stack: 'nextjs' });
       expect(result).toEqual([]);
@@ -135,10 +238,10 @@ describe('CatalogService', () => {
 
     it('filters by category', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const result = await service.listTemplates({ category: 'nestjs' });
       expect(result).toHaveLength(1);
@@ -146,10 +249,10 @@ describe('CatalogService', () => {
 
     it('filters by search query', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const matchResult = await service.listTemplates({ q: 'nestjs' });
       expect(matchResult).toHaveLength(1);
@@ -159,10 +262,10 @@ describe('CatalogService', () => {
   describe('listCategories', () => {
     it('returns categories sorted by count desc then name asc', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const result = await service.listCategories();
 
@@ -175,10 +278,10 @@ describe('CatalogService', () => {
   describe('getTemplateById', () => {
     it('returns the template when found', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([
+      mockReaddir([
         makeEntry('nestjs-be.properties.json'),
-      ] as unknown as import('node:fs').Dirent[]);
-      mockFs.readFile.mockResolvedValue(sampleProperties as unknown as Buffer);
+      ]);
+      mockReadFile(sampleProperties);
 
       const result = await service.getTemplateById('nestjs-be');
       expect(result).not.toBeNull();
@@ -187,7 +290,7 @@ describe('CatalogService', () => {
 
     it('returns null when template not found', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockFs.readdir.mockResolvedValue([] as unknown as import('node:fs').Dirent[]);
+      mockReaddir([]);
 
       const result = await service.getTemplateById('missing');
       expect(result).toBeNull();

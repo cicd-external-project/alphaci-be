@@ -13,7 +13,7 @@ export interface SessionUser {
 export interface SubscriptionState {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
-  provider: 'mock' | 'supabase' | 'manual';
+  provider: 'mock' | 'supabase' | 'manual' | 'paymongo';
   updatedAt: string;
   planCode?: string;
   currentPeriodStart?: string | null;

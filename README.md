@@ -6,6 +6,24 @@ Start with `START_HERE_BACKEND.md` for a full onboarding and system-level explan
 
 ---
 
+## Product Backend Role
+
+This repository is the active backend for FlowCI Studio in the current implementation path.
+The frontend in `../cicd-workflow-fe` calls this service at `/api/v1`.
+
+The backend owns:
+
+- GitHub OAuth session login
+- subscription state
+- project catalog responses
+- workflow generation
+- GitHub App installation linking
+- repository creation and branch setup
+
+The separate `../cicd-saas-api` repository is reference material only for this path.
+
+---
+
 ## What This Template Provides
 
 - **Production-ready bootstrap** — Helmet, CORS, body size limits, graceful shutdown, global validation, structured error responses, and Swagger (toggled by env var).

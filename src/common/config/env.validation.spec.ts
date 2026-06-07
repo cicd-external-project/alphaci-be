@@ -15,6 +15,9 @@ function validEnv(
     SUPABASE_ANON_KEY: 'anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     ALLOWED_ORIGINS: 'http://localhost:5173',
+    FRONTEND_URL: 'http://localhost:3000',
+    GITHUB_CLIENT_ID: 'github-client-id',
+    GITHUB_CLIENT_SECRET: 'github-client-secret',
     ...overrides,
   };
 }
@@ -113,10 +116,10 @@ describe('validateEnv', () => {
   });
 
   describe('PORT validation', () => {
-    it('throws when PORT is missing', () => {
+    it('defaults PORT to 4000 when missing', () => {
       const env = validEnv();
       delete env['PORT'];
-      expect(() => validateEnv(env)).toThrow(/PORT/);
+      expect(validateEnv(env).PORT).toBe(4000);
     });
 
     it('throws when PORT is zero', () => {
@@ -148,6 +151,9 @@ describe('validateEnv', () => {
       'SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
       'ALLOWED_ORIGINS',
+      'FRONTEND_URL',
+      'GITHUB_CLIENT_ID',
+      'GITHUB_CLIENT_SECRET',
     ];
 
     for (const field of requiredFields) {
