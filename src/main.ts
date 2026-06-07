@@ -78,8 +78,17 @@ async function bootstrap(): Promise<void> {
   // Helmet — CISO-managed config (security.config.ts)
   app.use(helmet(enableSwagger ? helmetConfigSwagger : helmetConfig));
 
-  // Body parsers with size limit (bodyParser disabled at factory level)
-  app.use(express.json({ limit: BODY_SIZE_LIMIT }));
+  // Body parsers with size limit (bodyParser disabled at factory level).
+  // The verify callback captures the raw body buffer for webhook signature
+  // verification — consumed once here before JSON parsing discards it.
+  app.use(
+    express.json({
+      limit: BODY_SIZE_LIMIT,
+      verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(express.urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
   // Graceful shutdown

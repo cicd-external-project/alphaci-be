@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 import {
   BadGatewayException,
   ForbiddenException,
@@ -179,8 +181,8 @@ export class SubscriptionService {
     }
 
     const metadataUserId = attributes?.metadata?.['userId'];
-    if (typeof metadataUserId === 'string' && metadataUserId !== user.id) {
-      throw new ForbiddenException('Checkout session belongs to another user');
+    if (typeof metadataUserId !== 'string' || metadataUserId !== user.id) {
+      throw new ForbiddenException('Checkout session does not belong to this user');
     }
 
     const subscription = await this.activatePaidPlan(user.id);
@@ -189,14 +191,10 @@ export class SubscriptionService {
 
   async handlePayMongoWebhook(
     rawPayload: unknown,
-    signature: string | undefined,
+    rawBody: Buffer | undefined,
+    signatureHeader: string | undefined,
   ): Promise<{ received: true; ignored?: boolean }> {
-    if (
-      !this.config.subscription.paymongo.webhookSecret ||
-      signature !== this.config.subscription.paymongo.webhookSecret
-    ) {
-      throw new ForbiddenException('Invalid PayMongo webhook signature');
-    }
+    this.verifyPayMongoSignature(rawBody, signatureHeader);
 
     const payload = rawPayload as PayMongoWebhookPayload;
     if (payload.data?.type !== 'checkout_session.payment.paid') {
@@ -244,11 +242,54 @@ export class SubscriptionService {
   }
 
   private assertMockEnabled(): void {
-    if (process.env['NODE_ENV'] === 'production') {
-      throw new ForbiddenException('Not available in production');
-    }
     if (!this.config.subscription.mockEnabled) {
       throw new ForbiddenException('Subscription mock endpoints are disabled');
+    }
+  }
+
+  private verifyPayMongoSignature(
+    rawBody: Buffer | undefined,
+    signatureHeader: string | undefined,
+  ): void {
+    const webhookSecret = this.config.subscription.paymongo.webhookSecret;
+
+    if (!webhookSecret) {
+      throw new ForbiddenException('Webhook secret not configured');
+    }
+
+    if (!rawBody || !signatureHeader) {
+      throw new ForbiddenException('Missing webhook payload or signature');
+    }
+
+    // Header format: "t=<timestamp>,te=<test_sig>,li=<live_sig>"
+    const parts = signatureHeader.split(',');
+    const timestamp = parts.find((p) => p.startsWith('t='))?.slice(2);
+    const teSignature = parts.find((p) => p.startsWith('te='))?.slice(3);
+    const liSignature = parts.find((p) => p.startsWith('li='))?.slice(3);
+    const expectedSig = teSignature ?? liSignature;
+
+    if (!timestamp || !expectedSig) {
+      throw new ForbiddenException('Invalid webhook signature format');
+    }
+
+    // Replay attack prevention: reject if timestamp is older than 5 minutes
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp, 10)) > 300) {
+      throw new ForbiddenException('Webhook timestamp is expired');
+    }
+
+    const computed = createHmac('sha256', webhookSecret)
+      .update(`${timestamp}.${rawBody.toString('utf8')}`)
+      .digest('hex');
+
+    const computedBuf = Buffer.from(computed, 'utf8');
+    const expectedBuf = Buffer.from(expectedSig, 'utf8');
+
+    if (
+      computedBuf.length !== expectedBuf.length ||
+      !timingSafeEqual(computedBuf, expectedBuf)
+    ) {
+      throw new ForbiddenException('Invalid PayMongo webhook signature');
     }
   }
 
