@@ -129,6 +129,13 @@ export class UsersRepository {
     return this.toSessionUser(row);
   }
 
+  async deleteById(userId: string): Promise<void> {
+    await this.databaseService.query(
+      `DELETE FROM app_users WHERE id = $1;`,
+      [userId],
+    );
+  }
+
   async findById(userId: string): Promise<SessionUser | null> {
     const result = await this.databaseService.query<PersistedUserRow>(
       `

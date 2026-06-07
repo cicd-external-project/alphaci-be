@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  NotFoundException,
+  Param,
   Post,
   Query,
   Req,
@@ -82,5 +85,51 @@ export class ProjectsController {
     const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
 
     return this.projectsService.listProjects(userId, safeLimit);
+  }
+
+  /**
+   * DELETE /api/v1/projects/:id
+   * Removes a project from FlowCI tracking. The actual GitHub repository,
+   * workflow YAML files, and GitHub Secrets are NOT touched — this only
+   * removes the FlowCI database record and cascades to project_ci_tokens.
+   */
+  @Delete(':id')
+  @UseGuards(SessionAuthGuard)
+  async disconnectProject(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    await this.projectsService.disconnectProject(id, userId);
+    return { ok: true };
+  }
+
+  /**
+   * POST /api/v1/projects/sync
+   * Checks each provisioned project against the GitHub API to verify the
+   * repository still exists. Missing repos are marked 'orphaned'; repos that
+   * have reappeared are restored to 'provisioned'. Requires a GitHub token.
+   */
+  @Post('sync')
+  @UseGuards(SessionAuthGuard)
+  async syncProjects(@Req() req: Request) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const accessToken = req.session.githubAccessToken;
+    if (!accessToken) {
+      throw new UnauthorizedException(
+        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      );
+    }
+
+    return this.projectsService.syncProjects(userId, accessToken);
   }
 }

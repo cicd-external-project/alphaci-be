@@ -238,6 +238,33 @@ export class GithubService {
     }
   }
 
+  /**
+   * Returns true if the repository exists and the token has access to it.
+   * Returns false on 404 (deleted or never existed) or 403/401 (no access).
+   * Throws on unexpected non-2xx/4xx statuses (5xx, network errors).
+   */
+  async repoExists(accessToken: string, repoFullName: string): Promise<boolean> {
+    const response = await fetch(
+      `https://api.github.com/repos/${repoFullName}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (response.status === 200) return true;
+    if (response.status === 404 || response.status === 403 || response.status === 401) return false;
+
+    const body = await response.text();
+    throw new BadGatewayException(
+      `GitHub repo existence check failed (${String(response.status)}): ${body}`,
+    );
+  }
+
   async listRepos(accessToken: string): Promise<GitHubRepo[]> {
     const response = await fetch(
       'https://api.github.com/user/repos?per_page=100&sort=updated&type=all',
@@ -525,6 +552,63 @@ export class GithubService {
     }
 
     return { number: payload.number, htmlUrl: payload.html_url };
+  }
+
+  async setActionsSecret(
+    accessToken: string | null | undefined,
+    owner: string,
+    repo: string,
+    secretName: string,
+    secretValue: string,
+  ): Promise<void> {
+    if (!accessToken) {
+      this.logger.warn(`setActionsSecret: no token available for ${owner}/${repo}/${secretName}, skipping`);
+      return;
+    }
+
+    const keyRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (!keyRes.ok) {
+      const body = await keyRes.text();
+      this.logger.warn(`setActionsSecret: failed to fetch public key for ${owner}/${repo} (${String(keyRes.status)}): ${body}`);
+      return;
+    }
+
+    const keyPayload = (await keyRes.json()) as { key_id: string; key: string };
+
+    await sodium.ready;
+    const keyBytes = sodium.from_base64(keyPayload.key, sodium.base64_variants.ORIGINAL);
+    const secretBytes = sodium.from_string(secretValue);
+    const encryptedBytes = sodium.crypto_box_seal(secretBytes, keyBytes);
+    const encryptedValue = sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
+
+    const putRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ encrypted_value: encryptedValue, key_id: keyPayload.key_id }),
+      },
+    );
+
+    if (!putRes.ok && putRes.status !== 204) {
+      const body = await putRes.text();
+      this.logger.warn(`setActionsSecret: failed to set ${secretName} on ${owner}/${repo} (${String(putRes.status)}): ${body}`);
+    }
   }
 
   async applyBranchProtection(

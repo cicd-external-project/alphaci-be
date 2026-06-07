@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 
+export type ProvisionedProjectStatus = 'provisioning' | 'provisioned' | 'failed' | 'orphaned';
+
 export interface ProvisionedProjectRow {
   id: string;
   user_id: string;
@@ -9,7 +11,7 @@ export interface ProvisionedProjectRow {
   template_id: string;
   service_name: string;
   workflow_path: string;
-  status: 'provisioning' | 'provisioned' | 'failed';
+  status: ProvisionedProjectStatus;
   github_commit_sha: string | null;
   github_commit_url: string | null;
   failure_reason: string | null;
@@ -29,7 +31,7 @@ export interface CreateProvisionedProjectInput {
   templateId: string;
   serviceName: string;
   workflowPath: string;
-  status: 'provisioning' | 'provisioned' | 'failed';
+  status: ProvisionedProjectStatus;
   githubCommitSha?: string | null;
   githubCommitUrl?: string | null;
   failureReason?: string | null;
@@ -117,7 +119,7 @@ export class ProjectsRepository {
 
   async updateStatus(
     id: string,
-    status: 'provisioning' | 'provisioned' | 'failed',
+    status: ProvisionedProjectStatus,
     commitSha?: string | null,
     commitUrl?: string | null,
     failureReason?: string | null,
@@ -135,5 +137,68 @@ export class ProjectsRepository {
       `,
       [id, status, commitSha ?? null, commitUrl ?? null, failureReason ?? null],
     );
+  }
+
+  /**
+   * Hard-delete a provisioned_projects row by its primary key.
+   * CASCADE takes care of project_ci_tokens automatically.
+   * Scoped to userId to prevent cross-user deletions.
+   * Returns true if a row was deleted, false if not found or wrong user.
+   */
+  async deleteByIdAndUser(id: string, userId: string): Promise<boolean> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        DELETE FROM provisioned_projects
+        WHERE id = $1 AND user_id = $2
+        RETURNING id;
+      `,
+      [id, userId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Set status = 'orphaned' for all project IDs in the given set.
+   * Only touches rows owned by userId.
+   */
+  async markOrphaned(ids: string[], userId: string): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    // Build $3, $4, … placeholders for the id list
+    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
+
+    const result = await this.databaseService.query(
+      `
+        UPDATE provisioned_projects
+        SET status = 'orphaned', updated_at = NOW()
+        WHERE user_id = $1
+          AND id = ANY(ARRAY[${placeholders}]::uuid[])
+          AND status <> 'orphaned';
+      `,
+      [userId, ...ids],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Reset orphaned status back to provisioned for repos that reappeared
+   * or were re-verified. Scoped to userId.
+   */
+  async markReachable(ids: string[], userId: string): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    const placeholders = ids.map((_, i) => `$${i + 3}`).join(', ');
+
+    const result = await this.databaseService.query(
+      `
+        UPDATE provisioned_projects
+        SET status = 'provisioned', updated_at = NOW()
+        WHERE user_id = $1
+          AND id = ANY(ARRAY[${placeholders}]::uuid[])
+          AND status = 'orphaned';
+      `,
+      [userId, ...ids],
+    );
+    return result.rowCount ?? 0;
   }
 }
