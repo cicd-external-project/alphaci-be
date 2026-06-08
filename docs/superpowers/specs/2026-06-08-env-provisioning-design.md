@@ -245,7 +245,10 @@ FlowCI will:
 - List/select Render services for BYO mode.
 - Use FlowCI-owned Render tokens for managed backend targets.
 - Map FlowCI environments to Render service env vars or env groups.
-- Upsert env vars and overwrite existing keys.
+- Read existing service env vars, merge submitted keys, then update the provider so unrelated keys are preserved.
+- Overwrite submitted keys while preserving unrelated existing keys.
+
+Render's service env-var update endpoint replaces the service env-var list. The provider client must therefore fetch current env vars first, merge the submitted key/value pairs into that list, and then submit the complete replacement payload. Environment group updates can use the single-key update endpoint when a target is backed by an env group.
 
 ### Vercel
 
@@ -257,7 +260,8 @@ FlowCI will:
 - List/select Vercel projects for BYO mode.
 - Use FlowCI-owned Vercel tokens for managed frontend targets.
 - Map FlowCI environments to Vercel environments.
-- Upsert env vars and overwrite existing keys.
+- Upsert env vars with Vercel's project env API using `upsert=true`.
+- Overwrite submitted keys while preserving unrelated existing keys.
 
 Vercel environment mapping needs to be explicit because Vercel's native environment model does not perfectly match `test`, `uat`, and `production`. The first version stores the mapping in `project_deployment_targets.environment_map` and shows the mapping in the UI.
 
