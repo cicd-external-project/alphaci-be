@@ -118,6 +118,10 @@ export class ProjectsService {
       return this.createMicroservicesProject(userId, userLogin, provisioningToken, dto);
     }
 
+    if (dto.repoShape === 'multi-repo') {
+      return this.createMultiRepoProject(userId, userLogin, provisioningToken, dto);
+    }
+
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
     const templateId = this.resolveTemplateId(
       dto.projectTypeId,
@@ -149,11 +153,25 @@ export class ProjectsService {
       provisioningToken,
       ownerLogin,
       repoName,
-      dto.serviceName,
-      dto.projectTypeId,
+      {
+        projectName: dto.serviceName,
+        stack: dto.projectTypeId,
+        repoShape: dto.repoShape ?? 'standalone',
+      },
     );
 
-    // 4. Create uat and test branches from main
+    // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
+    // uat inherit the workflow files — GitHub Actions reads the YAML from the
+    // branch being pushed to, so it must exist on those branches.
+    const workflowPath = `.github/workflows/${outputFileName}`;
+    const { commitSha, commitUrl } = await this.pushWorkflowFiles(
+      provisioningToken,
+      ownerLogin,
+      repoName,
+      workflowFiles,
+    );
+
+    // 4. Create uat and test branches from main (scaffold + workflow already present)
     for (const branch of ['uat', 'test'] as const) {
       await this.githubService.createBranch(provisioningToken, ownerLogin, repoName, branch, 'main');
     }
@@ -162,15 +180,6 @@ export class ProjectsService {
     for (const branch of ['test', 'uat', 'main'] as const) {
       await this.githubService.applyBranchProtection(provisioningToken, ownerLogin, repoName, branch);
     }
-
-    // 6. Push the workflow YAML to .github/workflows/{outputFileName} on main
-    const workflowPath = `.github/workflows/${outputFileName}`;
-    const { commitSha, commitUrl } = await this.pushWorkflowFiles(
-      provisioningToken,
-      ownerLogin,
-      repoName,
-      workflowFiles,
-    );
 
     // 7. Persist
     const row = await this.projectsRepository.create({
@@ -279,8 +288,14 @@ export class ProjectsService {
       accessToken,
       ownerLogin,
       repoName,
-      dto.repoName,
-      backend.projectTypeId,
+      {
+        projectName: dto.repoName,
+        stack: backend.projectTypeId,
+        repoShape: 'microservices',
+        backendServiceName: backend.serviceName,
+        frontendStack: frontend.projectTypeId,
+        frontendServiceName: frontend.serviceName,
+      },
     );
 
     // 5. Push backend workflow file to main
@@ -833,24 +848,45 @@ export class ProjectsService {
   }
 
   /**
-   * Push a README.md and .gitignore to the repository on main.
+   * Push a full project scaffold to the repository on main, then add README.md.
    * Called immediately after createRepo() so that all downstream branches
    * branch off a commit that already contains these files.
+   *
+   * The scaffold structure varies by repoShape:
+   * - standalone/multi-repo: flat files at repo root
+   * - monorepo: workspace root + packages/core with project references
+   * - microservices: backend/ and frontend/ subdirectories
    */
   private async pushStarterFiles(
     accessToken: string,
     owner: string,
     repo: string,
-    projectName: string,
-    stack = 'nodejs',
+    opts: {
+      projectName: string;
+      stack?: string;
+      repoShape?: string;
+      frontendStack?: string;
+      frontendServiceName?: string;
+      backendServiceName?: string;
+    },
   ): Promise<void> {
-    // Generate scaffold files programmatically from the project type.
-    // This avoids a dependency on physical starter directories that may not
-    // exist in production (e.g. on Render).
+    const {
+      projectName,
+      stack = 'nodejs',
+      repoShape,
+      frontendStack,
+      frontendServiceName,
+      backendServiceName,
+    } = opts;
+
     const scaffoldFiles = buildProjectScaffold({
       serviceName: projectName,
       stack,
       includeDocker: defaultIncludeDocker(stack),
+      repoShape,
+      frontendStack,
+      frontendServiceName,
+      backendServiceName,
     });
 
     for (const file of scaffoldFiles) {
@@ -870,7 +906,7 @@ export class ProjectsService {
       }
     }
 
-    // Always push README.md and .gitignore
+    // Always push README.md (.gitignore is included in the scaffold above)
     const readmeContent = [
       `# ${projectName}`,
       '',
@@ -959,8 +995,11 @@ export class ProjectsService {
       accessToken,
       ownerLogin,
       actualBeRepoName,
-      backend.serviceName || actualBeRepoName,
-      backend.projectTypeId,
+      {
+        projectName: backend.serviceName || actualBeRepoName,
+        stack: backend.projectTypeId,
+        repoShape: 'standalone',
+      },
     );
 
     const backendWorkflowPath =
@@ -1061,8 +1100,11 @@ export class ProjectsService {
         accessToken,
         feOwnerLogin,
         actualFeRepoName,
-        frontend.serviceName || actualFeRepoName,
-        frontend.projectTypeId,
+        {
+          projectName: frontend.serviceName || actualFeRepoName,
+          stack: frontend.projectTypeId,
+          repoShape: 'standalone',
+        },
       );
 
       const frontendWorkflowPath =
