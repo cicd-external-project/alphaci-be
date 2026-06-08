@@ -8,6 +8,15 @@
 
 **Tech Stack:** NestJS, PostgreSQL/Supabase migrations, `pg`, Node `crypto`, Render REST API, Vercel REST API, Next.js/React, Jest, ESLint.
 
+## Implementation Status
+
+Updated 2026-06-08 after implementation review:
+
+- Backend API, schema, encrypted provider-token storage, provider clients, feature guard, capabilities endpoint, and write-only env metadata provisioning are implemented.
+- Frontend API helpers, provider settings, project env provisioning panel, provider target creation, BYO/register-existing target registration, metadata-only display, and feature-flagged entry points are implemented.
+- Added focused frontend UI tests for provider settings and project env provisioning, including token clearing, BYO target registration, metadata display without secret values, failed-key summaries, and capability-gated actions.
+- Remaining verification belongs to Task 10: focused suites, lint/build, diff checks, and rendered browser QA before final push.
+
 ---
 
 ## Source Notes
