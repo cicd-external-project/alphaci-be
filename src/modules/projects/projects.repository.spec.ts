@@ -130,4 +130,14 @@ describe('ProjectsRepository', () => {
       ['user-1', 25],
     );
   });
+
+  it('finds a project by id scoped to user', async () => {
+    const result = await repo.findByIdAndUser('project-1', 'user-1');
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE id = $1'),
+      ['project-1', 'user-1'],
+    );
+    expect(result).toEqual(fakeRow);
+  });
 });

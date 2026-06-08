@@ -2,7 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 
-export type ProvisionedProjectStatus = 'provisioning' | 'provisioned' | 'failed' | 'orphaned';
+export type ProvisionedProjectStatus =
+  | 'provisioning'
+  | 'provisioned'
+  | 'failed'
+  | 'orphaned';
 
 export interface ProvisionedProjectRow {
   id: string;
@@ -49,7 +53,9 @@ export class ProjectsRepository {
 
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async create(data: CreateProvisionedProjectInput): Promise<ProvisionedProjectRow> {
+  async create(
+    data: CreateProvisionedProjectInput,
+  ): Promise<ProvisionedProjectRow> {
     const query = `
       INSERT INTO provisioned_projects (
         user_id,
@@ -72,23 +78,26 @@ export class ProjectsRepository {
       RETURNING *;
     `;
 
-    const result = await this.databaseService.query<ProvisionedProjectRow>(query, [
-      data.userId,
-      data.repoFullName,
-      data.templateId,
-      data.serviceName,
-      data.workflowPath,
-      data.status,
-      data.githubCommitSha ?? null,
-      data.githubCommitUrl ?? null,
-      data.failureReason ?? null,
-      data.repoUrl ?? null,
-      data.visibility ?? null,
-      data.repoShape ?? null,
-      data.projectTypeId ?? null,
-      data.workflowRecipeId ?? null,
-      data.projectOptions ? JSON.stringify(data.projectOptions) : '{}',
-    ]);
+    const result = await this.databaseService.query<ProvisionedProjectRow>(
+      query,
+      [
+        data.userId,
+        data.repoFullName,
+        data.templateId,
+        data.serviceName,
+        data.workflowPath,
+        data.status,
+        data.githubCommitSha ?? null,
+        data.githubCommitUrl ?? null,
+        data.failureReason ?? null,
+        data.repoUrl ?? null,
+        data.visibility ?? null,
+        data.repoShape ?? null,
+        data.projectTypeId ?? null,
+        data.workflowRecipeId ?? null,
+        data.projectOptions ? JSON.stringify(data.projectOptions) : '{}',
+      ],
+    );
 
     const row = result.rows[0];
     if (!row) {
@@ -98,7 +107,10 @@ export class ProjectsRepository {
     return row;
   }
 
-  async listByUser(userId: string, limit = 50): Promise<ProvisionedProjectRow[]> {
+  async listByUser(
+    userId: string,
+    limit = 50,
+  ): Promise<ProvisionedProjectRow[]> {
     const safeLimit = Number.isFinite(limit)
       ? Math.max(1, Math.min(100, Math.trunc(limit)))
       : 25;
@@ -115,6 +127,24 @@ export class ProjectsRepository {
     );
 
     return result.rows;
+  }
+
+  async findByIdAndUser(
+    id: string,
+    userId: string,
+  ): Promise<ProvisionedProjectRow | null> {
+    const result = await this.databaseService.query<ProvisionedProjectRow>(
+      `
+        SELECT *
+        FROM provisioned_projects
+        WHERE id = $1
+          AND user_id = $2
+        LIMIT 1;
+      `,
+      [id, userId],
+    );
+
+    return result.rows[0] ?? null;
   }
 
   async updateStatus(
