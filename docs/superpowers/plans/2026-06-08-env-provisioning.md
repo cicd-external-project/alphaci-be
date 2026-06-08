@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build feature-flagged website-driven env-var provisioning that pushes write-only runtime env values to Render and Vercel for provisioned FlowCI projects.
+**Goal:** Build feature-flagged website-driven deployment target creation and env-var provisioning that creates/selects Render/Vercel targets, then pushes write-only runtime env values for provisioned FlowCI projects.
 
-**Architecture:** Add a backend Env Provisioning module that owns provider connections, encrypted provider tokens, deployment targets, provider clients, and metadata-only env-var provisioning. Add frontend capability-aware settings and project env screens that submit values once, clear them, and show only metadata/status.
+**Architecture:** Add a backend Env Provisioning module that owns provider connections, encrypted provider tokens, provider target creation/selection, deployment target metadata, provider clients, and metadata-only env-var provisioning. Add frontend capability-aware settings and project env screens that create or select provider targets, submit values once, clear them, and show only metadata/status.
 
 **Tech Stack:** NestJS, PostgreSQL/Supabase migrations, `pg`, Node `crypto`, Render REST API, Vercel REST API, Next.js/React, Jest, ESLint.
 
@@ -13,7 +13,9 @@
 ## Source Notes
 
 - Vercel project env creation supports `upsert=true` on `POST /v10/projects/{idOrName}/env`.
+- Vercel project creation is available through `POST /v11/projects`; the request can include Git repository link/configuration and returns a project id.
 - Vercel env targets are `production`, `preview`, and `development`; FlowCI maps `test -> preview`, `uat -> preview`, and `production -> production` unless a custom env id is configured.
+- Render service creation is available through `POST /v1/services`; the first target type for FlowCI is a web service backed by the project's GitHub repo and branch.
 - Render service env-var update uses `PUT /v1/services/{serviceId}/env-vars` and replaces the env-var list, so the Render client must fetch existing vars and merge submitted keys before writing.
 - Render env group single-key updates can use `PUT /v1/env-groups/{envGroupId}/env-vars/{envVarKey}` when the target is an env group.
 
@@ -35,6 +37,7 @@ Backend create:
 - `src/modules/env-provisioning/provider-clients/render-env.client.ts`: Render API client.
 - `src/modules/env-provisioning/provider-clients/vercel-env.client.ts`: Vercel API client.
 - `src/modules/env-provisioning/provider-clients/provider-client.registry.ts`: provider selection.
+- `src/modules/env-provisioning/provider-targets.service.ts`: common create-or-register target orchestration.
 - `src/modules/env-provisioning/provider-connections.service.ts`: connection use cases.
 - `src/modules/env-provisioning/deployment-targets.service.ts`: deployment target use cases.
 - `src/modules/env-provisioning/env-vars.service.ts`: env provisioning use cases.
@@ -288,6 +291,11 @@ CREATE TABLE IF NOT EXISTS project_deployment_targets (
   provider_connection_id     UUID        NULL REFERENCES provider_connections(id) ON DELETE SET NULL,
   provider_project_id        TEXT        NOT NULL,
   provider_project_name      TEXT        NOT NULL,
+  repo_full_name             TEXT        NOT NULL,
+  branch_name                TEXT        NOT NULL,
+  root_directory             TEXT        NULL,
+  build_command              TEXT        NULL,
+  start_command              TEXT        NULL,
   environment_map            JSONB       NOT NULL DEFAULT '{}'::jsonb,
   status                     TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'missing', 'failed')),
   created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -724,6 +732,15 @@ export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
   listTargets(token: string): Promise<ProviderDeploymentTarget[]>;
+  createTarget(input: {
+    token: string;
+    repoFullName: string;
+    projectName: string;
+    branchName: string;
+    rootDirectory?: string;
+    buildCommand?: string;
+    startCommand?: string;
+  }): Promise<ProviderDeploymentTarget>;
   upsertEnvironmentVariables(input: {
     token: string;
     targetId: string;
@@ -733,26 +750,103 @@ export interface RuntimeEnvProviderClient {
 }
 ```
 
-- [ ] **Step 4: Implement Render client**
+- [ ] **Step 4: Write target creation tests**
+
+Render create target test:
+
+```ts
+global.fetch = jest.fn().mockResolvedValueOnce({
+  ok: true,
+  json: async () => ({
+    service: {
+      id: 'srv-1',
+      name: 'api-service-test',
+    },
+  }),
+}) as jest.Mock;
+
+const target = await client.createTarget({
+  token: 'rnd',
+  repoFullName: 'owner/api-service',
+  projectName: 'api-service-test',
+  branchName: 'test',
+  rootDirectory: '.',
+  buildCommand: 'npm ci && npm run build',
+  startCommand: 'npm run start:prod',
+});
+
+expect(target).toEqual({
+  id: 'srv-1',
+  name: 'api-service-test',
+  provider: 'render',
+});
+expect(fetch).toHaveBeenCalledWith(
+  'https://api.render.com/v1/services',
+  expect.objectContaining({
+    method: 'POST',
+  }),
+);
+```
+
+Vercel create target test:
+
+```ts
+global.fetch = jest.fn().mockResolvedValueOnce({
+  ok: true,
+  json: async () => ({
+    id: 'prj_1',
+    name: 'web-app-test',
+  }),
+}) as jest.Mock;
+
+const target = await client.createTarget({
+  token: 'vercel',
+  repoFullName: 'owner/web-app',
+  projectName: 'web-app-test',
+  branchName: 'test',
+  rootDirectory: 'apps/web',
+  buildCommand: 'npm run build',
+});
+
+expect(target).toEqual({
+  id: 'prj_1',
+  name: 'web-app-test',
+  provider: 'vercel',
+});
+expect(fetch).toHaveBeenCalledWith(
+  'https://api.vercel.com/v11/projects',
+  expect.objectContaining({
+    method: 'POST',
+  }),
+);
+```
+
+- [ ] **Step 5: Implement Render client**
 
 Use:
 
 ```ts
+POST https://api.render.com/v1/services
 GET https://api.render.com/v1/services?limit=100
 GET https://api.render.com/v1/services/{serviceId}/env-vars
 PUT https://api.render.com/v1/services/{serviceId}/env-vars
 ```
 
+Create Render web services from `repoFullName`, `branchName`, `rootDirectory`, `buildCommand`, and `startCommand`. Persist the returned service id as `providerProjectId`.
+
 Implementation rule: current env vars are converted to `Map<string, string>`, submitted vars overwrite map entries, and the full map is written back.
 
-- [ ] **Step 5: Implement Vercel client**
+- [ ] **Step 6: Implement Vercel client**
 
 Use:
 
 ```ts
+POST https://api.vercel.com/v11/projects
 GET https://api.vercel.com/v9/projects
 POST https://api.vercel.com/v10/projects/{projectId}/env?upsert=true
 ```
+
+Create Vercel projects from `repoFullName`, `projectName`, `branchName`, and `rootDirectory`. Persist the returned project id as `providerProjectId`.
 
 Target mapping:
 
@@ -766,7 +860,7 @@ const VERCEL_TARGET_BY_ENV = {
 
 Use `type: 'sensitive'` for submitted values.
 
-- [ ] **Step 6: Run provider client tests**
+- [ ] **Step 7: Run provider client tests**
 
 ```powershell
 npm test -- --runInBand env-provisioning/provider-clients
@@ -774,7 +868,7 @@ npm test -- --runInBand env-provisioning/provider-clients
 
 Expected: provider client tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```powershell
 git add src/modules/env-provisioning/provider-clients
@@ -819,12 +913,18 @@ export interface CreateProviderConnectionDto {
 }
 
 export interface CreateDeploymentTargetDto {
+  action: 'create' | 'register_existing';
   slot: 'backend' | 'frontend' | 'standalone';
   ownershipMode: 'byo' | 'flowci_managed';
   provider: 'render' | 'vercel';
   providerConnectionId?: string;
-  providerProjectId: string;
-  providerProjectName: string;
+  providerProjectId?: string;
+  providerProjectName?: string;
+  projectName?: string;
+  branchName?: string;
+  rootDirectory?: string;
+  buildCommand?: string;
+  startCommand?: string;
   environmentMap?: Record<string, unknown>;
 }
 
@@ -866,6 +966,8 @@ Rules:
 - Provider connection creation validates token with provider client before encrypting.
 - Provider connection listing never returns encrypted token.
 - Target creation verifies project ownership through `ProjectsRepository.findByIdAndUser`.
+- Target creation creates a provider resource when `action` is `create`.
+- Target creation registers an existing provider resource when `action` is `register_existing`.
 - Env provisioning verifies project ownership through target lookup joined to project.
 - Env key regex: `/^[A-Z_][A-Z0-9_]{1,127}$/`.
 - Values must be strings with max length `16384`.
@@ -883,6 +985,36 @@ Controllers:
 ```ts
 @Controller('projects/:projectId/deployment-targets')
 @UseGuards(SessionAuthGuard, SubscriptionGuard, EnvFeatureGuard)
+```
+
+`POST /projects/:projectId/deployment-targets` create mode:
+
+```json
+{
+  "action": "create",
+  "slot": "backend",
+  "ownershipMode": "flowci_managed",
+  "provider": "render",
+  "projectName": "api-service-test",
+  "branchName": "test",
+  "rootDirectory": ".",
+  "buildCommand": "npm ci && npm run build",
+  "startCommand": "npm run start:prod"
+}
+```
+
+`POST /projects/:projectId/deployment-targets` register-existing mode:
+
+```json
+{
+  "action": "register_existing",
+  "slot": "frontend",
+  "ownershipMode": "byo",
+  "provider": "vercel",
+  "providerConnectionId": "connection-id",
+  "providerProjectId": "prj_123",
+  "providerProjectName": "web-app"
+}
 ```
 
 ```ts
@@ -1081,6 +1213,9 @@ It exposes `provision(values)` and clears caller-provided values on success or p
 The panel contains:
 
 - Deployment target select.
+- Target action selector: create a new target or use an existing target.
+- Build/start command fields when creating Render backend targets.
+- Root directory field for monorepos and microservices.
 - Environment segmented control: `test`, `uat`, `production`.
 - Editable rows for key/value.
 - Add row and remove row buttons.
@@ -1167,6 +1302,7 @@ Expected: PRs are created or existing PRs are updated for `env-provisioning -> t
 - Encrypted provider tokens: Task 3 and Task 6.
 - Write-only app env values: Task 4 and Task 6.
 - Render and Vercel provider clients: Task 5.
+- Provider target creation before env submission: Task 5, Task 6, Task 9.
 - Provider connection UI: Task 8.
 - Project env provisioning UI: Task 9.
 - Test/UAT/production support: Task 5, Task 6, Task 9.
