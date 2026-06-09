@@ -123,7 +123,7 @@ describe('RenderEnvClient', () => {
         },
       }),
     };
-    const client = new RenderEnvClient(configService);
+    const client = new RenderEnvClient(configService as never);
 
     await client.createTarget({
       token: 'rnd',

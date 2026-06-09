@@ -142,7 +142,7 @@ export class SubscriptionsRepository {
               cancel_at_period_end,
               metadata
             )
-            VALUES ($1, $2, $2, 'active', $3, $4, 'month', NOW(), NOW() + INTERVAL '1 month', false, '{}'::jsonb)
+            VALUES ($1, 'pro', $2, 'active', $3, $4, 'month', NOW(), NOW() + INTERVAL '1 month', false, '{}'::jsonb)
             RETURNING
               plan,
               status,
@@ -155,7 +155,7 @@ export class SubscriptionsRepository {
               amount_php,
               interval_unit;
           `,
-          [userId, 'pro', provider, amountPhp],
+          [userId, planCode, provider, amountPhp],
         );
 
         await client.query('COMMIT');

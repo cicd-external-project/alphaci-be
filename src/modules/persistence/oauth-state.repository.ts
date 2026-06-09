@@ -16,7 +16,7 @@ export class OAuthStateRepository {
   async save(state: string, returnTo: string, provider: string): Promise<void> {
     const result = await this.databaseService.query(
       `
-        INSERT INTO oauth_states (state, return_to, provider)
+        INSERT INTO identity.oauth_states (state, return_to, provider)
         VALUES ($1, $2, $3);
       `,
       [state, returnTo, provider],
@@ -32,7 +32,7 @@ export class OAuthStateRepository {
   ): Promise<{ returnTo: string; provider: string } | null> {
     const result = await this.databaseService.query<OAuthStateRow>(
       `
-        DELETE FROM oauth_states
+        DELETE FROM identity.oauth_states
         WHERE state = $1
           AND expires_at > NOW()
         RETURNING return_to, provider;
@@ -64,7 +64,7 @@ export class OAuthStateRepository {
   async pruneExpired(): Promise<void> {
     try {
       await this.databaseService.query(
-        `SELECT clean_expired_oauth_states();`,
+        `SELECT identity.clean_expired_oauth_states();`,
         [],
       );
     } catch (err) {

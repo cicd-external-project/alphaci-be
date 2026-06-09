@@ -125,6 +125,22 @@ describe('SubscriptionsRepository', () => {
         'manual',
       );
 
+      const insertCall = db._clientMock.query.mock.calls.find(
+        ([query]) =>
+          typeof query === 'string' &&
+          query.includes('INSERT INTO user_subscriptions'),
+      );
+
+      expect(insertCall).toBeDefined();
+      expect(insertCall?.[0]).toContain(
+        "VALUES ($1, 'pro', $2, 'active', $3, $4",
+      );
+      expect(insertCall?.[1]).toEqual([
+        'user-1',
+        'pro_monthly',
+        'manual',
+        300,
+      ]);
       expect(result.plan).toBe('pro');
       expect(result.status).toBe('active');
     });

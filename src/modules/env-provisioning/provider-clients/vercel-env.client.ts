@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
   ProviderAccountSummary,
@@ -20,11 +22,13 @@ const VERCEL_TARGET_BY_ENV = {
 export class VercelEnvClient implements RuntimeEnvProviderClient {
   readonly provider = 'vercel' as const;
 
+  constructor(private readonly configService?: ConfigService) {}
+
   async validateConnection(token: string): Promise<ProviderAccountSummary> {
-    const response = await fetch(`${VERCEL_API_URL}/v2/user`, {
+    const response = await fetch(this.withScope(`${VERCEL_API_URL}/v2/user`), {
       headers: this.headers(token),
     });
-    this.assertOk(response, 'Vercel connection validation failed');
+    await this.assertOk(response, 'Vercel connection validation failed');
     const payload = (await response.json()) as {
       user?: { uid?: string; username?: string; name?: string };
     };
@@ -36,10 +40,13 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   }
 
   async listTargets(token: string): Promise<ProviderDeploymentTarget[]> {
-    const response = await fetch(`${VERCEL_API_URL}/v9/projects`, {
-      headers: this.headers(token),
-    });
-    this.assertOk(response, 'Vercel projects could not be loaded');
+    const response = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v9/projects`),
+      {
+        headers: this.headers(token),
+      },
+    );
+    await this.assertOk(response, 'Vercel projects could not be loaded');
     const payload = (await response.json()) as {
       projects?: Array<{ id?: string; name?: string }>;
     };
@@ -59,23 +66,26 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     input: CreateProviderTargetInput,
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
-    const response = await fetch(`${VERCEL_API_URL}/v11/projects`, {
-      method: 'POST',
-      headers: this.headers(input.token),
-      body: JSON.stringify({
-        name: input.projectName,
-        gitRepository:
-          owner && repo
-            ? {
-                type: 'github',
-                repo: input.repoFullName,
-              }
-            : undefined,
-        rootDirectory: input.rootDirectory,
-        buildCommand: input.buildCommand,
-      }),
-    });
-    this.assertOk(response, 'Vercel project could not be created');
+    const response = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v11/projects`),
+      {
+        method: 'POST',
+        headers: this.headers(input.token),
+        body: JSON.stringify({
+          name: input.projectName,
+          gitRepository:
+            owner && repo
+              ? {
+                  type: 'github',
+                  repo: input.repoFullName,
+                }
+              : undefined,
+          rootDirectory: input.rootDirectory,
+          buildCommand: input.buildCommand,
+        }),
+      },
+    );
+    await this.assertOk(response, 'Vercel project could not be created');
     const payload = (await response.json()) as { id?: string; name?: string };
     if (!payload.id || !payload.name) {
       throw new Error('Vercel project creation returned an invalid response');
@@ -93,7 +103,9 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   ): Promise<ProviderProvisionResult> {
     for (const variable of input.vars) {
       const response = await fetch(
-        `${VERCEL_API_URL}/v10/projects/${input.targetId}/env?upsert=true`,
+        this.withScope(
+          `${VERCEL_API_URL}/v10/projects/${input.targetId}/env?upsert=true`,
+        ),
         {
           method: 'POST',
           headers: this.headers(input.token),
@@ -105,7 +117,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
           }),
         },
       );
-      this.assertOk(response, 'Vercel env var could not be updated');
+      await this.assertOk(response, 'Vercel env var could not be updated');
     }
 
     return {
@@ -117,6 +129,26 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
+  private withScope(url: string): string {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    const teamId =
+      config?.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
+    const slug =
+      config?.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
+    if (!teamId && !slug) {
+      return url;
+    }
+
+    const scopedUrl = new URL(url);
+    if (teamId) {
+      scopedUrl.searchParams.set('teamId', teamId);
+    } else {
+      scopedUrl.searchParams.set('slug', slug);
+    }
+
+    return scopedUrl.toString();
+  }
+
   private headers(token: string): Record<string, string> {
     return {
       Authorization: `Bearer ${token}`,
@@ -124,9 +156,11 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
-  private assertOk(response: Response, message: string): void {
+  private async assertOk(response: Response, message: string): Promise<void> {
     if (!response.ok) {
-      throw new Error(`${message}: ${response.status}`);
+      const body = await response.text().catch(() => '');
+      const summary = body ? ` ${body.slice(0, 300)}` : '';
+      throw new Error(`${message}: ${response.status}${summary}`);
     }
   }
 }

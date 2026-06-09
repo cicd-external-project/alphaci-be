@@ -51,33 +51,37 @@ export class GithubInstallationsRepository {
   ): Promise<GithubInstallation> {
     const result = await this.databaseService.query<GithubInstallationRow>(
       `
-        INSERT INTO github_installations (
+        INSERT INTO github_app.github_installation_accounts (
           installation_id,
           user_id,
           account_login,
           account_id,
-          repository_selection,
-          repos_linked
+          repository_selection
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (installation_id)
+        VALUES ($1, $2::uuid, $3, $4, $5)
+        ON CONFLICT (user_id, installation_id)
         DO UPDATE SET
-          user_id              = EXCLUDED.user_id,
           account_login        = EXCLUDED.account_login,
           account_id           = EXCLUDED.account_id,
           repository_selection = EXCLUDED.repository_selection,
-          repos_linked         = EXCLUDED.repos_linked,
           updated_at           = NOW()
         RETURNING
           installation_id,
-          user_id,
+          user_id::text,
           account_login,
           account_id,
           repository_selection,
-          repos_linked,
+          $6::integer AS repos_linked,
           created_at;
       `,
-      [userId, installationId, accountLogin, accountId, repositorySelection, reposLinked],
+      [
+        installationId,
+        userId,
+        accountLogin,
+        accountId,
+        repositorySelection,
+        reposLinked,
+      ],
     );
 
     const row = result.rows[0];
@@ -90,15 +94,22 @@ export class GithubInstallationsRepository {
     const result = await this.databaseService.query<GithubInstallationRow>(
       `
         SELECT
-          installation_id,
-          user_id,
-          account_login,
-          account_id,
-          repository_selection,
-          repos_linked,
-          created_at
-        FROM github_installations
-        WHERE user_id = $1
+          a.installation_id,
+          a.user_id::text,
+          a.account_login,
+          a.account_id,
+          a.repository_selection,
+          (
+            SELECT COUNT(*)::integer
+            FROM github_app.github_installations r
+            WHERE r.user_id = a.user_id
+              AND r.installation_id = a.installation_id
+              AND r.suspended_at IS NULL
+          ) AS repos_linked,
+          a.created_at
+        FROM github_app.github_installation_accounts a
+        WHERE a.user_id = $1::uuid
+          AND a.suspended_at IS NULL
         ORDER BY created_at DESC;
       `,
       [userId],
@@ -112,12 +123,12 @@ export class GithubInstallationsRepository {
     const result = await this.databaseService.query<GithubInstallationRepoRow>(
       `
         SELECT
-          r.installation_id,
-          r.repo_full_name
-        FROM github_installation_repos r
-        INNER JOIN github_installations i ON i.installation_id = r.installation_id
-        WHERE i.user_id = $1
-        ORDER BY r.repo_full_name;
+          installation_id,
+          repo_full_name
+        FROM github_app.github_installations
+        WHERE user_id = $1::uuid
+          AND suspended_at IS NULL
+        ORDER BY repo_full_name;
       `,
       [userId],
     );
@@ -133,7 +144,7 @@ export class GithubInstallationsRepository {
     repoFullNames: string[],
   ): Promise<void> {
     await this.databaseService.query(
-      'DELETE FROM github_installation_repos WHERE installation_id = $1;',
+      'DELETE FROM github_app.github_installations WHERE installation_id = $1;',
       [installationId],
     );
 
@@ -143,18 +154,40 @@ export class GithubInstallationsRepository {
 
     const values: unknown[] = [];
     const placeholders = repoFullNames.map((repoFullName, index) => {
-      values.push(installationId, repoFullName);
-      const base = index * 2;
-      return `($${base + 1}, $${base + 2})`;
+      values.push(repoFullName);
+      return `($${index + 2})`;
     });
 
     await this.databaseService.query(
       `
-        INSERT INTO github_installation_repos (installation_id, repo_full_name)
-        VALUES ${placeholders.join(', ')}
-        ON CONFLICT (installation_id, repo_full_name) DO NOTHING;
+        INSERT INTO github_app.github_installations (
+          user_id,
+          installation_id,
+          repo_full_name,
+          account_login,
+          account_id,
+          repository_selection,
+          permissions,
+          events,
+          installed_at
+        )
+        SELECT
+          account.user_id,
+          account.installation_id,
+          repo.repo_full_name,
+          account.account_login,
+          account.account_id,
+          account.repository_selection,
+          account.permissions,
+          account.events,
+          account.installed_at
+        FROM github_app.github_installation_accounts account
+        CROSS JOIN (VALUES ${placeholders.join(', ')}) AS repo(repo_full_name)
+        WHERE account.installation_id = $1
+          AND account.suspended_at IS NULL
+        ON CONFLICT DO NOTHING;
       `,
-      values,
+      [installationId, ...values],
     );
   }
 

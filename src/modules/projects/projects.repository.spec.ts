@@ -2,7 +2,10 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 
 import { DatabaseService } from '../database/database.service.js';
-import { ProjectsRepository, type ProvisionedProjectRow } from './projects.repository.js';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from './projects.repository.js';
 
 const fakeRow: ProvisionedProjectRow = {
   id: 'project-1',
@@ -66,22 +69,32 @@ describe('ProjectsRepository', () => {
     });
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO provisioned_projects'),
+      expect.stringContaining('INSERT INTO projects.provisioned_projects'),
       expect.arrayContaining([
         'user-1',
         'tone/orders-api',
         'be-nestjs',
         'orders-api',
         '.github/workflows/ci.yml',
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+        'commit-sha',
         'provisioned',
         'commit-sha',
         'https://github.com/tone/orders-api/commit/commit-sha',
         null,
+        expect.stringContaining(
+          '"repoUrl":"https://github.com/tone/orders-api"',
+        ),
+        expect.any(String),
+        null,
+        'tone',
+        'orders-api',
         'https://github.com/tone/orders-api',
         'private',
         'single-app',
         'nestjs-api',
         'backend-api-ci',
+        'be-nestjs',
         JSON.stringify({ lint: true }),
       ]),
     );
@@ -107,7 +120,7 @@ describe('ProjectsRepository', () => {
     const result = await repo.listByUser('user-1', 10);
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM provisioned_projects'),
+      expect.stringContaining('FROM projects.provisioned_projects'),
       ['user-1', 10],
     );
     expect(result).toEqual([fakeRow]);
@@ -116,19 +129,13 @@ describe('ProjectsRepository', () => {
   it('clamps list limit to 100', async () => {
     await repo.listByUser('user-1', 999);
 
-    expect(db.query).toHaveBeenCalledWith(
-      expect.any(String),
-      ['user-1', 100],
-    );
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 100]);
   });
 
   it('defaults list limit to 25 for invalid input', async () => {
     await repo.listByUser('user-1', NaN);
 
-    expect(db.query).toHaveBeenCalledWith(
-      expect.any(String),
-      ['user-1', 25],
-    );
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
   });
 
   it('finds a project by id scoped to user', async () => {
