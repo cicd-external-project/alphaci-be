@@ -594,7 +594,7 @@ export class ProjectsService {
    * Removes a provisioned_projects record from FlowCI's database.
    * The GitHub repository, its workflow YAML files, and its GitHub Secrets
    * are NOT touched — this is a FlowCI tracking disconnect only.
-   * CASCADE deletes project_ci_tokens automatically via the FK.
+   * CASCADE deletes ci.project_ci_tokens automatically via the FK.
    */
   async disconnectProject(projectId: string, userId: string): Promise<void> {
     const deleted = await this.projectsRepository.deleteByIdAndUser(

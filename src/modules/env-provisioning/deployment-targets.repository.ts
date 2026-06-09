@@ -52,7 +52,7 @@ export class DeploymentTargetsRepository {
   ): Promise<DeploymentTargetSummary> {
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
-        INSERT INTO project_deployment_targets (
+        INSERT INTO env_provisioning.project_deployment_targets (
           project_id,
           slot,
           ownership_mode,
@@ -89,7 +89,9 @@ export class DeploymentTargetsRepository {
 
     const row = result.rows[0];
     if (!row) {
-      throw new Error('project_deployment_targets INSERT returned no row');
+      throw new Error(
+        'env_provisioning.project_deployment_targets INSERT returned no row',
+      );
     }
 
     return this.toSummary(row);
@@ -101,7 +103,7 @@ export class DeploymentTargetsRepository {
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         SELECT *
-        FROM project_deployment_targets
+        FROM env_provisioning.project_deployment_targets
         WHERE project_id = $1
         ORDER BY created_at DESC;
       `,
@@ -118,8 +120,8 @@ export class DeploymentTargetsRepository {
     const result = await this.databaseService.query<DeploymentTargetRow>(
       `
         SELECT t.*
-        FROM project_deployment_targets t
-        JOIN provisioned_projects p ON p.id = t.project_id
+        FROM env_provisioning.project_deployment_targets t
+        JOIN projects.provisioned_projects p ON p.id = t.project_id
         WHERE t.id = $1
           AND p.user_id = $2
         LIMIT 1;

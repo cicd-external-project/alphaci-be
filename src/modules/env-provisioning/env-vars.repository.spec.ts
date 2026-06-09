@@ -36,7 +36,9 @@ describe('EnvVarsRepository', () => {
     ).mock.calls[0];
     const queryText = String(call?.[0] ?? '');
     const queryValues = call?.[1] ?? [];
-    expect(queryText).toContain('INSERT INTO project_env_var_metadata');
+    expect(queryText).toContain(
+      'INSERT INTO env_provisioning.project_env_var_metadata',
+    );
     expect(queryValues).toContain('DATABASE_URL');
     expect(queryValues).not.toContain('postgres://secret');
   });

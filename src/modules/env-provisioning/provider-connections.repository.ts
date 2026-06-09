@@ -37,7 +37,7 @@ export class ProviderConnectionsRepository {
   ): Promise<ProviderConnectionSummary> {
     const result = await this.databaseService.query<ProviderConnectionRow>(
       `
-        INSERT INTO provider_connections (
+        INSERT INTO env_provisioning.provider_connections (
           user_id,
           provider,
           label,
@@ -58,7 +58,9 @@ export class ProviderConnectionsRepository {
 
     const row = result.rows[0];
     if (!row) {
-      throw new Error('provider_connections INSERT returned no row');
+      throw new Error(
+        'env_provisioning.provider_connections INSERT returned no row',
+      );
     }
 
     return this.toSummary(row);
@@ -70,7 +72,7 @@ export class ProviderConnectionsRepository {
     const result = await this.databaseService.query<ProviderConnectionRow>(
       `
         SELECT id, provider, label, token_last_four, status, created_at, updated_at, last_used_at
-        FROM provider_connections
+        FROM env_provisioning.provider_connections
         WHERE user_id = $1
         ORDER BY created_at DESC;
       `,
@@ -87,7 +89,7 @@ export class ProviderConnectionsRepository {
     const result = await this.databaseService.query<ProviderConnectionRow>(
       `
         SELECT id, provider, label, encrypted_token, token_last_four, status, created_at, updated_at, last_used_at
-        FROM provider_connections
+        FROM env_provisioning.provider_connections
         WHERE id = $1
           AND user_id = $2
           AND status = 'active'
@@ -109,7 +111,7 @@ export class ProviderConnectionsRepository {
   async revokeProviderConnection(id: string, userId: string): Promise<boolean> {
     const result = await this.databaseService.query<{ id: string }>(
       `
-        UPDATE provider_connections
+        UPDATE env_provisioning.provider_connections
         SET status = 'revoked', updated_at = NOW()
         WHERE id = $1
           AND user_id = $2
@@ -125,7 +127,7 @@ export class ProviderConnectionsRepository {
   async markProviderConnectionUsed(id: string): Promise<void> {
     await this.databaseService.query(
       `
-        UPDATE provider_connections
+        UPDATE env_provisioning.provider_connections
         SET last_used_at = NOW(), updated_at = NOW()
         WHERE id = $1;
       `,

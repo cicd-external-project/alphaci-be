@@ -6,9 +6,9 @@
 
 BEGIN;
 
-DROP TRIGGER IF EXISTS trg_project_ci_tokens_updated_at ON project_ci_tokens;
-DROP FUNCTION IF EXISTS set_project_ci_tokens_updated_at();
-DROP INDEX IF EXISTS idx_project_ci_tokens_hash_active;
-DROP TABLE IF EXISTS project_ci_tokens;
+DROP TRIGGER IF EXISTS trg_project_ci_tokens_updated_at ON ci.project_ci_tokens;
+DROP TABLE IF EXISTS ci.project_ci_tokens;
+DROP FUNCTION IF EXISTS ci.set_project_ci_tokens_updated_at();
+DROP SCHEMA IF EXISTS ci;
 
 COMMIT;

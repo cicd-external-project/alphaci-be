@@ -43,7 +43,7 @@ export class EnvVarsRepository {
     const result = await this.databaseService.query<EnvVarMetadataRow>(
       `
         SELECT *
-        FROM project_env_var_metadata
+        FROM env_provisioning.project_env_var_metadata
         WHERE project_id = $1
         ORDER BY deployment_target_id, environment, key;
       `,
@@ -80,7 +80,7 @@ export class EnvVarsRepository {
 
     await this.databaseService.query(
       `
-        INSERT INTO project_env_var_metadata (
+        INSERT INTO env_provisioning.project_env_var_metadata (
           project_id,
           deployment_target_id,
           environment,

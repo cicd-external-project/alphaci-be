@@ -40,7 +40,9 @@ describe('ProviderConnectionsRepository', () => {
     ).mock.calls[0];
     const queryText = String(call?.[0] ?? '');
     const queryValues = call?.[1] ?? [];
-    expect(queryText).toContain('INSERT INTO provider_connections');
+    expect(queryText).toContain(
+      'INSERT INTO env_provisioning.provider_connections',
+    );
     expect(queryText).toContain('encrypted_token');
     expect(queryValues).toContain('encrypted-token');
     expect(queryValues).not.toContain('plain-token');

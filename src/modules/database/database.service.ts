@@ -14,6 +14,18 @@ import {
 
 import type { AppConfig } from '../../config/app.config';
 
+const SERVICE_SCHEMA_SEARCH_PATH = [
+  'identity',
+  'billing',
+  'github_app',
+  'projects',
+  'platform',
+  'workflow',
+  'ci',
+  'env_provisioning',
+  'public',
+].join(',');
+
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
@@ -46,6 +58,7 @@ export class DatabaseService implements OnModuleDestroy {
       query_timeout: 10_000,
       statement_timeout: 10_000,
       idleTimeoutMillis: 30_000,
+      options: `-c search_path=${SERVICE_SCHEMA_SEARCH_PATH}`,
     });
   }
 

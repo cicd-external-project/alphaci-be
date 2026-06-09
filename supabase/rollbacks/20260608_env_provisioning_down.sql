@@ -8,14 +8,15 @@
 
 BEGIN;
 
-DROP TRIGGER IF EXISTS trg_project_env_var_metadata_updated_at ON project_env_var_metadata;
-DROP TRIGGER IF EXISTS trg_project_deployment_targets_updated_at ON project_deployment_targets;
-DROP TRIGGER IF EXISTS trg_provider_connections_updated_at ON provider_connections;
+DROP TRIGGER IF EXISTS trg_project_env_var_metadata_updated_at ON env_provisioning.project_env_var_metadata;
+DROP TRIGGER IF EXISTS trg_project_deployment_targets_updated_at ON env_provisioning.project_deployment_targets;
+DROP TRIGGER IF EXISTS trg_provider_connections_updated_at ON env_provisioning.provider_connections;
 
-DROP TABLE IF EXISTS project_env_var_metadata;
-DROP TABLE IF EXISTS project_deployment_targets;
-DROP TABLE IF EXISTS provider_connections;
+DROP TABLE IF EXISTS env_provisioning.project_env_var_metadata;
+DROP TABLE IF EXISTS env_provisioning.project_deployment_targets;
+DROP TABLE IF EXISTS env_provisioning.provider_connections;
 
-DROP FUNCTION IF EXISTS set_env_provisioning_updated_at();
+DROP FUNCTION IF EXISTS env_provisioning.set_env_provisioning_updated_at();
+DROP SCHEMA IF EXISTS env_provisioning;
 
 COMMIT;

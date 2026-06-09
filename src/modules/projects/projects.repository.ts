@@ -171,7 +171,7 @@ export class ProjectsRepository {
 
   /**
    * Hard-delete a provisioned_projects row by its primary key.
-   * CASCADE takes care of project_ci_tokens automatically.
+   * CASCADE takes care of ci.project_ci_tokens automatically.
    * Scoped to userId to prevent cross-user deletions.
    * Returns true if a row was deleted, false if not found or wrong user.
    */
