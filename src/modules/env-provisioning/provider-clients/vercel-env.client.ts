@@ -180,8 +180,48 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   private async assertOk(response: Response, message: string): Promise<void> {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
+      const actionableError = this.toActionableError(body);
+      if (actionableError) {
+        throw new Error(actionableError);
+      }
+
       const summary = body ? ` ${body.slice(0, 300)}` : '';
       throw new Error(`${message}: ${response.status}${summary}`);
     }
+  }
+
+  private toActionableError(body: string): string | null {
+    if (!body) {
+      return null;
+    }
+
+    let payload: {
+      error?: {
+        action?: string;
+        code?: string;
+        link?: string;
+        message?: string;
+        repo?: string;
+      };
+    };
+    try {
+      payload = JSON.parse(body) as typeof payload;
+    } catch {
+      return null;
+    }
+
+    const error = payload.error;
+    if (
+      error?.action !== 'Install GitHub App' ||
+      !error.message?.includes('install the GitHub integration')
+    ) {
+      return null;
+    }
+
+    const repo = error.repo?.trim() || 'the GitHub repository';
+    return (
+      `Vercel GitHub integration is not installed or does not have access to ${repo}. ` +
+      'Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.'
+    );
   }
 }

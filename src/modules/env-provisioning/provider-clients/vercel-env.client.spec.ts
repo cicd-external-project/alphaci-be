@@ -185,4 +185,37 @@ describe('VercelEnvClient', () => {
     );
     expect(thrown?.message).not.toContain('vercel-secret');
   });
+
+  it('returns an actionable message when Vercel GitHub integration is missing', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            error: {
+              code: 'bad_request',
+              message:
+                'To link a GitHub repository, you need to install the GitHub integration first.',
+              action: 'Install GitHub App',
+              link: 'https://github.com/apps/vercel',
+              repo: 'cicd-external-project/test123',
+            },
+          }),
+        ),
+    });
+
+    const client = new VercelEnvClient();
+
+    await expect(
+      client.createTarget({
+        token: 'vercel-secret',
+        repoFullName: 'cicd-external-project/test123',
+        projectName: 'test123-frontend',
+        branchName: 'test',
+      }),
+    ).rejects.toThrow(
+      'Vercel GitHub integration is not installed or does not have access to cicd-external-project/test123. Install the Vercel GitHub App for that GitHub owner and grant repository access, then retry.',
+    );
+  });
 });
