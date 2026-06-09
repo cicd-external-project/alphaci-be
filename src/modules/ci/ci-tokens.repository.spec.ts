@@ -1,22 +1,24 @@
 import { CiTokensRepository } from './ci-tokens.repository';
-import { DatabaseService } from '../database/database.service';
+import type { DatabaseService } from '../database/database.service';
 
-const makeDatabaseService = () =>
+const makeDatabaseService = (query: jest.Mock) =>
   ({
-    query: jest.fn(),
+    query,
   }) as unknown as DatabaseService;
 
 describe('CiTokensRepository', () => {
   let databaseService: DatabaseService;
+  let query: jest.Mock;
   let repository: CiTokensRepository;
 
   beforeEach(() => {
-    databaseService = makeDatabaseService();
+    query = jest.fn();
+    databaseService = makeDatabaseService(query);
     repository = new CiTokensRepository(databaseService);
   });
 
   it('stores only the token hash for a project token', async () => {
-    (databaseService.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+    query.mockResolvedValueOnce({ rows: [] });
 
     await repository.upsertProjectToken({
       projectId: 'project-1',
@@ -24,8 +26,8 @@ describe('CiTokensRepository', () => {
       tokenPrefix: 'fci_123456',
     });
 
-    expect(databaseService.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO project_ci_tokens'),
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO ci.project_ci_tokens'),
       ['project-1', 'sha256-token', 'fci_123456'],
     );
   });
@@ -39,7 +41,7 @@ describe('CiTokensRepository', () => {
       token_status: 'active',
       subscription_status: 'active',
     };
-    (databaseService.query as jest.Mock).mockResolvedValueOnce({ rows: [row] });
+    query.mockResolvedValueOnce({ rows: [row] });
 
     const result = await repository.findValidationContext(
       'sha256-token',
@@ -47,18 +49,18 @@ describe('CiTokensRepository', () => {
     );
 
     expect(result).toEqual(row);
-    expect(databaseService.query).toHaveBeenCalledWith(
-      expect.stringContaining('JOIN provisioned_projects'),
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('JOIN projects.provisioned_projects'),
       ['sha256-token', 'owner/repo'],
     );
   });
 
   it('revokes active tokens for a project', async () => {
-    (databaseService.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+    query.mockResolvedValueOnce({ rows: [] });
 
     await repository.revokeProjectTokens('project-1');
 
-    expect(databaseService.query).toHaveBeenCalledWith(
+    expect(query).toHaveBeenCalledWith(
       expect.stringContaining("status = 'revoked'"),
       ['project-1'],
     );

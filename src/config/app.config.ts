@@ -32,6 +32,16 @@ export interface AppConfig {
       webhookSecret: string;
     };
   };
+  envProvisioning: {
+    enabled: boolean;
+    encryptionKey: string;
+    flowciManaged: {
+      renderToken: string;
+      vercelToken: string;
+      vercelTeamId: string | null;
+      vercelTeamSlug: string | null;
+    };
+  };
   supabase: {
     dbUrl: string | undefined;
   };
@@ -101,6 +111,16 @@ export const appConfig = registerAs('app', (): AppConfig => {
         webhookSecret: env['PAYMONGO_WEBHOOK_SECRET'] ?? '',
       },
     },
+    envProvisioning: {
+      enabled: env['ENV_PROVISIONING_ENABLED'] === 'true',
+      encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
+      flowciManaged: {
+        renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
+        vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
+        vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
+        vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
+      },
+    },
     supabase: {
       dbUrl: env['SUPABASE_DB_URL'],
     },
@@ -110,7 +130,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
         if (!raw || raw.trim().length < 32) {
           throw new Error(
             '[config] SESSION_SECRET must be set and at least 32 characters long. ' +
-              'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"',
+              "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
           );
         }
         return raw.trim();

@@ -30,6 +30,12 @@ export interface EnvironmentVariables {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   ALLOWED_ORIGINS: string;
+  ENV_PROVISIONING_ENABLED?: string;
+  ENV_PROVISIONING_ENCRYPTION_KEY?: string;
+  FLOWCI_RENDER_API_KEY?: string;
+  FLOWCI_VERCEL_TOKEN?: string;
+  FLOWCI_VERCEL_TEAM_ID?: string;
+  FLOWCI_VERCEL_TEAM_SLUG?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -160,11 +166,31 @@ function requirePort(env: RawEnv, key: string, defaultValue = 4000): number {
   if (raw === undefined || raw === '') return defaultValue;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    const display =
+      typeof raw === 'string' ||
+      typeof raw === 'number' ||
+      typeof raw === 'boolean'
+        ? String(raw)
+        : JSON.stringify(raw);
     throw new Error(
-      `[env] ${key} must be an integer between 1 and 65535. Got: '${String(raw)}'.`,
+      `[env] ${key} must be an integer between 1 and 65535. Got: '${display}'.`,
     );
   }
   return parsed;
+}
+
+function validateEnvProvisioningConfig(env: RawEnv): void {
+  if (env['ENV_PROVISIONING_ENABLED'] !== 'true') {
+    return;
+  }
+
+  const rawKey = requireString(env, 'ENV_PROVISIONING_ENCRYPTION_KEY');
+  const key = Buffer.from(rawKey, 'base64');
+  if (key.length !== 32) {
+    throw new Error(
+      '[env] ENV_PROVISIONING_ENCRYPTION_KEY must be a base64-encoded 32-byte key.',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +281,7 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';
+  validateEnvProvisioningConfig(env);
 
   // Pass all raw env vars through first so appConfig and other factories can
   // read variables (e.g. GITHUB_CLIENT_ID) that validateEnv does not explicitly

@@ -24,7 +24,7 @@ export class CiTokensRepository {
   async upsertProjectToken(data: ProjectCiTokenInput): Promise<void> {
     await this.databaseService.query(
       `
-        INSERT INTO project_ci_tokens (
+        INSERT INTO ci.project_ci_tokens (
           project_id,
           token_hash,
           token_prefix,
@@ -56,11 +56,11 @@ export class CiTokensRepository {
           p.status AS project_status,
           t.status AS token_status,
           s.status AS subscription_status
-        FROM project_ci_tokens t
-        JOIN provisioned_projects p ON p.id = t.project_id
+        FROM ci.project_ci_tokens t
+        JOIN projects.provisioned_projects p ON p.id = t.project_id
         LEFT JOIN LATERAL (
           SELECT status
-          FROM user_subscriptions
+          FROM billing.user_subscriptions
           WHERE user_id = p.user_id
           ORDER BY created_at DESC
           LIMIT 1
@@ -78,7 +78,7 @@ export class CiTokensRepository {
   async revokeProjectTokens(projectId: string): Promise<void> {
     await this.databaseService.query(
       `
-        UPDATE project_ci_tokens
+        UPDATE ci.project_ci_tokens
         SET
           status = 'revoked',
           revoked_at = NOW(),

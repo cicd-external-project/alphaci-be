@@ -39,11 +39,18 @@ export class ProjectsController {
 
     const userLogin = req.session.user?.login;
     if (!userLogin) {
-      throw new UnauthorizedException('GitHub login not found in session. Re-authenticate.');
+      throw new UnauthorizedException(
+        'GitHub login not found in session. Re-authenticate.',
+      );
     }
 
     const accessToken = req.session.githubAccessToken ?? null;
-    return this.projectsService.createProject(userId, userLogin, accessToken, body);
+    return this.projectsService.createProject(
+      userId,
+      userLogin,
+      accessToken,
+      body,
+    );
   }
 
   /**
@@ -91,7 +98,7 @@ export class ProjectsController {
    * DELETE /api/v1/projects/:id
    * Removes a project from FlowCI tracking. The actual GitHub repository,
    * workflow YAML files, and GitHub Secrets are NOT touched — this only
-   * removes the FlowCI database record and cascades to project_ci_tokens.
+   * removes the FlowCI database record and cascades to ci.project_ci_tokens.
    */
   @Delete(':id')
   @UseGuards(SessionAuthGuard)

@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -12,6 +13,78 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class DeploymentProvisioningEnvVarDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(128)
+  key!: string;
+
+  @IsString()
+  @MaxLength(16384)
+  value!: string;
+}
+
+export class DeploymentProvisioningEnvSetDto {
+  @IsIn(['test', 'uat', 'production'])
+  environment!: 'test' | 'uat' | 'production';
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningEnvVarDto)
+  vars!: DeploymentProvisioningEnvVarDto[];
+}
+
+export class DeploymentProvisioningTargetDto {
+  @IsIn(['backend', 'frontend', 'standalone'])
+  slot!: 'backend' | 'frontend' | 'standalone';
+
+  @IsIn(['render', 'vercel'])
+  provider!: 'render' | 'vercel';
+
+  @IsIn(['byo', 'flowci_managed'])
+  ownershipMode!: 'byo' | 'flowci_managed';
+
+  @IsOptional()
+  @IsString()
+  providerConnectionId?: string;
+
+  @IsOptional()
+  @IsString()
+  projectName?: string;
+
+  @IsOptional()
+  @IsString()
+  branchName?: string;
+
+  @IsOptional()
+  @IsString()
+  rootDirectory?: string;
+
+  @IsOptional()
+  @IsString()
+  buildCommand?: string;
+
+  @IsOptional()
+  @IsString()
+  startCommand?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningEnvSetDto)
+  env?: DeploymentProvisioningEnvSetDto[];
+}
+
+export class DeploymentProvisioningRequestDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningTargetDto)
+  targets!: DeploymentProvisioningTargetDto[];
+}
 
 export class MicroserviceSlotDto {
   @IsString()
@@ -113,4 +186,9 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => MultiRepoConfigDto)
   multiRepoConfig?: MultiRepoConfigDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeploymentProvisioningRequestDto)
+  deploymentProvisioning?: DeploymentProvisioningRequestDto;
 }

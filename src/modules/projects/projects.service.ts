@@ -12,6 +12,7 @@ import yaml from 'js-yaml';
 import { CatalogService } from '../catalog/catalog.service';
 import { CiService } from '../ci/ci.service';
 import { GithubService } from '../github/github.service';
+import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -24,10 +25,11 @@ import {
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
-import {
-  buildProjectScaffold,
-  defaultIncludeDocker,
-} from './scaffold.builder';
+import { buildProjectScaffold, defaultIncludeDocker } from './scaffold.builder';
+import type {
+  DeploymentProvisioningRequestDto,
+  DeploymentProvisioningTargetDto,
+} from './dto/create-project.dto';
 
 // ─── Response shapes (match FE contracts exactly) ────────────────────────────
 
@@ -45,6 +47,7 @@ export interface CreateProjectResponse {
   additionalWorkflowPaths?: string[];
   secondaryRepoFullName?: string;
   secondaryRepoUrl?: string;
+  deploymentProvisioning: DeploymentProvisioningResult;
 }
 
 export interface SetupProjectResponse {
@@ -55,6 +58,25 @@ export interface SetupProjectResponse {
   workflowFiles: WorkflowFileMetadata[];
   githubCommitSha: string;
   githubCommitUrl: string | null;
+  deploymentProvisioning: DeploymentProvisioningResult;
+}
+
+export interface DeploymentProvisioningResult {
+  status: 'skipped' | 'completed' | 'partial' | 'failed';
+  targets: Array<{
+    slot: 'backend' | 'frontend' | 'standalone';
+    provider: 'render' | 'vercel';
+    status: 'created' | 'registered' | 'failed';
+    deploymentTargetId: string | null;
+    providerProjectId: string | null;
+    providerProjectName: string | null;
+    errorSummary: string | null;
+    env: Array<{
+      environment: 'test' | 'uat' | 'production';
+      provisioned: Array<{ key: string; status: 'provisioned' }>;
+      failed: Array<{ key: string; status: 'failed'; errorSummary: string }>;
+    }>;
+  }>;
 }
 
 export interface ProvisionedProject {
@@ -102,6 +124,7 @@ export class ProjectsService {
     private readonly githubService: GithubService,
     private readonly projectsRepository: ProjectsRepository,
     private readonly ciService: CiService,
+    private readonly projectDeploymentProvisioningService: ProjectDeploymentProvisioningService,
   ) {}
 
   // ─── POST /projects ────────────────────────────────────────────────────────
@@ -112,14 +135,27 @@ export class ProjectsService {
     accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
-    const provisioningToken = await this.resolveProvisioningToken(userId, accessToken);
+    const provisioningToken = await this.resolveProvisioningToken(
+      userId,
+      accessToken,
+    );
 
     if (dto.repoShape === 'microservices') {
-      return this.createMicroservicesProject(userId, userLogin, provisioningToken, dto);
+      return this.createMicroservicesProject(
+        userId,
+        userLogin,
+        provisioningToken,
+        dto,
+      );
     }
 
     if (dto.repoShape === 'multi-repo') {
-      return this.createMultiRepoProject(userId, userLogin, provisioningToken, dto);
+      return this.createMultiRepoProject(
+        userId,
+        userLogin,
+        provisioningToken,
+        dto,
+      );
     }
 
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
@@ -139,9 +175,8 @@ export class ProjectsService {
     );
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
-    const { repoUrl, ownerLogin, repoName } = await this.githubService.createRepo(
-      provisioningToken,
-      {
+    const { repoUrl, ownerLogin, repoName } =
+      await this.githubService.createRepo(provisioningToken, {
         repoName: dto.repoName,
         private: dto.visibility === 'private',
       });
@@ -149,16 +184,11 @@ export class ProjectsService {
     const repoFullName = `${ownerLogin}/${repoName}`;
 
     // 3.5 Push scaffold + README to main so all downstream branches inherit them
-    await this.pushStarterFiles(
-      provisioningToken,
-      ownerLogin,
-      repoName,
-      {
-        projectName: dto.serviceName,
-        stack: dto.projectTypeId,
-        repoShape: dto.repoShape ?? 'standalone',
-      },
-    );
+    await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
+      projectName: dto.serviceName,
+      stack: dto.projectTypeId,
+      repoShape: dto.repoShape ?? 'standalone',
+    });
 
     // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
     // uat inherit the workflow files — GitHub Actions reads the YAML from the
@@ -173,12 +203,23 @@ export class ProjectsService {
 
     // 4. Create uat and test branches from main (scaffold + workflow already present)
     for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(provisioningToken, ownerLogin, repoName, branch, 'main');
+      await this.githubService.createBranch(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        branch,
+        'main',
+      );
     }
 
     // 5. Apply branch protection to all three branches
     for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(provisioningToken, ownerLogin, repoName, branch);
+      await this.githubService.applyBranchProtection(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        branch,
+      );
     }
 
     // 7. Persist
@@ -211,6 +252,14 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioning =
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: row.id,
+        userId,
+        repoFullName,
+        request: dto.deploymentProvisioning,
+      });
+
     return {
       id: row.id,
       repoFullName,
@@ -222,6 +271,7 @@ export class ProjectsService {
       githubCommitUrl: commitUrl,
       projectTypeId: dto.projectTypeId,
       workflowRecipeId: dto.workflowRecipeId ?? '',
+      deploymentProvisioning,
     };
   }
 
@@ -284,19 +334,14 @@ export class ProjectsService {
     const repoFullName = `${ownerLogin}/${repoName}`;
 
     // 4. Push starter files to main so all subsequent branches inherit them
-    await this.pushStarterFiles(
-      accessToken,
-      ownerLogin,
-      repoName,
-      {
-        projectName: dto.repoName,
-        stack: backend.projectTypeId,
-        repoShape: 'microservices',
-        backendServiceName: backend.serviceName,
-        frontendStack: frontend.projectTypeId,
-        frontendServiceName: frontend.serviceName,
-      },
-    );
+    await this.pushStarterFiles(accessToken, ownerLogin, repoName, {
+      projectName: dto.repoName,
+      stack: backend.projectTypeId,
+      repoShape: 'microservices',
+      backendServiceName: backend.serviceName,
+      frontendStack: frontend.projectTypeId,
+      frontendServiceName: frontend.serviceName,
+    });
 
     // 5. Push backend workflow file to main
     const backendWorkflowPath =
@@ -386,10 +431,22 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: backendRow.id,
+        userId,
+        repoFullName,
+        request: this.filterDeploymentProvisioningRequest(
+          dto.deploymentProvisioning,
+          ['backend'],
+        ),
+      }),
+    ];
+
     // 10. Save frontend DB row if the push succeeded
     if (frontendPushResult !== undefined) {
       try {
-        await this.projectsRepository.create({
+        const frontendRow = await this.projectsRepository.create({
           userId,
           repoFullName,
           templateId: frontendTemplateId,
@@ -407,6 +464,18 @@ export class ProjectsService {
             workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
           },
         });
+
+        deploymentProvisioningResults.push(
+          await this.projectDeploymentProvisioningService.provisionForProject({
+            projectId: frontendRow.id,
+            userId,
+            repoFullName,
+            request: this.filterDeploymentProvisioningRequest(
+              dto.deploymentProvisioning,
+              ['frontend'],
+            ),
+          }),
+        );
       } catch (err) {
         this.logger.warn(
           `Microservices project: frontend DB row save failed: ${String(err)}`,
@@ -426,6 +495,9 @@ export class ProjectsService {
       projectTypeId: backend.projectTypeId,
       workflowRecipeId: backend.workflowRecipeId ?? '',
       additionalWorkflowPaths,
+      deploymentProvisioning: this.combineDeploymentProvisioningResults(
+        deploymentProvisioningResults,
+      ),
     };
   }
 
@@ -484,6 +556,14 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioning =
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: row.id,
+        userId,
+        repoFullName: dto.repoFullName,
+        request: dto.deploymentProvisioning,
+      });
+
     return {
       id: row.id,
       repoFullName: dto.repoFullName,
@@ -492,12 +572,16 @@ export class ProjectsService {
       workflowFiles: this.workflowFileMetadata(workflowFiles),
       githubCommitSha: commitSha,
       githubCommitUrl: commitUrl,
+      deploymentProvisioning,
     };
   }
 
   // ─── GET /projects ─────────────────────────────────────────────────────────
 
-  async listProjects(userId: string, limit = 25): Promise<ProvisionedProjectsResponse> {
+  async listProjects(
+    userId: string,
+    limit = 25,
+  ): Promise<ProvisionedProjectsResponse> {
     const rows = await this.projectsRepository.listByUser(userId, limit);
     return {
       items: rows.map((row) => this.toProvisionedProject(row)),
@@ -510,10 +594,13 @@ export class ProjectsService {
    * Removes a provisioned_projects record from FlowCI's database.
    * The GitHub repository, its workflow YAML files, and its GitHub Secrets
    * are NOT touched — this is a FlowCI tracking disconnect only.
-   * CASCADE deletes project_ci_tokens automatically via the FK.
+   * CASCADE deletes ci.project_ci_tokens automatically via the FK.
    */
   async disconnectProject(projectId: string, userId: string): Promise<void> {
-    const deleted = await this.projectsRepository.deleteByIdAndUser(projectId, userId);
+    const deleted = await this.projectsRepository.deleteByIdAndUser(
+      projectId,
+      userId,
+    );
     if (!deleted) {
       throw new NotFoundException(
         `Project '${projectId}' not found or does not belong to the current user.`,
@@ -608,7 +695,10 @@ export class ProjectsService {
     );
   }
 
-  private resolveTemplateId(projectTypeId: string, workflowRecipeId?: string): string {
+  private resolveTemplateId(
+    projectTypeId: string,
+    workflowRecipeId?: string,
+  ): string {
     const { recipes } = this.catalogService.getProjectOptions();
     const recipeId = workflowRecipeId ?? 'standard';
     const recipe = recipes.find((r) => r.id === recipeId);
@@ -622,6 +712,43 @@ export class ProjectsService {
 
     // Fallback: conventional naming that matches the YAML file names on disk
     return `${projectTypeId}-${recipeId}`;
+  }
+
+  private filterDeploymentProvisioningRequest(
+    request: DeploymentProvisioningRequestDto | undefined,
+    slots: DeploymentProvisioningTargetDto['slot'][],
+  ): DeploymentProvisioningRequestDto | undefined {
+    if (!request) {
+      return undefined;
+    }
+
+    return {
+      enabled: request.enabled,
+      targets: request.targets.filter((target) => slots.includes(target.slot)),
+    };
+  }
+
+  private combineDeploymentProvisioningResults(
+    results: DeploymentProvisioningResult[],
+  ): DeploymentProvisioningResult {
+    const targets = results.flatMap((result) => result.targets);
+    if (targets.length === 0) {
+      return { status: 'skipped', targets: [] };
+    }
+
+    const failedCount = targets.filter(
+      (target) => target.status === 'failed',
+    ).length;
+
+    return {
+      status:
+        failedCount === 0
+          ? 'completed'
+          : failedCount === targets.length
+            ? 'failed'
+            : 'partial',
+      targets,
+    };
   }
 
   /**
@@ -879,15 +1006,17 @@ export class ProjectsService {
       backendServiceName,
     } = opts;
 
-    const scaffoldFiles = buildProjectScaffold({
+    const scaffoldOptions = {
       serviceName: projectName,
       stack,
       includeDocker: defaultIncludeDocker(stack),
-      repoShape,
-      frontendStack,
-      frontendServiceName,
-      backendServiceName,
-    });
+      ...(repoShape ? { repoShape } : {}),
+      ...(frontendStack ? { frontendStack } : {}),
+      ...(frontendServiceName ? { frontendServiceName } : {}),
+      ...(backendServiceName ? { backendServiceName } : {}),
+    };
+
+    const scaffoldFiles = buildProjectScaffold(scaffoldOptions);
 
     for (const file of scaffoldFiles) {
       try {
@@ -991,16 +1120,11 @@ export class ProjectsService {
 
     const beRepoFullName = `${ownerLogin}/${actualBeRepoName}`;
 
-    await this.pushStarterFiles(
-      accessToken,
-      ownerLogin,
-      actualBeRepoName,
-      {
-        projectName: backend.serviceName || actualBeRepoName,
-        stack: backend.projectTypeId,
-        repoShape: 'standalone',
-      },
-    );
+    await this.pushStarterFiles(accessToken, ownerLogin, actualBeRepoName, {
+      projectName: backend.serviceName || actualBeRepoName,
+      stack: backend.projectTypeId,
+      repoShape: 'standalone',
+    });
 
     const backendWorkflowPath =
       backendWorkflowFiles[0]?.path ??
@@ -1065,6 +1189,18 @@ export class ProjectsService {
 
     // ── Frontend repository (non-fatal on failure) ──────────────────────────
 
+    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: backendRow.id,
+        userId,
+        repoFullName: beRepoFullName,
+        request: this.filterDeploymentProvisioningRequest(
+          dto.deploymentProvisioning,
+          ['backend'],
+        ),
+      }),
+    ];
+
     let feRepoFullName: string | undefined;
     let feRepoUrl: string | undefined;
 
@@ -1096,16 +1232,11 @@ export class ProjectsService {
       feRepoFullName = `${feOwnerLogin}/${actualFeRepoName}`;
       feRepoUrl = resolvedFeRepoUrl;
 
-      await this.pushStarterFiles(
-        accessToken,
-        feOwnerLogin,
-        actualFeRepoName,
-        {
-          projectName: frontend.serviceName || actualFeRepoName,
-          stack: frontend.projectTypeId,
-          repoShape: 'standalone',
-        },
-      );
+      await this.pushStarterFiles(accessToken, feOwnerLogin, actualFeRepoName, {
+        projectName: frontend.serviceName || actualFeRepoName,
+        stack: frontend.projectTypeId,
+        repoShape: 'standalone',
+      });
 
       const frontendWorkflowPath =
         frontendWorkflowFiles[0]?.path ??
@@ -1166,6 +1297,18 @@ export class ProjectsService {
         'CI_TOKEN',
         frontendCiToken.token,
       );
+
+      deploymentProvisioningResults.push(
+        await this.projectDeploymentProvisioningService.provisionForProject({
+          projectId: frontendRow.id,
+          userId,
+          repoFullName: feRepoFullName,
+          request: this.filterDeploymentProvisioningRequest(
+            dto.deploymentProvisioning,
+            ['frontend'],
+          ),
+        }),
+      );
     } catch (err) {
       this.logger.warn(
         `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
@@ -1188,6 +1331,9 @@ export class ProjectsService {
         secondaryRepoFullName: feRepoFullName,
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
+      deploymentProvisioning: this.combineDeploymentProvisioningResults(
+        deploymentProvisioningResults,
+      ),
     };
   }
 

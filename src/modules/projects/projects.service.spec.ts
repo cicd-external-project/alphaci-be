@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { UnauthorizedException } from '@nestjs/common';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
+import type { CiService } from '../ci/ci.service.js';
 import type { GithubService } from '../github/github.service.js';
 import type { ProjectsRepository } from './projects.repository.js';
 import { ProjectsService } from './projects.service.js';
@@ -41,6 +42,7 @@ const makeGithubService = () =>
     }),
     createBranch: jest.fn().mockResolvedValue(undefined),
     applyBranchProtection: jest.fn().mockResolvedValue(undefined),
+    setActionsSecret: jest.fn().mockResolvedValue(undefined),
   }) as unknown as GithubService;
 
 const makeProjectsRepository = () =>
@@ -50,9 +52,23 @@ const makeProjectsRepository = () =>
     }),
   }) as unknown as ProjectsRepository;
 
+const makeCiService = () =>
+  ({
+    issueProjectToken: jest.fn().mockResolvedValue({
+      token: 'flowci-token',
+    }),
+  }) as unknown as CiService;
+
 describe('ProjectsService', () => {
   let service: ProjectsService;
   let githubService: GithubService;
+  let githubServiceMock: {
+    getInstallationAccessTokenForUser: jest.Mock;
+    createRepo: jest.Mock;
+  };
+  let projectDeploymentProvisioningService: {
+    provisionForProject: jest.Mock;
+  };
 
   beforeEach(() => {
     mockedReadFile.mockResolvedValue(`
@@ -66,10 +82,22 @@ jobs:
 `);
 
     githubService = makeGithubService();
+    githubServiceMock = githubService as unknown as {
+      getInstallationAccessTokenForUser: jest.Mock;
+      createRepo: jest.Mock;
+    };
+    projectDeploymentProvisioningService = {
+      provisionForProject: jest.fn().mockResolvedValue({
+        status: 'skipped',
+        targets: [],
+      }),
+    };
     service = new ProjectsService(
       makeCatalogService(),
       githubService,
       makeProjectsRepository(),
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
     );
 
     jest
@@ -107,17 +135,17 @@ jobs:
       coverageThreshold: 80,
     });
 
-    expect(githubService.getInstallationAccessTokenForUser).toHaveBeenCalledWith(
-      'user-1',
-    );
-    expect(githubService.createRepo).toHaveBeenCalledWith(
+    expect(
+      githubServiceMock.getInstallationAccessTokenForUser,
+    ).toHaveBeenCalledWith('user-1');
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
       'app-token',
       expect.objectContaining({ repoName: 'orders-api' }),
     );
   });
 
   it('falls back to the OAuth token when no installation token is available', async () => {
-    (githubService.getInstallationAccessTokenForUser as jest.Mock).mockResolvedValueOnce(
+    githubServiceMock.getInstallationAccessTokenForUser.mockResolvedValueOnce(
       null,
     );
 
@@ -129,14 +157,14 @@ jobs:
       serviceName: 'orders-api',
     });
 
-    expect(githubService.createRepo).toHaveBeenCalledWith(
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
       'oauth-token',
       expect.any(Object),
     );
   });
 
   it('throws an actionable error when no GitHub token source is available', async () => {
-    (githubService.getInstallationAccessTokenForUser as jest.Mock).mockResolvedValueOnce(
+    githubServiceMock.getInstallationAccessTokenForUser.mockResolvedValueOnce(
       null,
     );
 
@@ -149,5 +177,92 @@ jobs:
         serviceName: 'orders-api',
       }),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('provisions deployment targets after the GitHub project row exists', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-test',
+          },
+        ],
+      },
+    });
+
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders-api',
+      request: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-test',
+          },
+        ],
+      },
+    });
+  });
+
+  it('returns the GitHub project when provider provisioning fails', async () => {
+    projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
+      {
+        status: 'failed',
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            status: 'failed',
+            deploymentTargetId: null,
+            providerProjectId: null,
+            providerProjectName: null,
+            errorSummary: 'Render service could not be created: 401',
+            env: [],
+          },
+        ],
+      },
+    );
+
+    const result = await service.createProject(
+      'user-1',
+      'tone',
+      'oauth-token',
+      {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'orders-api-test',
+            },
+          ],
+        },
+      },
+    );
+
+    expect(result.repoFullName).toBe('tone/orders-api');
+    expect(result.deploymentProvisioning.status).toBe('failed');
   });
 });
