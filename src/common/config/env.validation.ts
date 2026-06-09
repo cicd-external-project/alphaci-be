@@ -33,6 +33,7 @@ export interface EnvironmentVariables {
   ENV_PROVISIONING_ENABLED?: string;
   ENV_PROVISIONING_ENCRYPTION_KEY?: string;
   FLOWCI_RENDER_API_KEY?: string;
+  FLOWCI_RENDER_OWNER_ID?: string;
   FLOWCI_VERCEL_TOKEN?: string;
   FLOWCI_VERCEL_TEAM_ID?: string;
   FLOWCI_VERCEL_TEAM_SLUG?: string;

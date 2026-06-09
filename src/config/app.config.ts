@@ -37,6 +37,7 @@ export interface AppConfig {
     encryptionKey: string;
     flowciManaged: {
       renderToken: string;
+      renderOwnerId: string | null;
       vercelToken: string;
       vercelTeamId: string | null;
       vercelTeamSlug: string | null;
@@ -116,6 +117,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
       flowciManaged: {
         renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
+        renderOwnerId: env['FLOWCI_RENDER_OWNER_ID']?.trim() || null,
         vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
         vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
         vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
