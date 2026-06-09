@@ -4,7 +4,7 @@
  * Standalone script — not a NestJS application.
  * Run by the Render Cron Job every minute.
  *
- * Reads up to 100 pending rows from outbox_events, publishes each to Kafka,
+ * Reads up to 100 pending rows from platform.outbox_events, publishes each to Kafka,
  * then marks them processed.
  * Uses SELECT FOR UPDATE SKIP LOCKED — safe under concurrent cron runs.
  *
@@ -81,7 +81,7 @@ async function run(): Promise<void> {
     const { rows } = await client.query<OutboxRow>(
       `
       SELECT id, topic, aggregate_type, aggregate_id, payload
-      FROM outbox_events
+      FROM platform.outbox_events
       WHERE status = 'pending'
       ORDER BY created_at ASC
       LIMIT $1
@@ -113,8 +113,8 @@ async function run(): Promise<void> {
       });
 
       await client.query(
-        `UPDATE outbox_events
-         SET status = 'processed', processed_at = NOW()
+        `UPDATE platform.outbox_events
+         SET status = 'published', published_at = NOW(), updated_at = NOW()
          WHERE id = $1`,
         [row.id],
       );

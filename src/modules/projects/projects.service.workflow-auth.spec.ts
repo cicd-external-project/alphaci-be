@@ -49,6 +49,7 @@ const makeCatalogService = () =>
 
 const makeGithubService = () =>
   ({
+    getInstallationAccessTokenForUser: jest.fn().mockResolvedValue(null),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/owner/repo',
       ownerLogin: 'owner',
@@ -74,6 +75,13 @@ const makeCiService = () =>
     }),
   }) as unknown as CiService;
 
+const makeProjectDeploymentProvisioningService = () => ({
+  provisionForProject: jest.fn().mockResolvedValue({
+    status: 'skipped',
+    targets: [],
+  }),
+});
+
 const stagedWorkflowMetadata = stagedWorkflowFiles.map((file) => ({
   stage: file.stage,
   name: file.name,
@@ -97,6 +105,7 @@ describe('ProjectsService workflow authorization', () => {
       githubService,
       projectsRepository,
       ciService,
+      makeProjectDeploymentProvisioningService() as never,
     );
 
     jest
