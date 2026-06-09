@@ -98,6 +98,30 @@ describe('ProjectsRepository', () => {
         JSON.stringify({ lint: true }),
       ]),
     );
+    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    const columnsMatch = query.match(
+      /INSERT INTO projects\.provisioned_projects \(([\s\S]*?)\)\s*VALUES/,
+    );
+    const placeholdersMatch = query.match(
+      /VALUES \(([\s\S]*?)\)\s*RETURNING/,
+    );
+
+    if (!columnsMatch?.[1] || !placeholdersMatch?.[1]) {
+      throw new Error('Project insert query shape changed unexpectedly');
+    }
+
+    const columns =
+      columnsMatch[1]
+        .split(',')
+        .map((column) => column.trim())
+        .filter(Boolean) ?? [];
+    const placeholders = placeholdersMatch[1].match(/\$\d+/g) ?? [];
+
+    expect(columns).toHaveLength(values.length);
+    expect(placeholders).toHaveLength(values.length);
     expect(result).toEqual(fakeRow);
   });
 
