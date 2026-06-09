@@ -44,7 +44,9 @@ describe('appConfig factory', () => {
   });
 
   it('parses SUBSCRIPTION_MOCK_MAP_JSON correctly', () => {
-    process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({ testuser: 'pro' });
+    process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({
+      testuser: 'pro',
+    });
 
     const config = appConfig();
     expect(config.subscription.seededPlans).toEqual({ testuser: 'pro' });
@@ -69,5 +71,14 @@ describe('appConfig factory', () => {
 
     const config = appConfig();
     expect(config.session.storeDriver).toBe('memory');
+  });
+
+  it('reads FlowCI-managed Render owner id when set', () => {
+    process.env['FLOWCI_RENDER_OWNER_ID'] = 'tea-configured';
+
+    const config = appConfig();
+    expect(config.envProvisioning.flowciManaged.renderOwnerId).toBe(
+      'tea-configured',
+    );
   });
 });

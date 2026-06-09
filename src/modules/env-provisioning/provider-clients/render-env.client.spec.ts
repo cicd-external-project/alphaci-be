@@ -100,4 +100,46 @@ describe('RenderEnvClient', () => {
       }),
     );
   });
+
+  it('uses configured FlowCI Render owner id when creating services', async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          service: {
+            id: 'srv-1',
+            name: 'api-service-test',
+          },
+        }),
+    });
+    global.fetch = fetchMock;
+
+    const configService = {
+      getOrThrow: jest.fn().mockReturnValue({
+        envProvisioning: {
+          flowciManaged: {
+            renderOwnerId: 'tea-configured',
+          },
+        },
+      }),
+    };
+    const client = new RenderEnvClient(configService);
+
+    await client.createTarget({
+      token: 'rnd',
+      repoFullName: 'owner/api-service',
+      projectName: 'api-service-test',
+      branchName: 'test',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, request] = fetchMock.mock.calls[0] as [
+      string,
+      { body: string; method: string },
+    ];
+    const body = JSON.parse(request.body) as { ownerId: string };
+    expect(url).toBe('https://api.render.com/v1/services');
+    expect(request.method).toBe('POST');
+    expect(body.ownerId).toBe('tea-configured');
+  });
 });

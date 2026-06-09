@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
   ProviderAccountSummary,
@@ -14,6 +16,8 @@ const RENDER_API_URL = 'https://api.render.com/v1';
 @Injectable()
 export class RenderEnvClient implements RuntimeEnvProviderClient {
   readonly provider = 'render' as const;
+
+  constructor(private readonly configService?: ConfigService) {}
 
   async validateConnection(token: string): Promise<ProviderAccountSummary> {
     const response = await fetch(`${RENDER_API_URL}/owners?limit=1`, {
@@ -54,7 +58,9 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
   async createTarget(
     input: CreateProviderTargetInput,
   ): Promise<ProviderDeploymentTarget> {
-    const ownerId = await this.getDefaultOwnerId(input.token);
+    const ownerId =
+      this.getConfiguredOwnerId() ??
+      (await this.getDefaultOwnerId(input.token));
     const response = await fetch(`${RENDER_API_URL}/services`, {
       method: 'POST',
       headers: this.headers(input.token),
@@ -141,6 +147,14 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     }
 
     return ownerId;
+  }
+
+  private getConfiguredOwnerId(): string | null {
+    const ownerId = this.configService
+      ?.getOrThrow<AppConfig>('app')
+      .envProvisioning.flowciManaged.renderOwnerId?.trim();
+
+    return ownerId || null;
   }
 
   private headers(token: string): Record<string, string> {
