@@ -42,16 +42,30 @@ describe('RenderEnvClient', () => {
   });
 
   it('creates Render web services from repo metadata', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          service: {
-            id: 'srv-1',
-            name: 'api-service-test',
-          },
-        }),
-    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              owner: {
+                id: 'tea-1',
+                name: 'FlowCI workspace',
+              },
+            },
+          ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            service: {
+              id: 'srv-1',
+              name: 'api-service-test',
+            },
+          }),
+      });
 
     const client = new RenderEnvClient();
     const target = await client.createTarget({
@@ -73,6 +87,16 @@ describe('RenderEnvClient', () => {
       'https://api.render.com/v1/services',
       expect.objectContaining({
         method: 'POST',
+        body: JSON.stringify({
+          type: 'web_service',
+          name: 'api-service-test',
+          ownerId: 'tea-1',
+          repo: 'https://github.com/owner/api-service',
+          branch: 'test',
+          rootDir: '.',
+          buildCommand: 'npm ci && npm run build',
+          startCommand: 'npm run start:prod',
+        }),
       }),
     );
   });

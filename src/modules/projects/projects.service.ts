@@ -12,6 +12,7 @@ import yaml from 'js-yaml';
 import { CatalogService } from '../catalog/catalog.service';
 import { CiService } from '../ci/ci.service';
 import { GithubService } from '../github/github.service';
+import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
@@ -25,6 +26,10 @@ import {
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
 import { buildProjectScaffold, defaultIncludeDocker } from './scaffold.builder';
+import type {
+  DeploymentProvisioningRequestDto,
+  DeploymentProvisioningTargetDto,
+} from './dto/create-project.dto';
 
 // ─── Response shapes (match FE contracts exactly) ────────────────────────────
 
@@ -42,6 +47,7 @@ export interface CreateProjectResponse {
   additionalWorkflowPaths?: string[];
   secondaryRepoFullName?: string;
   secondaryRepoUrl?: string;
+  deploymentProvisioning: DeploymentProvisioningResult;
 }
 
 export interface SetupProjectResponse {
@@ -52,6 +58,25 @@ export interface SetupProjectResponse {
   workflowFiles: WorkflowFileMetadata[];
   githubCommitSha: string;
   githubCommitUrl: string | null;
+  deploymentProvisioning: DeploymentProvisioningResult;
+}
+
+export interface DeploymentProvisioningResult {
+  status: 'skipped' | 'completed' | 'partial' | 'failed';
+  targets: Array<{
+    slot: 'backend' | 'frontend' | 'standalone';
+    provider: 'render' | 'vercel';
+    status: 'created' | 'registered' | 'failed';
+    deploymentTargetId: string | null;
+    providerProjectId: string | null;
+    providerProjectName: string | null;
+    errorSummary: string | null;
+    env: Array<{
+      environment: 'test' | 'uat' | 'production';
+      provisioned: Array<{ key: string; status: 'provisioned' }>;
+      failed: Array<{ key: string; status: 'failed'; errorSummary: string }>;
+    }>;
+  }>;
 }
 
 export interface ProvisionedProject {
@@ -99,6 +124,7 @@ export class ProjectsService {
     private readonly githubService: GithubService,
     private readonly projectsRepository: ProjectsRepository,
     private readonly ciService: CiService,
+    private readonly projectDeploymentProvisioningService: ProjectDeploymentProvisioningService,
   ) {}
 
   // ─── POST /projects ────────────────────────────────────────────────────────
@@ -226,6 +252,14 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioning =
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: row.id,
+        userId,
+        repoFullName,
+        request: dto.deploymentProvisioning,
+      });
+
     return {
       id: row.id,
       repoFullName,
@@ -237,6 +271,7 @@ export class ProjectsService {
       githubCommitUrl: commitUrl,
       projectTypeId: dto.projectTypeId,
       workflowRecipeId: dto.workflowRecipeId ?? '',
+      deploymentProvisioning,
     };
   }
 
@@ -396,10 +431,22 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: backendRow.id,
+        userId,
+        repoFullName,
+        request: this.filterDeploymentProvisioningRequest(
+          dto.deploymentProvisioning,
+          ['backend'],
+        ),
+      }),
+    ];
+
     // 10. Save frontend DB row if the push succeeded
     if (frontendPushResult !== undefined) {
       try {
-        await this.projectsRepository.create({
+        const frontendRow = await this.projectsRepository.create({
           userId,
           repoFullName,
           templateId: frontendTemplateId,
@@ -417,6 +464,18 @@ export class ProjectsService {
             workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
           },
         });
+
+        deploymentProvisioningResults.push(
+          await this.projectDeploymentProvisioningService.provisionForProject({
+            projectId: frontendRow.id,
+            userId,
+            repoFullName,
+            request: this.filterDeploymentProvisioningRequest(
+              dto.deploymentProvisioning,
+              ['frontend'],
+            ),
+          }),
+        );
       } catch (err) {
         this.logger.warn(
           `Microservices project: frontend DB row save failed: ${String(err)}`,
@@ -436,6 +495,9 @@ export class ProjectsService {
       projectTypeId: backend.projectTypeId,
       workflowRecipeId: backend.workflowRecipeId ?? '',
       additionalWorkflowPaths,
+      deploymentProvisioning: this.combineDeploymentProvisioningResults(
+        deploymentProvisioningResults,
+      ),
     };
   }
 
@@ -494,6 +556,14 @@ export class ProjectsService {
       ciToken.token,
     );
 
+    const deploymentProvisioning =
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: row.id,
+        userId,
+        repoFullName: dto.repoFullName,
+        request: dto.deploymentProvisioning,
+      });
+
     return {
       id: row.id,
       repoFullName: dto.repoFullName,
@@ -502,6 +572,7 @@ export class ProjectsService {
       workflowFiles: this.workflowFileMetadata(workflowFiles),
       githubCommitSha: commitSha,
       githubCommitUrl: commitUrl,
+      deploymentProvisioning,
     };
   }
 
@@ -641,6 +712,43 @@ export class ProjectsService {
 
     // Fallback: conventional naming that matches the YAML file names on disk
     return `${projectTypeId}-${recipeId}`;
+  }
+
+  private filterDeploymentProvisioningRequest(
+    request: DeploymentProvisioningRequestDto | undefined,
+    slots: DeploymentProvisioningTargetDto['slot'][],
+  ): DeploymentProvisioningRequestDto | undefined {
+    if (!request) {
+      return undefined;
+    }
+
+    return {
+      enabled: request.enabled,
+      targets: request.targets.filter((target) => slots.includes(target.slot)),
+    };
+  }
+
+  private combineDeploymentProvisioningResults(
+    results: DeploymentProvisioningResult[],
+  ): DeploymentProvisioningResult {
+    const targets = results.flatMap((result) => result.targets);
+    if (targets.length === 0) {
+      return { status: 'skipped', targets: [] };
+    }
+
+    const failedCount = targets.filter(
+      (target) => target.status === 'failed',
+    ).length;
+
+    return {
+      status:
+        failedCount === 0
+          ? 'completed'
+          : failedCount === targets.length
+            ? 'failed'
+            : 'partial',
+      targets,
+    };
   }
 
   /**
@@ -1081,6 +1189,18 @@ export class ProjectsService {
 
     // ── Frontend repository (non-fatal on failure) ──────────────────────────
 
+    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
+      await this.projectDeploymentProvisioningService.provisionForProject({
+        projectId: backendRow.id,
+        userId,
+        repoFullName: beRepoFullName,
+        request: this.filterDeploymentProvisioningRequest(
+          dto.deploymentProvisioning,
+          ['backend'],
+        ),
+      }),
+    ];
+
     let feRepoFullName: string | undefined;
     let feRepoUrl: string | undefined;
 
@@ -1177,6 +1297,18 @@ export class ProjectsService {
         'CI_TOKEN',
         frontendCiToken.token,
       );
+
+      deploymentProvisioningResults.push(
+        await this.projectDeploymentProvisioningService.provisionForProject({
+          projectId: frontendRow.id,
+          userId,
+          repoFullName: feRepoFullName,
+          request: this.filterDeploymentProvisioningRequest(
+            dto.deploymentProvisioning,
+            ['frontend'],
+          ),
+        }),
+      );
     } catch (err) {
       this.logger.warn(
         `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
@@ -1199,6 +1331,9 @@ export class ProjectsService {
         secondaryRepoFullName: feRepoFullName,
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
+      deploymentProvisioning: this.combineDeploymentProvisioningResults(
+        deploymentProvisioningResults,
+      ),
     };
   }
 

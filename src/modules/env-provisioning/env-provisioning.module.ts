@@ -15,6 +15,7 @@ import { EnvVarsController } from './env-vars.controller';
 import { EnvVarsRepository } from './env-vars.repository';
 import { EnvVarsService } from './env-vars.service';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
+import { ProjectDeploymentProvisioningService } from './project-deployment-provisioning.service';
 import { RenderEnvClient } from './provider-clients/render-env.client';
 import { VercelEnvClient } from './provider-clients/vercel-env.client';
 import { ProviderConnectionsController } from './provider-connections.controller';
@@ -40,9 +41,11 @@ import { ProviderConnectionsService } from './provider-connections.service';
     RenderEnvClient,
     VercelEnvClient,
     ProviderClientRegistry,
+    ProjectDeploymentProvisioningService,
     EnvFeatureGuard,
     SessionAuthGuard,
     SubscriptionGuard,
   ],
+  exports: [ProjectDeploymentProvisioningService],
 })
 export class EnvProvisioningModule {}

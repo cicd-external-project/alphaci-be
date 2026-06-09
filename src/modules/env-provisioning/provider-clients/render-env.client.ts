@@ -54,12 +54,14 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
   async createTarget(
     input: CreateProviderTargetInput,
   ): Promise<ProviderDeploymentTarget> {
+    const ownerId = await this.getDefaultOwnerId(input.token);
     const response = await fetch(`${RENDER_API_URL}/services`, {
       method: 'POST',
       headers: this.headers(input.token),
       body: JSON.stringify({
         type: 'web_service',
         name: input.projectName,
+        ownerId,
         repo: `https://github.com/${input.repoFullName}`,
         branch: input.branchName,
         rootDir: input.rootDirectory,
@@ -123,6 +125,22 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       })),
       failed: [],
     };
+  }
+
+  private async getDefaultOwnerId(token: string): Promise<string> {
+    const response = await fetch(`${RENDER_API_URL}/owners?limit=1`, {
+      headers: this.headers(token),
+    });
+    this.assertOk(response, 'Render workspace could not be loaded');
+    const owners = (await response.json()) as Array<{
+      owner?: { id?: string };
+    }>;
+    const ownerId = owners[0]?.owner?.id;
+    if (!ownerId) {
+      throw new Error('Render workspace lookup returned no owner id');
+    }
+
+    return ownerId;
   }
 
   private headers(token: string): Record<string, string> {

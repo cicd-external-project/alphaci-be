@@ -6,6 +6,7 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { DatabaseModule } from '../database/database.module';
 import { GithubModule } from '../github/github.module';
 import { CiModule } from '../ci/ci.module';
+import { EnvProvisioningModule } from '../env-provisioning/env-provisioning.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { ProjectsController } from './projects.controller';
@@ -19,6 +20,7 @@ import { ProjectsService } from './projects.service';
     CatalogModule, // CatalogService
     GithubModule, // GithubService
     CiModule, // CiService
+    EnvProvisioningModule, // ProjectDeploymentProvisioningService
     SubscriptionModule, // SubscriptionService (needed by SubscriptionGuard)
   ],
   controllers: [ProjectsController],
