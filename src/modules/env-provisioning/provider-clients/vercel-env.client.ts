@@ -66,6 +66,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     input: CreateProviderTargetInput,
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
+    const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
     const response = await fetch(
       this.withScope(`${VERCEL_API_URL}/v11/projects`),
       {
@@ -80,7 +81,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
                   repo: input.repoFullName,
                 }
               : undefined,
-          rootDirectory: input.rootDirectory,
+          rootDirectory,
           buildCommand: input.buildCommand,
         }),
       },
@@ -154,6 +155,26 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     };
+  }
+
+  private normalizeRootDirectory(
+    rootDirectory: string | null | undefined,
+  ): string | undefined {
+    const normalized = rootDirectory?.trim().replace(/\\/g, '/');
+    if (!normalized || normalized === '.') {
+      return undefined;
+    }
+
+    const withoutLeadingDotSlash = normalized.replace(/^(\.\/)+/, '');
+    if (
+      !withoutLeadingDotSlash ||
+      withoutLeadingDotSlash.startsWith('/') ||
+      withoutLeadingDotSlash.includes('..')
+    ) {
+      return undefined;
+    }
+
+    return withoutLeadingDotSlash;
   }
 
   private async assertOk(response: Response, message: string): Promise<void> {

@@ -102,6 +102,36 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('normalizes root directories before creating Vercel projects', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+        }),
+    });
+
+    const client = new VercelEnvClient();
+    await client.createTarget({
+      token: 'vercel',
+      repoFullName: 'owner/web-app',
+      projectName: 'web-app-test',
+      branchName: 'test',
+      rootDirectory: './frontend',
+    });
+
+    const [, init] = (fetch as jest.Mock).mock.calls[0] as [
+      string,
+      { body: string },
+    ];
+    expect(JSON.parse(init.body)).toEqual(
+      expect.objectContaining({
+        rootDirectory: 'frontend',
+      }),
+    );
+  });
+
   it('scopes project creation to the configured Vercel team slug when team id is absent', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
