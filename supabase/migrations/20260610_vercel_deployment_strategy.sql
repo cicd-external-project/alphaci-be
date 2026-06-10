@@ -3,6 +3,14 @@ BEGIN;
 ALTER TABLE env_provisioning.provider_connections
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+UPDATE env_provisioning.provider_connections
+SET metadata = jsonb_build_object(
+  'accountType', 'legacy',
+  'requiresReconnect', true
+)
+WHERE provider = 'vercel'
+  AND metadata = '{}'::jsonb;
+
 ALTER TABLE env_provisioning.project_deployment_targets
   ADD COLUMN IF NOT EXISTS deployment_strategy TEXT,
   ADD COLUMN IF NOT EXISTS provider_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;

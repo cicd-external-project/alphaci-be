@@ -221,8 +221,14 @@ export class DeploymentTargetsService {
         ? connectionMetadata['orgId'].trim()
         : '';
 
+    if (!orgId && !teamId) {
+      throw new BadRequestException(
+        'Vercel provider connection is missing org metadata. Reconnect the Vercel account before provisioning deployment targets.',
+      );
+    }
+
     return {
-      ...(orgId ? { vercelOrgId: orgId } : {}),
+      vercelOrgId: orgId || teamId,
       ...(teamId ? { vercelTeamId: teamId } : {}),
       ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
     };

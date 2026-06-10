@@ -11,6 +11,7 @@ import { ProviderClientRegistry } from './provider-clients/provider-client.regis
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 
 const PROVIDERS: EnvProvider[] = ['render', 'vercel'];
+type ProviderTeamSummary = { id: string; slug?: string; name?: string };
 
 @Injectable()
 export class ProviderConnectionsService {
@@ -32,9 +33,13 @@ export class ProviderConnectionsService {
     }
 
     const token = dto.token.trim();
-    const account = await this.clientRegistry
-      .getClient(dto.provider)
-      .validateConnection(token);
+    const client = this.clientRegistry.getClient(dto.provider);
+    const account = await client.validateConnection(token);
+    const teamId = dto.vercelTeamId?.trim();
+    const team =
+      dto.provider === 'vercel' && teamId
+        ? await this.validateVercelTeamAccess(client, token, teamId)
+        : undefined;
 
     return this.repository.createProviderConnection({
       userId,
@@ -42,7 +47,7 @@ export class ProviderConnectionsService {
       label: dto.label.trim(),
       encryptedToken: this.encryptionService.encrypt(token),
       tokenLastFour: token.slice(-4),
-      metadata: this.buildConnectionMetadata(dto, account),
+      metadata: this.buildConnectionMetadata(dto, account, team),
     });
   }
 
@@ -62,13 +67,14 @@ export class ProviderConnectionsService {
   private buildConnectionMetadata(
     dto: CreateProviderConnectionDto,
     account: { id: string; metadata?: Record<string, unknown> },
+    team?: ProviderTeamSummary,
   ): Record<string, unknown> {
     if (dto.provider !== 'vercel') {
       return {};
     }
 
-    const teamId = dto.vercelTeamId?.trim();
-    const teamSlug = dto.vercelTeamSlug?.trim();
+    const teamId = team?.id ?? dto.vercelTeamId?.trim();
+    const teamSlug = team?.slug ?? dto.vercelTeamSlug?.trim();
     if (teamSlug && !teamId) {
       throw new BadRequestException(
         'vercelTeamId is required when connecting a Vercel team',
@@ -88,5 +94,24 @@ export class ProviderConnectionsService {
       accountType: 'user',
       orgId: account.metadata?.['orgId'] ?? account.id,
     };
+  }
+
+  private validateVercelTeamAccess(
+    client: {
+      validateTeamAccess?: (
+        token: string,
+        teamId: string,
+      ) => Promise<ProviderTeamSummary>;
+    },
+    token: string,
+    teamId: string,
+  ): Promise<ProviderTeamSummary> {
+    if (!client.validateTeamAccess) {
+      throw new BadRequestException(
+        'Vercel team validation is not supported by this provider client',
+      );
+    }
+
+    return client.validateTeamAccess(token, teamId);
   }
 }

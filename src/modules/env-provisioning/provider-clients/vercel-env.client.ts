@@ -44,6 +44,30 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
+  async validateTeamAccess(
+    token: string,
+    teamId: string,
+  ): Promise<{ id: string; slug?: string; name?: string }> {
+    const response = await fetch(`${VERCEL_API_URL}/v2/teams/${teamId}`, {
+      headers: this.headers(token),
+    });
+    await this.assertOk(response, 'Vercel team access validation failed');
+    const payload = (await response.json()) as {
+      id?: string;
+      slug?: string;
+      name?: string;
+    };
+    if (!payload.id) {
+      throw new Error('Vercel team validation returned an invalid response');
+    }
+
+    return {
+      id: payload.id,
+      ...(payload.slug ? { slug: payload.slug } : {}),
+      ...(payload.name ? { name: payload.name } : {}),
+    };
+  }
+
   async listTargets(token: string): Promise<ProviderDeploymentTarget[]> {
     const response = await fetch(
       this.withScope(`${VERCEL_API_URL}/v9/projects`),
@@ -228,6 +252,12 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
 
     if (input.vercelTeamId?.trim()) {
       return input.vercelTeamId.trim();
+    }
+
+    if (input.deploymentStrategy === 'vercel_ci_pushed') {
+      throw new Error(
+        'Vercel org id is required when creating CI-pushed deployment targets',
+      );
     }
 
     return 'vercel-account';

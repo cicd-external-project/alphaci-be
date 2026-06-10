@@ -142,6 +142,61 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('requires a Vercel org id for CI-pushed Vercel projects', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+        }),
+    });
+
+    const client = new VercelEnvClient();
+
+    await expect(
+      client.createTarget({
+        token: 'vercel',
+        repoFullName: 'owner/web-app',
+        projectName: 'web-app-test',
+        branchName: 'test',
+        deploymentStrategy: 'vercel_ci_pushed',
+      }),
+    ).rejects.toThrow(
+      'Vercel org id is required when creating CI-pushed deployment targets',
+    );
+  });
+
+  it('validates Vercel team access', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'team_123',
+          slug: 'flowci',
+          name: 'FlowCI',
+        }),
+    });
+
+    const client = new VercelEnvClient();
+    await expect(
+      client.validateTeamAccess('vercel-token', 'team_123'),
+    ).resolves.toEqual({
+      id: 'team_123',
+      slug: 'flowci',
+      name: 'FlowCI',
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v2/teams/team_123',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel-token',
+        }),
+      }),
+    );
+  });
+
   it('normalizes root directories before creating Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,

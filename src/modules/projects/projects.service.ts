@@ -175,6 +175,10 @@ export class ProjectsService {
       dto.workflowRecipeId,
     );
 
+    const deploymentSlots = this.resolveSingleRepoDeploymentSlots(
+      dto.deploymentProvisioning,
+    );
+
     // 2. Load template and build workflow YAML
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle(
       templateId,
@@ -184,10 +188,13 @@ export class ProjectsService {
       dto.coverageThreshold,
       dto.outputFileName,
       undefined,
-      this.extractDeploymentProvider(dto.deploymentProvisioning, 'standalone'),
+      this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        deploymentSlots[0] ?? 'standalone',
+      ),
       this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
-        ['standalone'],
+        deploymentSlots,
         dto.servicePath,
       ),
     );
@@ -545,6 +552,10 @@ export class ProjectsService {
     accessToken: string,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
+    const deploymentSlots = this.resolveSingleRepoDeploymentSlots(
+      dto.deploymentProvisioning,
+    );
+
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle(
       dto.templateId,
@@ -554,10 +565,13 @@ export class ProjectsService {
       dto.coverageThreshold,
       dto.outputFileName,
       dto.enhancements,
-      this.extractDeploymentProvider(dto.deploymentProvisioning, 'standalone'),
+      this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        deploymentSlots[0] ?? 'standalone',
+      ),
       this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
-        ['standalone'],
+        deploymentSlots,
         dto.servicePath,
       ),
     );
@@ -946,6 +960,22 @@ export class ProjectsService {
       orgId: `${prefix}_ORG_ID`,
       projectId: `${prefix}_PROJECT_ID`,
     };
+  }
+
+  private resolveSingleRepoDeploymentSlots(
+    request: DeploymentProvisioningRequestDto | undefined,
+  ): DeploymentProvisioningTargetDto['slot'][] {
+    if (!request?.enabled || !request.targets?.length) {
+      return ['standalone'];
+    }
+
+    const slots = request.targets
+      .map((target) => target.slot)
+      .filter((slot): slot is DeploymentProvisioningTargetDto['slot'] =>
+        ['standalone', 'frontend', 'backend'].includes(slot),
+      );
+
+    return slots.length > 0 ? Array.from(new Set(slots)) : ['standalone'];
   }
 
   private async buildWorkflowBundle(

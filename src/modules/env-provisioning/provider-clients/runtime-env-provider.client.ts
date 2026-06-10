@@ -47,6 +47,10 @@ export interface UpsertProviderEnvInput {
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
+  validateTeamAccess?(
+    token: string,
+    teamId: string,
+  ): Promise<{ id: string; slug?: string; name?: string }>;
   listTargets(token: string): Promise<ProviderDeploymentTarget[]>;
   createTarget(
     input: CreateProviderTargetInput,
