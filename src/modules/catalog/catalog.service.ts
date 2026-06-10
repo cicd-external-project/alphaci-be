@@ -54,10 +54,16 @@ export interface WorkflowRecipeOption {
   optionJobs: Partial<Record<'lint' | 'unit' | 'build' | 'coverage' | 'security' | 'docker' | 'e2e', string>>;
 }
 
+export interface NodeVersionOption {
+  value: string;
+  label: string;
+}
+
 export interface ProjectOptionsResult {
   repoShapes: RepoShapeOption[];
   projectTypes: ProjectTypeOption[];
   recipes: WorkflowRecipeOption[];
+  nodeVersions: NodeVersionOption[];
 }
 
 // ─── Static fallback catalog ─────────────────────────────────────────────────
@@ -197,6 +203,11 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       optionJobs: { lint: 'lint', unit: 'test', coverage: 'coverage' },
     },
   ],
+  nodeVersions: [
+    { value: '20', label: 'Node 20 LTS (Iron)' },
+    { value: '22', label: 'Node 22 LTS (Jod)' },
+    { value: '24', label: 'Node 24 LTS (Noble)' },
+  ],
 };
 
 // ─── Template types ───────────────────────────────────────────────────────────
@@ -232,6 +243,7 @@ interface EngineStackFile {
 interface EngineWorkflowRefsFile {
   currentStable?: string;
   repository?: string;
+  nodeVersions?: Array<{ value: string; label: string }>;
   workflows?: Record<string, string>;
 }
 
@@ -479,9 +491,16 @@ export class CatalogService {
     );
     const supportedProjectTypes = usableStacks.map((stack) => stack.key);
 
+    const nodeVersions = (workflowRefs.nodeVersions ?? []).filter(
+      (v): v is NodeVersionOption =>
+        typeof v.value === 'string' && v.value.length > 0 &&
+        typeof v.label === 'string' && v.label.length > 0,
+    );
+
     return {
       repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
       projectTypes,
+      nodeVersions: nodeVersions.length > 0 ? nodeVersions : STATIC_PROJECT_OPTIONS.nodeVersions,
       recipes: [
         {
           id: 'standard',

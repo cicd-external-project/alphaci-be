@@ -556,7 +556,7 @@ function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile
     { path: 'sonar-project.properties', content: buildMicroservicesSonarProperties(serviceName) },
   ];
 
-  if (defaultIncludeDocker(backendStack)) {
+  if (options.includeDocker ?? defaultIncludeDocker(backendStack)) {
     rootFiles.push({ path: 'docker-compose.yml', content: buildDockerCompose() });
   }
 
