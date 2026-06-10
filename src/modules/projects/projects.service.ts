@@ -213,6 +213,7 @@ export class ProjectsService {
       projectName: dto.serviceName,
       stack: dto.projectTypeId,
       repoShape: dto.repoShape ?? 'standalone',
+      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
     });
 
     // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
@@ -380,6 +381,7 @@ export class ProjectsService {
       projectName: dto.repoName,
       stack: backend.projectTypeId,
       repoShape: 'microservices',
+      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
       backendServiceName: backend.serviceName,
       frontendStack: frontend.projectTypeId,
       frontendServiceName: frontend.serviceName,
@@ -1137,6 +1139,7 @@ export class ProjectsService {
       projectName: string;
       stack?: string;
       repoShape?: string;
+      includeDocker?: boolean;
       frontendStack?: string;
       frontendServiceName?: string;
       backendServiceName?: string;
@@ -1154,7 +1157,7 @@ export class ProjectsService {
     const scaffoldOptions = {
       serviceName: projectName,
       stack,
-      includeDocker: defaultIncludeDocker(stack),
+      includeDocker: opts.includeDocker ?? defaultIncludeDocker(stack),
       ...(repoShape ? { repoShape } : {}),
       ...(frontendStack ? { frontendStack } : {}),
       ...(frontendServiceName ? { frontendServiceName } : {}),
@@ -1277,6 +1280,7 @@ export class ProjectsService {
       projectName: backend.serviceName || actualBeRepoName,
       stack: backend.projectTypeId,
       repoShape: 'standalone',
+      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
     });
 
     const backendWorkflowPath =
@@ -1398,6 +1402,7 @@ export class ProjectsService {
         projectName: frontend.serviceName || actualFeRepoName,
         stack: frontend.projectTypeId,
         repoShape: 'standalone',
+        ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
       });
 
       const frontendWorkflowPath =
