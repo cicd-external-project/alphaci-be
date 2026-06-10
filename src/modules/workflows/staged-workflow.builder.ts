@@ -1,10 +1,7 @@
 import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import type {
-  DeploymentProvider,
-  GenerateWorkflowDto,
-} from './dto/generate-workflow.dto';
+import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package';
 
@@ -34,12 +31,23 @@ const CENTRAL_WORKFLOW_REF =
 const CI_VALIDATE_URL =
   'https://flowci-be-test.onrender.com/api/v1/ci/validate';
 
+export interface StagedWorkflowOptions extends GenerateWorkflowDto {
+  /**
+   * Distinguishes co-located pipelines in a single repository (microservices
+   * shape). When set, every workflow file path and workflow `name:` is
+   * suffixed so the backend and frontend chains do not overwrite each other —
+   * GitHub Actions resolves `workflow_run` triggers by workflow name, so the
+   * names must be unique per slot for the stage chains to stay independent.
+   */
+  workflowVariant?: 'backend' | 'frontend';
+}
+
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
-  dto: GenerateWorkflowDto,
+  dto: StagedWorkflowOptions,
 ): StagedWorkflowBundle {
   const serviceName = dto.serviceName;
-  const servicePath = dto.servicePath ?? '.';
+  const servicePath = normalizeServicePath(dto.servicePath);
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
   const deploymentProvider = dto.deploymentProvider;
@@ -50,14 +58,20 @@ export function buildStagedWorkflowBundle(
   const testCommand = isBackend ? 'npm test' : 'npm run test';
   const lintCommand = 'npm run lint';
 
+  const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
+  const nameSuffix = dto.workflowVariant ? ` (${dto.workflowVariant})` : '';
+  const accessName = `FlowCI Access Gate${nameSuffix}`;
+  const qualityName = `FlowCI Quality${nameSuffix}`;
+  const packageName = `FlowCI Package${nameSuffix}`;
+
   const files: StagedWorkflowFile[] = [
     {
       stage: 'access',
-      name: 'FlowCI Access Gate',
-      path: '.github/workflows/00-flowci-access.yml',
+      name: accessName,
+      path: `.github/workflows/00-flowci-access${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Access Gate',
+        name: accessName,
         on: {
           push: { branches: ['test', 'uat', 'main'] },
           pull_request: { branches: ['test', 'uat', 'main'] },
@@ -74,14 +88,14 @@ export function buildStagedWorkflowBundle(
     },
     {
       stage: 'quality',
-      name: 'FlowCI Quality',
-      path: '.github/workflows/10-flowci-quality.yml',
+      name: qualityName,
+      path: `.github/workflows/10-flowci-quality${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Quality',
+        name: qualityName,
         on: {
           workflow_run: {
-            workflows: ['FlowCI Access Gate'],
+            workflows: [accessName],
             types: ['completed'],
           },
           workflow_dispatch: {},
@@ -142,14 +156,14 @@ export function buildStagedWorkflowBundle(
     },
     {
       stage: 'package',
-      name: 'FlowCI Package',
-      path: '.github/workflows/20-flowci-package.yml',
+      name: packageName,
+      path: `.github/workflows/20-flowci-package${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Package',
+        name: packageName,
         on: {
           workflow_run: {
-            workflows: ['FlowCI Quality'],
+            workflows: [qualityName],
             types: ['completed'],
           },
           workflow_dispatch: {},
@@ -187,6 +201,16 @@ export function buildStagedWorkflowBundle(
       gated: file.gated,
     })),
   };
+}
+
+/**
+ * Normalize a user-supplied service path for use as a workflow
+ * working-directory: trims trailing slashes (the FE sends "backend/") and
+ * falls back to the repository root.
+ */
+function normalizeServicePath(servicePath: string | undefined): string {
+  const trimmed = (servicePath ?? '.').trim().replace(/\/+$/, '');
+  return trimmed === '' ? '.' : trimmed;
 }
 
 function validationJob(stage: WorkflowStage) {
@@ -269,8 +293,7 @@ function renderDeployJob(serviceName: string) {
       'system-name': serviceName,
       environment:
         "${{ github.event.workflow_run.head_branch == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
-      branch:
-        '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+      branch: '${{ github.event.workflow_run.head_branch || github.ref_name }}',
     },
     secrets: 'inherit',
   };

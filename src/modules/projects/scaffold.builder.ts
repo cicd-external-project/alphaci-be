@@ -13,13 +13,42 @@ export interface ScaffoldFile {
   content: string;
 }
 
+export type CanonicalRepoShape =
+  | 'standalone'
+  | 'monorepo'
+  | 'microservices'
+  | 'multi-repo';
+
+/**
+ * Map a repo shape ID to its canonical form. The catalog (and therefore the
+ * FE) uses the short IDs 'mono' and 'multi', while internal flow logic uses
+ * 'monorepo' and 'multi-repo'. Accept both so a catalog-driven request never
+ * silently falls back to the standalone flow.
+ */
+export function normalizeRepoShape(
+  repoShape: string | null | undefined,
+): CanonicalRepoShape {
+  switch (repoShape) {
+    case 'mono':
+    case 'monorepo':
+      return 'monorepo';
+    case 'multi':
+    case 'multi-repo':
+      return 'multi-repo';
+    case 'microservices':
+      return 'microservices';
+    default:
+      return 'standalone';
+  }
+}
+
 export interface BuildScaffoldOptions {
   serviceName: string;
   /** 'nestjs' | 'nodejs' | 'nextjs' | 'react' */
   stack: string;
   includeDocker: boolean;
   nodeVersion?: string;
-  /** 'standalone' | 'monorepo' | 'microservices' | 'multi-repo' — defaults to 'standalone' */
+  /** Canonical or catalog shape ID ('mono'/'multi' accepted) — defaults to 'standalone' */
   repoShape?: string;
   // Microservices shape only: secondary (frontend) service info
   frontendStack?: string;
@@ -29,10 +58,12 @@ export interface BuildScaffoldOptions {
 
 // Convert a human-readable service name to a valid npm package name (kebab-case).
 function toPackageName(name: string): string {
-  return name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9-]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '') || 'service';
+  return (
+    name
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '') || 'service'
+  );
 }
 
 // ─── Shared file builders (all stacks) ────────────────────────────────────────
@@ -174,9 +205,7 @@ function buildSonarProperties(serviceName: string): string {
 }
 
 function buildEntryPoint(serviceName: string): string {
-  return [
-    `export const SERVICE_NAME = '${serviceName}';`,
-  ].join('\n');
+  return [`export const SERVICE_NAME = '${serviceName}';`].join('\n');
 }
 
 function buildEntrySpec(serviceName: string): string {
@@ -447,26 +476,41 @@ function buildServiceSubdirFiles(
   const packageName = toPackageName(serviceName);
 
   const files: ScaffoldFile[] = [
-    { path: `${dir}/package.json`,       content: buildPackageJson(packageName, stack) },
-    { path: `${dir}/tsconfig.json`,      content: buildTsConfig(stack) },
-    { path: `${dir}/jest.config.ts`,     content: buildJestConfig() },
-    { path: `${dir}/.eslintrc.json`,     content: buildEslintConfig() },
-    { path: `${dir}/.env.example`,       content: buildEnvExample() },
-    { path: `${dir}/src/index.ts`,       content: buildEntryPoint(serviceName) },
-    { path: `${dir}/src/index.spec.ts`,  content: buildEntrySpec(serviceName) },
+    {
+      path: `${dir}/package.json`,
+      content: buildPackageJson(packageName, stack),
+    },
+    { path: `${dir}/tsconfig.json`, content: buildTsConfig(stack) },
+    { path: `${dir}/jest.config.ts`, content: buildJestConfig() },
+    { path: `${dir}/.eslintrc.json`, content: buildEslintConfig() },
+    { path: `${dir}/.env.example`, content: buildEnvExample() },
+    { path: `${dir}/src/index.ts`, content: buildEntryPoint(serviceName) },
+    { path: `${dir}/src/index.spec.ts`, content: buildEntrySpec(serviceName) },
   ];
 
   if (stack === 'nestjs') {
-    files.push({ path: `${dir}/src/app.module.ts`, content: buildNestAppModule() });
-    files.push({ path: `${dir}/src/main.ts`,       content: buildNestMain() });
-    files.push({ path: `${dir}/Dockerfile`,        content: buildDockerfile(nodeVersion) });
-    files.push({ path: `${dir}/.dockerignore`,     content: buildDockerignore() });
+    files.push({
+      path: `${dir}/src/app.module.ts`,
+      content: buildNestAppModule(),
+    });
+    files.push({ path: `${dir}/src/main.ts`, content: buildNestMain() });
+    files.push({
+      path: `${dir}/Dockerfile`,
+      content: buildDockerfile(nodeVersion),
+    });
+    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
   } else if (stack === 'nodejs') {
-    files.push({ path: `${dir}/Dockerfile`,        content: buildDockerfile(nodeVersion) });
-    files.push({ path: `${dir}/.dockerignore`,     content: buildDockerignore() });
+    files.push({
+      path: `${dir}/Dockerfile`,
+      content: buildDockerfile(nodeVersion),
+    });
+    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
   } else if (stack === 'nextjs') {
-    files.push({ path: `${dir}/src/app/page.tsx`,  content: buildNextPage(serviceName) });
-    files.push({ path: `${dir}/next.config.ts`,    content: buildNextConfig() });
+    files.push({
+      path: `${dir}/src/app/page.tsx`,
+      content: buildNextPage(serviceName),
+    });
+    files.push({ path: `${dir}/next.config.ts`, content: buildNextConfig() });
   }
 
   return files;
@@ -474,32 +518,37 @@ function buildServiceSubdirFiles(
 
 // ─── Shape-specific scaffold builders ─────────────────────────────────────────
 
-function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
+function buildStandaloneScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
   const { serviceName, stack, includeDocker, nodeVersion = '22' } = options;
   const packageName = toPackageName(serviceName);
 
   const sharedFiles: ScaffoldFile[] = [
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'package.json',             content: buildPackageJson(packageName, stack) },
-    { path: 'tsconfig.json',            content: buildTsConfig(stack) },
-    { path: 'jest.config.ts',           content: buildJestConfig() },
-    { path: 'sonar-project.properties', content: buildSonarProperties(serviceName) },
-    { path: '.eslintrc.json',           content: buildEslintConfig() },
-    { path: '.env.example',             content: buildEnvExample() },
-    { path: 'src/index.ts',             content: buildEntryPoint(serviceName) },
-    { path: 'src/index.spec.ts',        content: buildEntrySpec(serviceName) },
+    { path: '.gitignore', content: buildGitignore() },
+    { path: 'package.json', content: buildPackageJson(packageName, stack) },
+    { path: 'tsconfig.json', content: buildTsConfig(stack) },
+    { path: 'jest.config.ts', content: buildJestConfig() },
+    {
+      path: 'sonar-project.properties',
+      content: buildSonarProperties(serviceName),
+    },
+    { path: '.eslintrc.json', content: buildEslintConfig() },
+    { path: '.env.example', content: buildEnvExample() },
+    { path: 'src/index.ts', content: buildEntryPoint(serviceName) },
+    { path: 'src/index.spec.ts', content: buildEntrySpec(serviceName) },
   ];
 
   let stackFiles: ScaffoldFile[];
   if (stack === 'nestjs') {
     stackFiles = [
       { path: 'src/app.module.ts', content: buildNestAppModule() },
-      { path: 'src/main.ts',       content: buildNestMain() },
+      { path: 'src/main.ts', content: buildNestMain() },
     ];
   } else if (stack === 'nextjs') {
     stackFiles = [
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
-      { path: 'next.config.ts',   content: buildNextConfig() },
+      { path: 'next.config.ts', content: buildNextConfig() },
     ];
   } else {
     stackFiles = [];
@@ -507,7 +556,7 @@ function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] 
 
   const dockerFiles: ScaffoldFile[] = includeDocker
     ? [
-        { path: 'Dockerfile',    content: buildDockerfile(nodeVersion) },
+        { path: 'Dockerfile', content: buildDockerfile(nodeVersion) },
         { path: '.dockerignore', content: buildDockerignore() },
       ]
     : [];
@@ -516,29 +565,46 @@ function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] 
 }
 
 function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
-  const { serviceName, stack, nodeVersion = '22' } = options;
+  const { serviceName, stack } = options;
   const rootPackageName = toPackageName(serviceName);
   const corePackageName = `@${rootPackageName}/core`;
 
   return [
     // Root workspace files
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'package.json',             content: buildMonorepoRootPackageJson(rootPackageName) },
-    { path: 'tsconfig.json',            content: buildMonorepoRootTsConfig() },
-    { path: 'jest.config.ts',           content: buildMonorepoRootJestConfig() },
-    { path: 'sonar-project.properties', content: buildMonorepoSonarProperties(serviceName) },
-    { path: '.eslintrc.json',           content: buildEslintConfig() },
-    { path: '.env.example',             content: buildEnvExample() },
+    { path: '.gitignore', content: buildGitignore() },
+    {
+      path: 'package.json',
+      content: buildMonorepoRootPackageJson(rootPackageName),
+    },
+    { path: 'tsconfig.json', content: buildMonorepoRootTsConfig() },
+    { path: 'jest.config.ts', content: buildMonorepoRootJestConfig() },
+    {
+      path: 'sonar-project.properties',
+      content: buildMonorepoSonarProperties(serviceName),
+    },
+    { path: '.eslintrc.json', content: buildEslintConfig() },
+    { path: '.env.example', content: buildEnvExample() },
     // packages/core — rename or duplicate to add more packages
-    { path: 'packages/core/package.json',      content: buildPackagePackageJson(corePackageName, stack) },
-    { path: 'packages/core/tsconfig.json',     content: buildPackageTsConfig() },
-    { path: 'packages/core/jest.config.ts',    content: buildJestConfig() },
-    { path: 'packages/core/src/index.ts',      content: buildEntryPoint(serviceName) },
-    { path: 'packages/core/src/index.spec.ts', content: buildEntrySpec(serviceName) },
+    {
+      path: 'packages/core/package.json',
+      content: buildPackagePackageJson(corePackageName, stack),
+    },
+    { path: 'packages/core/tsconfig.json', content: buildPackageTsConfig() },
+    { path: 'packages/core/jest.config.ts', content: buildJestConfig() },
+    {
+      path: 'packages/core/src/index.ts',
+      content: buildEntryPoint(serviceName),
+    },
+    {
+      path: 'packages/core/src/index.spec.ts',
+      content: buildEntrySpec(serviceName),
+    },
   ];
 }
 
-function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
+function buildMicroservicesScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
   const {
     serviceName,
     stack: backendStack,
@@ -552,12 +618,18 @@ function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile
   const feName = frontendServiceName ?? `${serviceName}-fe`;
 
   const rootFiles: ScaffoldFile[] = [
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'sonar-project.properties', content: buildMicroservicesSonarProperties(serviceName) },
+    { path: '.gitignore', content: buildGitignore() },
+    {
+      path: 'sonar-project.properties',
+      content: buildMicroservicesSonarProperties(serviceName),
+    },
   ];
 
   if (options.includeDocker ?? defaultIncludeDocker(backendStack)) {
-    rootFiles.push({ path: 'docker-compose.yml', content: buildDockerCompose() });
+    rootFiles.push({
+      path: 'docker-compose.yml',
+      content: buildDockerCompose(),
+    });
   }
 
   return [
@@ -579,11 +651,16 @@ function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile
  * - monorepo: workspace root + packages/core with TypeScript project references
  * - microservices: backend/ and frontend/ subdirectories, optional docker-compose
  */
-export function buildProjectScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
-  switch (options.repoShape) {
-    case 'monorepo':      return buildMonorepoScaffold(options);
-    case 'microservices': return buildMicroservicesScaffold(options);
-    default:              return buildStandaloneScaffold(options);
+export function buildProjectScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
+  switch (normalizeRepoShape(options.repoShape)) {
+    case 'monorepo':
+      return buildMonorepoScaffold(options);
+    case 'microservices':
+      return buildMicroservicesScaffold(options);
+    default:
+      return buildStandaloneScaffold(options);
   }
 }
 
