@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type {
   DeploymentTargetStatus,
+  DeploymentStrategy,
   DeploymentTargetSummary,
   EnvOwnershipMode,
   EnvProvider,
@@ -24,6 +25,8 @@ interface DeploymentTargetRow {
   build_command: string | null;
   start_command: string | null;
   environment_map: Record<string, unknown>;
+  deployment_strategy: DeploymentStrategy | null;
+  provider_metadata: Record<string, unknown> | null;
   status: DeploymentTargetStatus;
 }
 
@@ -41,6 +44,8 @@ export interface CreateDeploymentTargetInput {
   buildCommand?: string | null;
   startCommand?: string | null;
   environmentMap?: Record<string, unknown>;
+  deploymentStrategy?: DeploymentStrategy;
+  providerMetadata?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -65,9 +70,11 @@ export class DeploymentTargetsRepository {
           root_directory,
           build_command,
           start_command,
-          environment_map
+          environment_map,
+          deployment_strategy,
+          provider_metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *;
       `,
       [
@@ -84,6 +91,8 @@ export class DeploymentTargetsRepository {
         input.buildCommand ?? null,
         input.startCommand ?? null,
         JSON.stringify(input.environmentMap ?? {}),
+        input.deploymentStrategy ?? 'provider_native',
+        JSON.stringify(input.providerMetadata ?? {}),
       ],
     );
 
@@ -111,6 +120,33 @@ export class DeploymentTargetsRepository {
     );
 
     return result.rows.map((row) => this.toSummary(row));
+  }
+
+  async updateProviderMetadata(
+    targetId: string,
+    providerMetadata: Record<string, unknown>,
+    status?: DeploymentTargetStatus,
+  ): Promise<DeploymentTargetSummary> {
+    const result = await this.databaseService.query<DeploymentTargetRow>(
+      `
+        UPDATE env_provisioning.project_deployment_targets
+        SET provider_metadata = $2,
+            status = COALESCE($3, status),
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [targetId, JSON.stringify(providerMetadata), status ?? null],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error(
+        'env_provisioning.project_deployment_targets UPDATE returned no row',
+      );
+    }
+
+    return this.toSummary(row);
   }
 
   async findDeploymentTargetForUser(
@@ -149,6 +185,8 @@ export class DeploymentTargetsRepository {
       buildCommand: row.build_command,
       startCommand: row.start_command,
       environmentMap: row.environment_map ?? {},
+      deploymentStrategy: row.deployment_strategy ?? 'provider_native',
+      providerMetadata: row.provider_metadata ?? {},
       status: row.status,
     };
   }

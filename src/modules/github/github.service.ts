@@ -560,9 +560,14 @@ export class GithubService {
     repo: string,
     secretName: string,
     secretValue: string,
+    options: { throwOnFailure?: boolean } = {},
   ): Promise<void> {
     if (!accessToken) {
-      this.logger.warn(`setActionsSecret: no token available for ${owner}/${repo}/${secretName}, skipping`);
+      const message = `setActionsSecret: no token available for ${owner}/${repo}/${secretName}, skipping`;
+      if (options.throwOnFailure) {
+        throw new BadGatewayException(message);
+      }
+      this.logger.warn(message);
       return;
     }
 
@@ -579,7 +584,11 @@ export class GithubService {
 
     if (!keyRes.ok) {
       const body = await keyRes.text();
-      this.logger.warn(`setActionsSecret: failed to fetch public key for ${owner}/${repo} (${String(keyRes.status)}): ${body}`);
+      const message = `setActionsSecret: failed to fetch public key for ${owner}/${repo} (${String(keyRes.status)}): ${body}`;
+      if (options.throwOnFailure) {
+        throw new BadGatewayException(message);
+      }
+      this.logger.warn(message);
       return;
     }
 
@@ -607,8 +616,29 @@ export class GithubService {
 
     if (!putRes.ok && putRes.status !== 204) {
       const body = await putRes.text();
-      this.logger.warn(`setActionsSecret: failed to set ${secretName} on ${owner}/${repo} (${String(putRes.status)}): ${body}`);
+      const message = `setActionsSecret: failed to set ${secretName} on ${owner}/${repo} (${String(putRes.status)}): ${body}`;
+      if (options.throwOnFailure) {
+        throw new BadGatewayException(message);
+      }
+      this.logger.warn(message);
     }
+  }
+
+  async setActionsSecretStrict(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    secretName: string,
+    secretValue: string,
+  ): Promise<void> {
+    await this.setActionsSecret(
+      accessToken,
+      owner,
+      repo,
+      secretName,
+      secretValue,
+      { throwOnFailure: true },
+    );
   }
 
   async applyBranchProtection(

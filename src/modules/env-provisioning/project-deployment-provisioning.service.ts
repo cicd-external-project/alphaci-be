@@ -5,11 +5,13 @@ import type { DeploymentProvisioningResult } from '../projects/projects.service'
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import { EnvVarsService } from './env-vars.service';
+import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
 interface ProvisionForProjectInput {
   projectId: string;
   userId: string;
   repoFullName: string;
+  githubAccessToken?: string;
   request: DeploymentProvisioningRequestDto | undefined;
 }
 
@@ -22,6 +24,7 @@ export class ProjectDeploymentProvisioningService {
   constructor(
     private readonly deploymentTargetsService: DeploymentTargetsService,
     private readonly envVarsService: EnvVarsService,
+    private readonly vercelCiSecretsService: VercelCiSecretsService,
   ) {}
 
   async provisionForProject(
@@ -64,6 +67,33 @@ export class ProjectDeploymentProvisioningService {
             input.userId,
             targetRequest,
           );
+        let providerMetadata = target.providerMetadata;
+
+        if (target.deploymentStrategy === 'vercel_ci_pushed') {
+          if (!input.githubAccessToken) {
+            throw new Error(
+              'GitHub access token is required to install Vercel deployment secrets',
+            );
+          }
+
+          const secretResult =
+            await this.vercelCiSecretsService.installForTarget({
+              githubAccessToken: input.githubAccessToken,
+              repoFullName: input.repoFullName,
+              userId: input.userId,
+              providerConnectionId:
+                requestedTarget.providerConnectionId ?? null,
+              target,
+            });
+          providerMetadata = {
+            ...target.providerMetadata,
+            githubSecrets: secretResult.githubSecrets,
+          };
+          await this.deploymentTargetsService.updateProviderMetadata(
+            target.id,
+            providerMetadata,
+          );
+        }
 
         const env: DeploymentProvisioningResult['targets'][number]['env'] = [];
         for (const envSet of requestedTarget.env ?? []) {
@@ -87,10 +117,13 @@ export class ProjectDeploymentProvisioningService {
         targets.push({
           slot: requestedTarget.slot,
           provider: requestedTarget.provider,
+          ownershipMode: requestedTarget.ownershipMode,
+          deploymentStrategy: target.deploymentStrategy,
           status: 'created',
           deploymentTargetId: target.id,
           providerProjectId: target.providerProjectId,
           providerProjectName: target.providerProjectName,
+          providerMetadata,
           errorSummary: null,
           env,
         });
@@ -101,10 +134,13 @@ export class ProjectDeploymentProvisioningService {
         targets.push({
           slot: requestedTarget.slot,
           provider: requestedTarget.provider,
+          ownershipMode: requestedTarget.ownershipMode,
+          deploymentStrategy: null,
           status: 'failed',
           deploymentTargetId: null,
           providerProjectId: null,
           providerProjectName: null,
+          providerMetadata: {},
           errorSummary: this.sanitizeError(error),
           env: [],
         });

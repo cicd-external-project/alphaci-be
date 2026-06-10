@@ -15,6 +15,7 @@ interface ProviderConnectionRow {
   encrypted_token?: string;
   token_last_four: string;
   status: ProviderConnectionStatus;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
   last_used_at: string | null;
@@ -26,6 +27,7 @@ export interface CreateProviderConnectionInput {
   label: string;
   encryptedToken: string;
   tokenLastFour: string;
+  metadata?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -42,10 +44,11 @@ export class ProviderConnectionsRepository {
           provider,
           label,
           encrypted_token,
-          token_last_four
+          token_last_four,
+          metadata
         )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, provider, label, token_last_four, status, created_at, updated_at, last_used_at;
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, provider, label, token_last_four, status, metadata, created_at, updated_at, last_used_at;
       `,
       [
         input.userId,
@@ -53,6 +56,7 @@ export class ProviderConnectionsRepository {
         input.label,
         input.encryptedToken,
         input.tokenLastFour,
+        JSON.stringify(input.metadata ?? {}),
       ],
     );
 
@@ -71,7 +75,7 @@ export class ProviderConnectionsRepository {
   ): Promise<ProviderConnectionSummary[]> {
     const result = await this.databaseService.query<ProviderConnectionRow>(
       `
-        SELECT id, provider, label, token_last_four, status, created_at, updated_at, last_used_at
+        SELECT id, provider, label, token_last_four, status, metadata, created_at, updated_at, last_used_at
         FROM env_provisioning.provider_connections
         WHERE user_id = $1
         ORDER BY created_at DESC;
@@ -88,7 +92,7 @@ export class ProviderConnectionsRepository {
   ): Promise<ProviderConnectionWithToken | null> {
     const result = await this.databaseService.query<ProviderConnectionRow>(
       `
-        SELECT id, provider, label, encrypted_token, token_last_four, status, created_at, updated_at, last_used_at
+        SELECT id, provider, label, encrypted_token, token_last_four, status, metadata, created_at, updated_at, last_used_at
         FROM env_provisioning.provider_connections
         WHERE id = $1
           AND user_id = $2
@@ -142,6 +146,7 @@ export class ProviderConnectionsRepository {
       label: row.label,
       tokenLastFour: row.token_last_four,
       status: row.status,
+      metadata: row.metadata ?? {},
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       lastUsedAt: row.last_used_at,

@@ -25,7 +25,10 @@ import {
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
-import type { DeploymentProvider } from '../workflows/dto/generate-workflow.dto';
+import type {
+  DeploymentProvider,
+  DeploymentWorkflowTarget,
+} from '../workflows/dto/generate-workflow.dto';
 import { buildProjectScaffold, defaultIncludeDocker } from './scaffold.builder';
 import type {
   DeploymentProvisioningRequestDto,
@@ -67,10 +70,17 @@ export interface DeploymentProvisioningResult {
   targets: Array<{
     slot: 'backend' | 'frontend' | 'standalone';
     provider: 'render' | 'vercel';
+    ownershipMode: 'byo' | 'flowci_managed';
+    deploymentStrategy:
+      | 'provider_native'
+      | 'vercel_git_connected'
+      | 'vercel_ci_pushed'
+      | null;
     status: 'created' | 'registered' | 'failed';
     deploymentTargetId: string | null;
     providerProjectId: string | null;
     providerProjectName: string | null;
+    providerMetadata: Record<string, unknown>;
     errorSummary: string | null;
     env: Array<{
       environment: 'test' | 'uat' | 'production';
@@ -175,6 +185,11 @@ export class ProjectsService {
       dto.outputFileName,
       undefined,
       this.extractDeploymentProvider(dto.deploymentProvisioning, 'standalone'),
+      this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['standalone'],
+        dto.servicePath,
+      ),
     );
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
@@ -260,6 +275,7 @@ export class ProjectsService {
         projectId: row.id,
         userId,
         repoFullName,
+        githubAccessToken: provisioningToken,
         request: dto.deploymentProvisioning,
       });
 
@@ -317,6 +333,11 @@ export class ProjectsService {
       undefined,
       undefined,
       this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
+      this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['backend'],
+        backend.servicePath,
+      ),
     );
 
     const {
@@ -331,6 +352,11 @@ export class ProjectsService {
       undefined,
       undefined,
       this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
+      this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['frontend'],
+        frontend.servicePath,
+      ),
     );
 
     // 3. Create the GitHub repository once
@@ -445,6 +471,7 @@ export class ProjectsService {
         projectId: backendRow.id,
         userId,
         repoFullName,
+        githubAccessToken: accessToken,
         request: this.filterDeploymentProvisioningRequest(
           dto.deploymentProvisioning,
           ['backend'],
@@ -479,6 +506,7 @@ export class ProjectsService {
             projectId: frontendRow.id,
             userId,
             repoFullName,
+            githubAccessToken: accessToken,
             request: this.filterDeploymentProvisioningRequest(
               dto.deploymentProvisioning,
               ['frontend'],
@@ -526,6 +554,12 @@ export class ProjectsService {
       dto.coverageThreshold,
       dto.outputFileName,
       dto.enhancements,
+      this.extractDeploymentProvider(dto.deploymentProvisioning, 'standalone'),
+      this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['standalone'],
+        dto.servicePath,
+      ),
     );
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
@@ -570,6 +604,7 @@ export class ProjectsService {
         projectId: row.id,
         userId,
         repoFullName: dto.repoFullName,
+        githubAccessToken: accessToken,
         request: dto.deploymentProvisioning,
       });
 
@@ -851,7 +886,66 @@ export class ProjectsService {
     slot: DeploymentProvisioningTargetDto['slot'],
   ): DeploymentProvider | undefined {
     if (!request?.enabled || !request.targets?.length) return undefined;
-    return request.targets.find((t) => t.slot === slot)?.provider;
+    const provider = request.targets.find((t) => t.slot === slot)?.provider;
+    return provider === 'render' ? provider : undefined;
+  }
+
+  private resolveDeploymentWorkflowTargets(
+    request: DeploymentProvisioningRequestDto | undefined,
+    slots: DeploymentProvisioningTargetDto['slot'][],
+    fallbackRootDirectory?: string,
+  ): DeploymentWorkflowTarget[] {
+    if (!request?.enabled || !request.targets?.length) {
+      return [];
+    }
+
+    return request.targets
+      .filter(
+        (target) =>
+          slots.includes(target.slot) &&
+          target.provider === 'vercel' &&
+          target.ownershipMode === 'byo',
+      )
+      .map((target) => {
+        const descriptor: DeploymentWorkflowTarget = {
+          slot: target.slot,
+          provider: 'vercel',
+          deploymentStrategy: 'vercel_ci_pushed',
+          secretNames: this.vercelSecretNames(target.slot),
+        };
+        const rootDirectory = this.resolveWorkflowRootDirectory(
+          target,
+          fallbackRootDirectory,
+        );
+        if (rootDirectory) {
+          descriptor.rootDirectory = rootDirectory;
+        }
+
+        return descriptor;
+      });
+  }
+
+  private resolveWorkflowRootDirectory(
+    target: DeploymentProvisioningTargetDto,
+    fallbackRootDirectory?: string,
+  ): string | undefined {
+    const rootDirectory = target.rootDirectory?.trim();
+    if (rootDirectory) {
+      return rootDirectory;
+    }
+
+    return fallbackRootDirectory?.trim() || undefined;
+  }
+
+  private vercelSecretNames(
+    slot: DeploymentProvisioningTargetDto['slot'],
+  ): DeploymentWorkflowTarget['secretNames'] {
+    const prefix = `VERCEL_${slot.toUpperCase()}`;
+    return {
+      token: `${prefix}_TOKEN`,
+      orgId: `${prefix}_ORG_ID`,
+      projectId: `${prefix}_PROJECT_ID`,
+    };
   }
 
   private async buildWorkflowBundle(
@@ -868,6 +962,7 @@ export class ProjectsService {
       | 'disableK6'
     >,
     deploymentProvider?: DeploymentProvider,
+    deploymentTargets: DeploymentWorkflowTarget[] = [],
   ): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const template = await this.catalogService.getTemplateById(templateId);
     if (!template) {
@@ -882,6 +977,7 @@ export class ProjectsService {
       ...(coverageThreshold !== undefined && { coverageThreshold }),
       ...(enhancements !== undefined && { enhancements }),
       ...(deploymentProvider !== undefined && { deploymentProvider }),
+      ...(deploymentTargets.length > 0 && { deploymentTargets }),
     });
 
     const outputFileName = customOutputFileName ?? '00-flowci-access.yml';
@@ -1129,6 +1225,11 @@ export class ProjectsService {
       undefined,
       undefined,
       this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
+      this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['backend'],
+        backend.servicePath,
+      ),
     );
 
     const {
@@ -1216,6 +1317,7 @@ export class ProjectsService {
         projectId: backendRow.id,
         userId,
         repoFullName: beRepoFullName,
+        githubAccessToken: accessToken,
         request: this.filterDeploymentProvisioningRequest(
           dto.deploymentProvisioning,
           ['backend'],
@@ -1243,6 +1345,11 @@ export class ProjectsService {
         undefined,
         undefined,
         this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
+        this.resolveDeploymentWorkflowTargets(
+          dto.deploymentProvisioning,
+          ['frontend'],
+          frontend.servicePath,
+        ),
       );
 
       const {
@@ -1328,6 +1435,7 @@ export class ProjectsService {
           projectId: frontendRow.id,
           userId,
           repoFullName: feRepoFullName,
+          githubAccessToken: accessToken,
           request: this.filterDeploymentProvisioningRequest(
             dto.deploymentProvisioning,
             ['frontend'],

@@ -13,6 +13,18 @@ import {
 
 export type DeploymentProvider = 'vercel' | 'render';
 
+export interface DeploymentWorkflowTarget {
+  slot: 'backend' | 'frontend' | 'standalone';
+  provider: 'vercel';
+  deploymentStrategy: 'vercel_ci_pushed';
+  rootDirectory?: string;
+  secretNames: {
+    token: string;
+    orgId: string;
+    projectId: string;
+  };
+}
+
 export class GenerateWorkflowDto {
   @IsString()
   @Matches(/^[a-z0-9-]+$/)
@@ -42,6 +54,8 @@ export class GenerateWorkflowDto {
   @IsOptional()
   @IsIn(['vercel', 'render'])
   deploymentProvider?: DeploymentProvider;
+
+  deploymentTargets?: DeploymentWorkflowTarget[];
 
   @IsOptional()
   @IsArray()

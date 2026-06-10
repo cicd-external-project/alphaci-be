@@ -93,11 +93,51 @@ describe('VercelEnvClient', () => {
       id: 'prj_1',
       name: 'web-app-test',
       provider: 'vercel',
+      metadata: {
+        deploymentStrategy: 'vercel_git_connected',
+        gitConnected: true,
+        vercelOrgId: 'vercel-account',
+        vercelProjectId: 'prj_1',
+      },
     });
     expect(fetch).toHaveBeenCalledWith(
       'https://api.vercel.com/v11/projects',
       expect.objectContaining({
         method: 'POST',
+      }),
+    );
+  });
+
+  it('omits Git repository linking for CI-pushed Vercel projects', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+        }),
+    });
+
+    const client = new VercelEnvClient();
+    const target = await client.createTarget({
+      token: 'vercel',
+      repoFullName: 'owner/web-app',
+      projectName: 'web-app-test',
+      branchName: 'test',
+      deploymentStrategy: 'vercel_ci_pushed',
+      vercelOrgId: 'user_123',
+    });
+
+    const [, init] = (fetch as jest.Mock).mock.calls[0] as [
+      string,
+      { body: string },
+    ];
+    expect(JSON.parse(init.body)).not.toHaveProperty('gitRepository');
+    expect(target.metadata).toEqual(
+      expect.objectContaining({
+        deploymentStrategy: 'vercel_ci_pushed',
+        gitConnected: false,
+        vercelOrgId: 'user_123',
       }),
     );
   });
@@ -150,6 +190,7 @@ describe('VercelEnvClient', () => {
       repoFullName: 'owner/web-app',
       projectName: 'web-app-test',
       branchName: 'test',
+      deploymentStrategy: 'vercel_git_connected',
     });
 
     expect(fetch).toHaveBeenCalledWith(

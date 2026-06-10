@@ -205,6 +205,7 @@ jobs:
       projectId: 'project-1',
       userId: 'user-1',
       repoFullName: 'tone/orders-api',
+      githubAccessToken: 'app-token',
       request: {
         enabled: true,
         targets: [

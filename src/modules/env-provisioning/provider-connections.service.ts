@@ -32,7 +32,9 @@ export class ProviderConnectionsService {
     }
 
     const token = dto.token.trim();
-    await this.clientRegistry.getClient(dto.provider).validateConnection(token);
+    const account = await this.clientRegistry
+      .getClient(dto.provider)
+      .validateConnection(token);
 
     return this.repository.createProviderConnection({
       userId,
@@ -40,6 +42,7 @@ export class ProviderConnectionsService {
       label: dto.label.trim(),
       encryptedToken: this.encryptionService.encrypt(token),
       tokenLastFour: token.slice(-4),
+      metadata: this.buildConnectionMetadata(dto, account),
     });
   }
 
@@ -54,5 +57,36 @@ export class ProviderConnectionsService {
     }
 
     return { revoked: true };
+  }
+
+  private buildConnectionMetadata(
+    dto: CreateProviderConnectionDto,
+    account: { id: string; metadata?: Record<string, unknown> },
+  ): Record<string, unknown> {
+    if (dto.provider !== 'vercel') {
+      return {};
+    }
+
+    const teamId = dto.vercelTeamId?.trim();
+    const teamSlug = dto.vercelTeamSlug?.trim();
+    if (teamSlug && !teamId) {
+      throw new BadRequestException(
+        'vercelTeamId is required when connecting a Vercel team',
+      );
+    }
+
+    if (teamId) {
+      return {
+        accountType: 'team',
+        orgId: teamId,
+        teamId,
+        ...(teamSlug ? { teamSlug } : {}),
+      };
+    }
+
+    return {
+      accountType: 'user',
+      orgId: account.metadata?.['orgId'] ?? account.id,
+    };
   }
 }
