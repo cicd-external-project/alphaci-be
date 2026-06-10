@@ -1,7 +1,10 @@
 import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
+import type {
+  DeploymentProvider,
+  GenerateWorkflowDto,
+} from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package';
 
@@ -39,6 +42,7 @@ export function buildStagedWorkflowBundle(
   const servicePath = dto.servicePath ?? '.';
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
+  const deploymentProvider = dto.deploymentProvider;
   const stack = template.stack;
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
@@ -163,6 +167,12 @@ export function buildStagedWorkflowBundle(
             ...validationJob('package'),
           },
           build: buildJob(servicePath, nodeVersion),
+          ...(deploymentProvider === 'vercel' && {
+            'deploy-vercel': vercelDeployJob(serviceName, servicePath),
+          }),
+          ...(deploymentProvider === 'render' && {
+            'deploy-render': renderDeployJob(serviceName),
+          }),
         },
       }),
     },
@@ -234,6 +244,35 @@ function buildJob(servicePath: string, nodeVersion: string) {
       { run: 'npm ci --ignore-scripts' },
       { run: 'npm run build' },
     ],
+  };
+}
+
+function vercelDeployJob(serviceName: string, servicePath: string) {
+  return {
+    needs: ['build'],
+    uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+    with: {
+      'system-name': serviceName,
+      'working-directory': servicePath,
+      environment:
+        "${{ github.event.workflow_run.head_branch == 'main' && 'production' || 'preview' }}",
+    },
+    secrets: 'inherit',
+  };
+}
+
+function renderDeployJob(serviceName: string) {
+  return {
+    needs: ['build'],
+    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
+    with: {
+      'system-name': serviceName,
+      environment:
+        "${{ github.event.workflow_run.head_branch == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
+      branch:
+        '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+    },
+    secrets: 'inherit',
   };
 }
 

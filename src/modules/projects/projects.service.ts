@@ -25,6 +25,7 @@ import {
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
+import type { DeploymentProvider } from '../workflows/dto/generate-workflow.dto';
 import { buildProjectScaffold, defaultIncludeDocker } from './scaffold.builder';
 import type {
   DeploymentProvisioningRequestDto,
@@ -172,6 +173,8 @@ export class ProjectsService {
       dto.nodeVersion,
       dto.coverageThreshold,
       dto.outputFileName,
+      undefined,
+      this.extractDeploymentProvider(dto.deploymentProvisioning, 'standalone'),
     );
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
@@ -311,6 +314,9 @@ export class ProjectsService {
       backend.servicePath,
       dto.nodeVersion,
       dto.coverageThreshold,
+      undefined,
+      undefined,
+      this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
     );
 
     const {
@@ -322,6 +328,9 @@ export class ProjectsService {
       frontend.servicePath,
       dto.nodeVersion,
       dto.coverageThreshold,
+      undefined,
+      undefined,
+      this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
     );
 
     // 3. Create the GitHub repository once
@@ -837,6 +846,14 @@ export class ProjectsService {
     return { generatedYaml, outputFileName };
   }
 
+  private extractDeploymentProvider(
+    request: DeploymentProvisioningRequestDto | undefined,
+    slot: DeploymentProvisioningTargetDto['slot'],
+  ): DeploymentProvider | undefined {
+    if (!request?.enabled || !request.targets?.length) return undefined;
+    return request.targets.find((t) => t.slot === slot)?.provider;
+  }
+
   private async buildWorkflowBundle(
     templateId: string,
     serviceName: string,
@@ -850,6 +867,7 @@ export class ProjectsService {
       | 'disablePlaywright'
       | 'disableK6'
     >,
+    deploymentProvider?: DeploymentProvider,
   ): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const template = await this.catalogService.getTemplateById(templateId);
     if (!template) {
@@ -863,6 +881,7 @@ export class ProjectsService {
       ...(nodeVersion !== undefined && { nodeVersion }),
       ...(coverageThreshold !== undefined && { coverageThreshold }),
       ...(enhancements !== undefined && { enhancements }),
+      ...(deploymentProvider !== undefined && { deploymentProvider }),
     });
 
     const outputFileName = customOutputFileName ?? '00-flowci-access.yml';
@@ -1107,6 +1126,9 @@ export class ProjectsService {
       backend.servicePath,
       dto.nodeVersion,
       dto.coverageThreshold,
+      undefined,
+      undefined,
+      this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
     );
 
     const {
@@ -1218,6 +1240,9 @@ export class ProjectsService {
         frontend.servicePath,
         dto.nodeVersion,
         dto.coverageThreshold,
+        undefined,
+        undefined,
+        this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
       );
 
       const {

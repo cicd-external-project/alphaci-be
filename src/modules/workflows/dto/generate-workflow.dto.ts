@@ -11,6 +11,8 @@ import {
   MinLength,
 } from 'class-validator';
 
+export type DeploymentProvider = 'vercel' | 'render';
+
 export class GenerateWorkflowDto {
   @IsString()
   @Matches(/^[a-z0-9-]+$/)
@@ -36,6 +38,10 @@ export class GenerateWorkflowDto {
   @Min(0)
   @Max(100)
   coverageThreshold?: number;
+
+  @IsOptional()
+  @IsIn(['vercel', 'render'])
+  deploymentProvider?: DeploymentProvider;
 
   @IsOptional()
   @IsArray()
