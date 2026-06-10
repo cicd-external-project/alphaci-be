@@ -23,6 +23,8 @@ import { WorkflowsModule } from './modules/workflows/workflows.module.js';
 import { ProjectsModule } from './modules/projects/projects.module.js';
 import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
+import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
+import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioning.module.js';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { ExistingReposModule } from './modules/existing-repos/existing-repos.mod
     WorkflowsModule,
     ProjectsModule,
     ExistingReposModule,
+    CapabilitiesModule,
+    EnvProvisioningModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

@@ -2,7 +2,10 @@ import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 
 import { DatabaseService } from '../database/database.service.js';
-import { ProjectsRepository, type ProvisionedProjectRow } from './projects.repository.js';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from './projects.repository.js';
 
 const fakeRow: ProvisionedProjectRow = {
   id: 'project-1',
@@ -66,25 +69,59 @@ describe('ProjectsRepository', () => {
     });
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO provisioned_projects'),
+      expect.stringContaining('INSERT INTO projects.provisioned_projects'),
       expect.arrayContaining([
         'user-1',
         'tone/orders-api',
         'be-nestjs',
         'orders-api',
         '.github/workflows/ci.yml',
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+        'commit-sha',
         'provisioned',
         'commit-sha',
         'https://github.com/tone/orders-api/commit/commit-sha',
         null,
+        expect.stringContaining(
+          '"repoUrl":"https://github.com/tone/orders-api"',
+        ),
+        expect.any(String),
+        null,
+        'tone',
+        'orders-api',
         'https://github.com/tone/orders-api',
         'private',
         'single-app',
         'nestjs-api',
         'backend-api-ci',
+        'be-nestjs',
         JSON.stringify({ lint: true }),
       ]),
     );
+    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    const columnsMatch = query.match(
+      /INSERT INTO projects\.provisioned_projects \(([\s\S]*?)\)\s*VALUES/,
+    );
+    const placeholdersMatch = query.match(
+      /VALUES \(([\s\S]*?)\)\s*RETURNING/,
+    );
+
+    if (!columnsMatch?.[1] || !placeholdersMatch?.[1]) {
+      throw new Error('Project insert query shape changed unexpectedly');
+    }
+
+    const columns =
+      columnsMatch[1]
+        .split(',')
+        .map((column) => column.trim())
+        .filter(Boolean) ?? [];
+    const placeholders = placeholdersMatch[1].match(/\$\d+/g) ?? [];
+
+    expect(columns).toHaveLength(values.length);
+    expect(placeholders).toHaveLength(values.length);
     expect(result).toEqual(fakeRow);
   });
 
@@ -107,7 +144,7 @@ describe('ProjectsRepository', () => {
     const result = await repo.listByUser('user-1', 10);
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM provisioned_projects'),
+      expect.stringContaining('FROM projects.provisioned_projects'),
       ['user-1', 10],
     );
     expect(result).toEqual([fakeRow]);
@@ -116,18 +153,22 @@ describe('ProjectsRepository', () => {
   it('clamps list limit to 100', async () => {
     await repo.listByUser('user-1', 999);
 
-    expect(db.query).toHaveBeenCalledWith(
-      expect.any(String),
-      ['user-1', 100],
-    );
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 100]);
   });
 
   it('defaults list limit to 25 for invalid input', async () => {
     await repo.listByUser('user-1', NaN);
 
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
+  });
+
+  it('finds a project by id scoped to user', async () => {
+    const result = await repo.findByIdAndUser('project-1', 'user-1');
+
     expect(db.query).toHaveBeenCalledWith(
-      expect.any(String),
-      ['user-1', 25],
+      expect.stringContaining('WHERE id = $1'),
+      ['project-1', 'user-1'],
     );
+    expect(result).toEqual(fakeRow);
   });
 });

@@ -8,7 +8,10 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { DeploymentProvisioningRequestDto } from './create-project.dto';
 
 export class SetupProjectDto {
   @IsString()
@@ -62,4 +65,9 @@ export class SetupProjectDto {
   @IsString()
   @MaxLength(200)
   outputFileName?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeploymentProvisioningRequestDto)
+  deploymentProvisioning?: DeploymentProvisioningRequestDto;
 }

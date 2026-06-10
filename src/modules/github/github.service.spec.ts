@@ -43,6 +43,17 @@ const appConfig: AppConfig = {
     repoPath: '../cicd-workflow',
     workflowDir: 'workflow-templates',
   },
+  envProvisioning: {
+    enabled: false,
+    encryptionKey: '',
+    flowciManaged: {
+      renderToken: '',
+      renderOwnerId: null,
+      vercelToken: '',
+      vercelTeamId: null,
+      vercelTeamSlug: null,
+    },
+  },
   subscription: {
     gateEnabled: true,
     mockEnabled: true,
@@ -225,7 +236,9 @@ describe('GithubService', () => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('api.github.com/user/repos'),
         expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: 'Bearer gh-token' }),
+          headers: expect.objectContaining({
+            Authorization: 'Bearer gh-token',
+          }),
         }),
       );
 

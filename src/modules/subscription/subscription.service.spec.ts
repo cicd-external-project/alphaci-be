@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto';
+
 import {
   ForbiddenException,
   ServiceUnavailableException,
@@ -8,7 +10,10 @@ import { ConfigService } from '@nestjs/config';
 import { SubscriptionService } from './subscription.service.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
 import { OutboxRepository } from '../persistence/outbox.repository.js';
-import type { SessionUser, SubscriptionState } from '../../common/interfaces/session-user.interface.js';
+import type {
+  SessionUser,
+  SubscriptionState,
+} from '../../common/interfaces/session-user.interface.js';
 
 const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
 
@@ -29,30 +34,46 @@ const fakeProSub: SubscriptionState = {
   amountPhp: 300,
 };
 
-const makeConfig = (overrides: Partial<{
-  mockEnabled: boolean;
-  defaultPlan: string;
-  seededPlans: Record<string, string>;
-  paymentProvider: string;
-  paymongoSecretKey: string;
-}> = {}) => ({
-  getOrThrow: jest.fn().mockReturnValue({
-    subscription: {
-      mockEnabled: overrides.mockEnabled ?? false,
-      defaultPlan: overrides.defaultPlan ?? 'free',
-      seededPlans: overrides.seededPlans ?? {},
-      proMonthlyPricePhp: 300,
-      paymentProvider: overrides.paymentProvider ?? 'none',
-      successUrl: 'http://localhost:3000/subscribe?status=success',
-      cancelUrl: 'http://localhost:3000/subscribe?status=cancelled',
-      paymongo: {
-        secretKey: overrides.paymongoSecretKey ?? '',
-        webhookSecret: 'whsec_test_123',
+function signedPayMongoPayload(payload: unknown) {
+  const rawBody = Buffer.from(JSON.stringify(payload));
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHmac('sha256', 'whsec_test_123')
+    .update(`${timestamp}.${rawBody.toString('utf8')}`)
+    .digest('hex');
+
+  return {
+    rawBody,
+    signatureHeader: `t=${timestamp},te=${signature}`,
+  };
+}
+
+const makeConfig = (
+  overrides: Partial<{
+    mockEnabled: boolean;
+    defaultPlan: string;
+    seededPlans: Record<string, string>;
+    paymentProvider: string;
+    paymongoSecretKey: string;
+  }> = {},
+) =>
+  ({
+    getOrThrow: jest.fn().mockReturnValue({
+      subscription: {
+        mockEnabled: overrides.mockEnabled ?? false,
+        defaultPlan: overrides.defaultPlan ?? 'free',
+        seededPlans: overrides.seededPlans ?? {},
+        proMonthlyPricePhp: 300,
+        paymentProvider: overrides.paymentProvider ?? 'none',
+        successUrl: 'http://localhost:3000/subscribe?status=success',
+        cancelUrl: 'http://localhost:3000/subscribe?status=cancelled',
+        paymongo: {
+          secretKey: overrides.paymongoSecretKey ?? '',
+          webhookSecret: 'whsec_test_123',
+        },
       },
-    },
-    frontendUrl: 'http://localhost:3000',
-  }),
-}) as unknown as ConfigService;
+      frontendUrl: 'http://localhost:3000',
+    }),
+  }) as unknown as ConfigService;
 
 const makeSubsRepo = () =>
   ({
@@ -63,7 +84,9 @@ const makeSubsRepo = () =>
   }) as unknown as SubscriptionsRepository;
 
 const makeOutboxRepo = () =>
-  ({ publishLater: jest.fn().mockResolvedValue(undefined) }) as unknown as OutboxRepository;
+  ({
+    publishLater: jest.fn().mockResolvedValue(undefined),
+  }) as unknown as OutboxRepository;
 
 async function createService(
   configOverrides: Parameters<typeof makeConfig>[0] = {},
@@ -104,7 +127,9 @@ describe('SubscriptionService', () => {
   describe('getForUser', () => {
     it('returns existing subscription when one exists', async () => {
       const { service, subsRepo } = await createService();
-      (subsRepo.getCurrentByUserId as jest.Mock).mockResolvedValueOnce(fakeProSub);
+      (subsRepo.getCurrentByUserId as jest.Mock).mockResolvedValueOnce(
+        fakeProSub,
+      );
 
       const result = await service.getForUser(fakeUser);
       expect(result.plan).toBe('pro');
@@ -135,9 +160,9 @@ describe('SubscriptionService', () => {
   describe('createCheckoutSession', () => {
     it('throws ServiceUnavailableException when payment provider is not configured', async () => {
       const { service } = await createService();
-      await expect(service.createCheckoutSession(fakeUser, 'pro')).rejects.toThrow(
-        ServiceUnavailableException,
-      );
+      await expect(
+        service.createCheckoutSession(fakeUser, 'pro'),
+      ).rejects.toThrow(ServiceUnavailableException);
     });
 
     it('creates a PayMongo hosted checkout session for Pro Monthly', async () => {
@@ -219,7 +244,10 @@ describe('SubscriptionService', () => {
         paymongoSecretKey: 'sk_test_123',
       });
 
-      const result = await service.getCheckoutStatus(fakeUser, 'cs_paymongo_123');
+      const result = await service.getCheckoutStatus(
+        fakeUser,
+        'cs_paymongo_123',
+      );
 
       expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
         'user-1',
@@ -242,17 +270,20 @@ describe('SubscriptionService', () => {
         paymongoSecretKey: 'sk_test_123',
       });
 
-      await expect(
-        service.handlePayMongoWebhook({
+      const payload = {
+        data: {
+          type: 'checkout_session.payment.paid',
           data: {
-            type: 'checkout_session.payment.paid',
-            data: {
-              attributes: {
-                metadata: { userId: 'user-1', plan: 'pro' },
-              },
+            attributes: {
+              metadata: { userId: 'user-1', plan: 'pro' },
             },
           },
-        }, 'whsec_test_123'),
+        },
+      };
+      const { rawBody, signatureHeader } = signedPayMongoPayload(payload);
+
+      await expect(
+        service.handlePayMongoWebhook(payload, rawBody, signatureHeader),
       ).resolves.toEqual({ received: true });
 
       expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
@@ -276,7 +307,9 @@ describe('SubscriptionService', () => {
     });
 
     it('activates pro plan and publishes event', async () => {
-      const { service, outboxRepo } = await createService({ mockEnabled: true });
+      const { service, outboxRepo } = await createService({
+        mockEnabled: true,
+      });
       const result = await service.activateForUser(fakeUser, 'pro');
 
       expect(result.plan).toBe('pro');
@@ -287,15 +320,22 @@ describe('SubscriptionService', () => {
   });
 
   describe('cancelForUser', () => {
-    it('throws ForbiddenException when mock is disabled', async () => {
-      const { service } = await createService({ mockEnabled: false });
-      await expect(service.cancelForUser(fakeUser)).rejects.toThrow(
-        ForbiddenException,
+    it('cancels even when mock activation is disabled', async () => {
+      const { service, outboxRepo } = await createService({
+        mockEnabled: false,
+      });
+      const result = await service.cancelForUser(fakeUser);
+
+      expect(result.plan).toBe('free');
+      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'subscription.canceled' }),
       );
     });
 
     it('cancels and publishes event', async () => {
-      const { service, outboxRepo } = await createService({ mockEnabled: true });
+      const { service, outboxRepo } = await createService({
+        mockEnabled: true,
+      });
       await service.cancelForUser(fakeUser);
 
       expect(outboxRepo.publishLater).toHaveBeenCalledWith(
