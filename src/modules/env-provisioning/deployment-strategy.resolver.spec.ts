@@ -21,18 +21,38 @@ describe('DeploymentStrategyResolver', () => {
     ).toBe('vercel_ci_pushed');
   });
 
-  it('uses native provider behavior for Render targets', () => {
+  it('uses image-pushed deployments for FlowCI-managed Render targets', () => {
     expect(
       resolver.resolve({
         provider: 'render',
         ownershipMode: 'flowci_managed',
       }),
-    ).toBe('provider_native');
+    ).toBe('render_image_pushed');
+  });
+
+  it('uses native Git unless BYO Render asks for image deployment', () => {
     expect(
       resolver.resolve({
         provider: 'render',
         ownershipMode: 'byo',
       }),
-    ).toBe('provider_native');
+    ).toBe('render_git_connected');
+    expect(
+      resolver.resolve({
+        provider: 'render',
+        ownershipMode: 'byo',
+        renderDeployMethod: 'byo_image',
+      }),
+    ).toBe('render_image_pushed');
+  });
+
+  it('uses existing-service strategy when registering Render services', () => {
+    expect(
+      resolver.resolve({
+        provider: 'render',
+        ownershipMode: 'byo',
+        action: 'register_existing',
+      }),
+    ).toBe('render_existing_service');
   });
 });

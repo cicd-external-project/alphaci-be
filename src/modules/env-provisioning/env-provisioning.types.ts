@@ -2,12 +2,28 @@ export type EnvProvider = 'render' | 'vercel';
 export type EnvEnvironment = 'test' | 'uat' | 'production';
 export type EnvOwnershipMode = 'byo' | 'flowci_managed';
 export type EnvTargetSlot = 'backend' | 'frontend' | 'standalone';
+export type RenderDeploymentStrategy =
+  | 'render_git_connected'
+  | 'render_image_pushed'
+  | 'render_existing_service';
 export type VercelDeploymentStrategy =
   | 'vercel_git_connected'
   | 'vercel_ci_pushed';
 export type DeploymentStrategy =
   | 'provider_native'
-  | VercelDeploymentStrategy;
+  | VercelDeploymentStrategy
+  | RenderDeploymentStrategy;
+export type RenderServiceType =
+  | 'web_service'
+  | 'private_service'
+  | 'background_worker'
+  | 'cron_job';
+export type RenderDeployMethod =
+  | 'managed_image'
+  | 'byo_image'
+  | 'native_git'
+  | 'existing_service';
+export type RenderEnvironmentName = EnvEnvironment;
 export type ProviderConnectionStatus = 'active' | 'revoked' | 'failed';
 export type DeploymentTargetStatus = 'active' | 'missing' | 'failed';
 export type EnvVarProvisionStatus = 'provisioned' | 'failed';
@@ -47,6 +63,13 @@ export interface DeploymentTargetSummary {
   rootDirectory: string | null;
   buildCommand: string | null;
   startCommand: string | null;
+  renderServiceType?: RenderServiceType | null;
+  renderInstanceType?: string | null;
+  renderRegion?: string | null;
+  renderEnvironmentName?: RenderEnvironmentName | null;
+  dockerContext?: string | null;
+  dockerfilePath?: string | null;
+  imageUrl?: string | null;
   environmentMap: Record<string, unknown>;
   deploymentStrategy: DeploymentStrategy;
   providerMetadata: Record<string, unknown>;

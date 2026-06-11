@@ -38,6 +38,15 @@ export interface AppConfig {
     flowciManaged: {
       renderToken: string;
       renderOwnerId: string | null;
+      renderDefaultRegion?: string;
+      renderDefaultInstanceType?: string;
+      renderAllowedInstanceTypes?: string[];
+      renderAllowPaidManaged?: boolean;
+      renderManagedMaxServicesPerUser?: number;
+      renderBootstrapImage?: string;
+      renderRegistryCredentialId?: string | null;
+      renderRegistryUsername?: string | null;
+      renderRegistryToken?: string | null;
       vercelToken: string;
       vercelTeamId: string | null;
       vercelTeamSlug: string | null;
@@ -118,6 +127,30 @@ export const appConfig = registerAs('app', (): AppConfig => {
       flowciManaged: {
         renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
         renderOwnerId: env['FLOWCI_RENDER_OWNER_ID']?.trim() || null,
+        renderDefaultRegion:
+          env['FLOWCI_RENDER_DEFAULT_REGION']?.trim() || 'singapore',
+        renderDefaultInstanceType:
+          env['FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() || 'free',
+        renderAllowedInstanceTypes: (
+          env['FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES'] ?? 'free'
+        )
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        renderAllowPaidManaged:
+          env['FLOWCI_RENDER_ALLOW_PAID_MANAGED'] === 'true',
+        renderManagedMaxServicesPerUser: Number(
+          env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2',
+        ),
+        renderBootstrapImage:
+          env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
+          'docker.io/library/nginx:alpine',
+        renderRegistryCredentialId:
+          env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() || null,
+        renderRegistryUsername:
+          env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() || null,
+        renderRegistryToken:
+          env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() || null,
         vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
         vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
         vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,

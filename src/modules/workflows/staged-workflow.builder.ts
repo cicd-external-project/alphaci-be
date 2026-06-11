@@ -59,7 +59,6 @@ export function buildStagedWorkflowBundle(
   const servicePath = normalizeServicePath(dto.servicePath);
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
-  const deploymentProvider = dto.deploymentProvider;
   const deploymentTargets = dto.deploymentTargets ?? [];
   const stack = template.stack;
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
@@ -200,9 +199,7 @@ export function buildStagedWorkflowBundle(
           },
           build: buildJob(servicePath, nodeVersion),
           ...vercelDeployJobs(serviceName, servicePath, deploymentTargets),
-          ...(deploymentProvider === 'render' && {
-            'deploy-render': renderDeployJob(serviceName),
-          }),
+          ...renderDeployJobs(serviceName, servicePath, deploymentTargets),
         },
       }),
     },
@@ -297,46 +294,84 @@ function vercelDeployJobs(
   targets: DeploymentWorkflowTarget[],
 ) {
   return Object.fromEntries(
-    targets.map((target) => [
-      `deploy-vercel-${target.slot}`,
-      {
-        needs: ['build'],
-        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-        if: protectedDeployBranchExpression(),
-        with: {
-          'system-name':
-            target.slot === 'standalone' ? serviceName : target.slot,
-          'working-directory': target.rootDirectory ?? servicePath,
-          'checkout-ref':
-            '${{ github.event.workflow_run.head_sha || github.sha }}',
-          'source-branch':
-            '${{ github.event.workflow_run.head_branch || github.ref_name }}',
-          environment:
-            "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
-        },
-        secrets: {
-          VERCEL_TOKEN: `\${{ secrets.${target.secretNames.token} }}`,
-          VERCEL_ORG_ID: `\${{ secrets.${target.secretNames.orgId} }}`,
-          VERCEL_PROJECT_ID: `\${{ secrets.${target.secretNames.projectId} }}`,
-        },
-      },
-    ]),
+    targets
+      .filter((target) => target.provider === 'vercel')
+      .map((target) => {
+        const secretNames = target.secretNames ?? {};
+        return [
+          `deploy-vercel-${target.slot}`,
+          {
+            needs: ['build'],
+            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+            if: protectedDeployBranchExpression(),
+            with: {
+              'system-name':
+                target.slot === 'standalone' ? serviceName : target.slot,
+              'working-directory': target.rootDirectory ?? servicePath,
+              'checkout-ref':
+                '${{ github.event.workflow_run.head_sha || github.sha }}',
+              'source-branch':
+                '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+              environment:
+                "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
+            },
+            secrets: {
+              VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
+              VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
+              VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
+            },
+          },
+        ];
+      }),
   );
 }
 
-function renderDeployJob(serviceName: string) {
-  return {
-    needs: ['build'],
-    if: protectedDeployBranchExpression(),
-    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
-    with: {
-      'system-name': serviceName,
-      environment:
-        "${{ github.event.workflow_run.head_branch == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
-      branch: '${{ github.event.workflow_run.head_branch || github.ref_name }}',
-    },
-    secrets: 'inherit',
-  };
+function renderDeployJobs(
+  serviceName: string,
+  servicePath: string,
+  targets: DeploymentWorkflowTarget[],
+) {
+  return Object.fromEntries(
+    targets
+      .filter(
+        (target) =>
+          target.provider === 'render' &&
+          target.deploymentStrategy === 'render_image_pushed',
+      )
+      .map((target) => {
+        const secretNames = target.secretNames ?? {};
+        const secretPrefix = `RENDER_${target.slot.toUpperCase()}`;
+        return [
+          `deploy-render-${target.slot}`,
+          {
+            needs: ['build'],
+            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
+            if: protectedDeployBranchExpression(),
+            with: {
+              'system-name':
+                target.slot === 'standalone' ? serviceName : target.slot,
+              environment:
+                "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
+              branch:
+                '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+              'working-directory': target.rootDirectory ?? servicePath,
+              'docker-context':
+                target.dockerContext ?? target.rootDirectory ?? servicePath,
+              'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
+              'image-name': target.imageName ?? `flowci-${target.slot}`,
+              'checkout-ref':
+                '${{ github.event.workflow_run.head_sha || github.sha }}',
+            },
+            secrets: {
+              RENDER_API_KEY: `\${{ secrets.${secretNames.apiKey ?? `${secretPrefix}_API_KEY`} }}`,
+              RENDER_SERVICE_ID: `\${{ secrets.${secretNames.serviceId ?? `${secretPrefix}_SERVICE_ID`} }}`,
+              RENDER_OWNER_ID: `\${{ secrets.${secretNames.ownerId ?? `${secretPrefix}_OWNER_ID`} }}`,
+              RENDER_REGISTRY_CREDENTIAL_ID: `\${{ secrets.${secretNames.registryCredentialId ?? `${secretPrefix}_REGISTRY_CREDENTIAL_ID`} }}`,
+            },
+          },
+        ];
+      }),
+  );
 }
 
 function protectedDeployBranchExpression(): string {

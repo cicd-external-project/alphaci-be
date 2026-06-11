@@ -24,7 +24,12 @@ interface ParsedWorkflow {
   };
   jobs: Record<
     string,
-    { if?: string; with?: Record<string, unknown> } | undefined
+    | {
+        if?: string;
+        with?: Record<string, unknown>;
+        secrets?: Record<string, unknown>;
+      }
+    | undefined
   >;
 }
 
@@ -155,14 +160,44 @@ describe('buildStagedWorkflowBundle', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate('nestjs'), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
-      deploymentProvider: 'render',
+      servicePath: 'backend',
+      deploymentTargets: [
+        {
+          slot: 'backend',
+          provider: 'render',
+          deploymentStrategy: 'render_image_pushed',
+          rootDirectory: 'backend',
+          dockerContext: 'backend',
+          dockerfilePath: 'backend/Dockerfile',
+          imageName: 'flowci-orders-api-backend',
+          secretNames: {
+            apiKey: 'RENDER_BACKEND_API_KEY',
+            serviceId: 'RENDER_BACKEND_SERVICE_ID',
+          },
+        },
+      ],
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
-    expect(pkg.jobs['deploy-render']?.if).toContain(
+    expect(pkg.jobs['deploy-render-backend']?.if).toContain(
       'github.event.workflow_run.head_branch',
     );
-    expect(pkg.jobs['deploy-render']?.if).toContain('["test","uat","main"]');
+    expect(pkg.jobs['deploy-render-backend']?.if).toContain(
+      '["test","uat","main"]',
+    );
+    expect(pkg.jobs['deploy-render-backend']?.with?.['docker-context']).toBe(
+      'backend',
+    );
+    expect(pkg.jobs['deploy-render-backend']?.with?.['dockerfile-path']).toBe(
+      'backend/Dockerfile',
+    );
+    expect(pkg.jobs['deploy-render-backend']?.secrets).toEqual({
+      RENDER_API_KEY: '${{ secrets.RENDER_BACKEND_API_KEY }}',
+      RENDER_SERVICE_ID: '${{ secrets.RENDER_BACKEND_SERVICE_ID }}',
+      RENDER_OWNER_ID: '${{ secrets.RENDER_BACKEND_OWNER_ID }}',
+      RENDER_REGISTRY_CREDENTIAL_ID:
+        '${{ secrets.RENDER_BACKEND_REGISTRY_CREDENTIAL_ID }}',
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 
 import { CiService } from './ci.service';
-import { CiTokensRepository } from './ci-tokens.repository';
+import type { CiTokensRepository } from './ci-tokens.repository';
 
 const makeRepository = () =>
   ({
@@ -20,7 +20,9 @@ describe('CiService', () => {
   });
 
   it('issues an opaque project token and persists only its hash', async () => {
-    (repository.upsertProjectToken as jest.Mock).mockResolvedValueOnce(undefined);
+    (repository.upsertProjectToken as jest.Mock).mockResolvedValueOnce(
+      undefined,
+    );
 
     const result = await service.issueProjectToken('project-1');
 
@@ -62,7 +64,11 @@ describe('CiService', () => {
 
   it('rejects a missing bearer token', async () => {
     await expect(
-      service.validateRun({ token: '', repoFullName: 'owner/repo', stage: 'gate' }),
+      service.validateRun({
+        token: '',
+        repoFullName: 'owner/repo',
+        stage: 'gate',
+      }),
     ).rejects.toThrow(UnauthorizedException);
   });
 

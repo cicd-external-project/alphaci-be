@@ -1,7 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 
 import { CiController } from './ci.controller';
-import { CiService } from './ci.service';
+import type { CiService } from './ci.service';
 
 const makeService = () =>
   ({
@@ -23,15 +23,12 @@ describe('CiController', () => {
   });
 
   it('validates a bearer token against repo and stage metadata', async () => {
-    const result = await controller.validate(
-      'Bearer fci_valid-token',
-      {
-        repo: 'owner/repo',
-        stage: 'quality',
-        workflowRunId: '12345',
-        headSha: 'abc123',
-      },
-    );
+    const result = await controller.validate('Bearer fci_valid-token', {
+      repo: 'owner/repo',
+      stage: 'quality',
+      workflowRunId: '12345',
+      headSha: 'abc123',
+    });
 
     expect(service.validateRun).toHaveBeenCalledWith({
       token: 'fci_valid-token',

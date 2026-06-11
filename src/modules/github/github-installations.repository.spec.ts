@@ -1,4 +1,4 @@
-import { DatabaseService } from '../database/database.service.js';
+import type { DatabaseService } from '../database/database.service.js';
 import { GithubInstallationsRepository } from './github-installations.repository.js';
 
 const makeDatabaseService = (rows: unknown[] = []) =>
@@ -94,9 +94,7 @@ describe('GithubInstallationsRepository', () => {
     );
     expect(db.query).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining(
-        'INSERT INTO github_app.github_installations',
-      ),
+      expect.stringContaining('INSERT INTO github_app.github_installations'),
       [12345, 'cicd-external-project/api', 'cicd-external-project/web'],
     );
   });

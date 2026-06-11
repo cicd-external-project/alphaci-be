@@ -36,6 +36,10 @@ export class DeploymentProvisioningEnvSetDto {
 }
 
 export class DeploymentProvisioningTargetDto {
+  @IsOptional()
+  @IsIn(['create', 'register_existing'])
+  action?: 'create' | 'register_existing';
+
   @IsIn(['backend', 'frontend', 'standalone'])
   slot!: 'backend' | 'frontend' | 'standalone';
 
@@ -55,6 +59,14 @@ export class DeploymentProvisioningTargetDto {
 
   @IsOptional()
   @IsString()
+  providerProjectId?: string;
+
+  @IsOptional()
+  @IsString()
+  providerProjectName?: string;
+
+  @IsOptional()
+  @IsString()
   branchName?: string;
 
   @IsOptional()
@@ -68,6 +80,46 @@ export class DeploymentProvisioningTargetDto {
   @IsOptional()
   @IsString()
   startCommand?: string;
+
+  @IsOptional()
+  @IsIn(['managed_image', 'byo_image', 'native_git', 'existing_service'])
+  renderDeployMethod?:
+    | 'managed_image'
+    | 'byo_image'
+    | 'native_git'
+    | 'existing_service';
+
+  @IsOptional()
+  @IsIn(['web_service', 'private_service', 'background_worker', 'cron_job'])
+  renderServiceType?:
+    | 'web_service'
+    | 'private_service'
+    | 'background_worker'
+    | 'cron_job';
+
+  @IsOptional()
+  @IsString()
+  renderInstanceType?: string;
+
+  @IsOptional()
+  @IsString()
+  renderRegion?: string;
+
+  @IsOptional()
+  @IsIn(['test', 'uat', 'production'])
+  renderEnvironmentName?: 'test' | 'uat' | 'production';
+
+  @IsOptional()
+  @IsString()
+  dockerContext?: string;
+
+  @IsOptional()
+  @IsString()
+  dockerfilePath?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 
   @IsOptional()
   @IsArray()

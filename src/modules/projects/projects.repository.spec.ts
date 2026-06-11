@@ -105,9 +105,7 @@ describe('ProjectsRepository', () => {
     const columnsMatch = query.match(
       /INSERT INTO projects\.provisioned_projects \(([\s\S]*?)\)\s*VALUES/,
     );
-    const placeholdersMatch = query.match(
-      /VALUES \(([\s\S]*?)\)\s*RETURNING/,
-    );
+    const placeholdersMatch = query.match(/VALUES \(([\s\S]*?)\)\s*RETURNING/);
 
     if (!columnsMatch?.[1] || !placeholdersMatch?.[1]) {
       throw new Error('Project insert query shape changed unexpectedly');

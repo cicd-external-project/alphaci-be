@@ -23,10 +23,7 @@ describe('UsersRepository', () => {
   beforeEach(async () => {
     db = makeDatabaseService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        UsersRepository,
-        { provide: DatabaseService, useValue: db },
-      ],
+      providers: [UsersRepository, { provide: DatabaseService, useValue: db }],
     }).compile();
 
     repo = module.get(UsersRepository);

@@ -8,6 +8,8 @@ import type {
   EnvOwnershipMode,
   EnvProvider,
   EnvTargetSlot,
+  RenderEnvironmentName,
+  RenderServiceType,
 } from './env-provisioning.types';
 
 interface DeploymentTargetRow {
@@ -24,6 +26,13 @@ interface DeploymentTargetRow {
   root_directory: string | null;
   build_command: string | null;
   start_command: string | null;
+  render_service_type: RenderServiceType | null;
+  render_instance_type: string | null;
+  render_region: string | null;
+  render_environment_name: RenderEnvironmentName | null;
+  docker_context: string | null;
+  dockerfile_path: string | null;
+  image_url: string | null;
   environment_map: Record<string, unknown>;
   deployment_strategy: DeploymentStrategy | null;
   provider_metadata: Record<string, unknown> | null;
@@ -43,6 +52,13 @@ export interface CreateDeploymentTargetInput {
   rootDirectory?: string | null;
   buildCommand?: string | null;
   startCommand?: string | null;
+  renderServiceType?: RenderServiceType | null | undefined;
+  renderInstanceType?: string | null | undefined;
+  renderRegion?: string | null | undefined;
+  renderEnvironmentName?: RenderEnvironmentName | null | undefined;
+  dockerContext?: string | null | undefined;
+  dockerfilePath?: string | null | undefined;
+  imageUrl?: string | null | undefined;
   environmentMap?: Record<string, unknown>;
   deploymentStrategy?: DeploymentStrategy;
   providerMetadata?: Record<string, unknown>;
@@ -70,11 +86,18 @@ export class DeploymentTargetsRepository {
           root_directory,
           build_command,
           start_command,
+          render_service_type,
+          render_instance_type,
+          render_region,
+          render_environment_name,
+          docker_context,
+          dockerfile_path,
+          image_url,
           environment_map,
           deployment_strategy,
           provider_metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         RETURNING *;
       `,
       [
@@ -90,6 +113,13 @@ export class DeploymentTargetsRepository {
         input.rootDirectory ?? null,
         input.buildCommand ?? null,
         input.startCommand ?? null,
+        input.renderServiceType ?? null,
+        input.renderInstanceType ?? null,
+        input.renderRegion ?? null,
+        input.renderEnvironmentName ?? null,
+        input.dockerContext ?? null,
+        input.dockerfilePath ?? null,
+        input.imageUrl ?? null,
         JSON.stringify(input.environmentMap ?? {}),
         input.deploymentStrategy ?? 'provider_native',
         JSON.stringify(input.providerMetadata ?? {}),
@@ -184,6 +214,13 @@ export class DeploymentTargetsRepository {
       rootDirectory: row.root_directory,
       buildCommand: row.build_command,
       startCommand: row.start_command,
+      renderServiceType: row.render_service_type,
+      renderInstanceType: row.render_instance_type,
+      renderRegion: row.render_region,
+      renderEnvironmentName: row.render_environment_name,
+      dockerContext: row.docker_context,
+      dockerfilePath: row.dockerfile_path,
+      imageUrl: row.image_url,
       environmentMap: row.environment_map ?? {},
       deploymentStrategy: row.deployment_strategy ?? 'provider_native',
       providerMetadata: row.provider_metadata ?? {},

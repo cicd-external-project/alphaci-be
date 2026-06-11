@@ -57,9 +57,13 @@ describe('ProjectsController', () => {
       controllers: [ProjectsController],
       providers: [{ provide: ProjectsService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
-      .overrideGuard(require('../../common/guards/subscription.guard.js').SubscriptionGuard)
+      .overrideGuard(
+        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -75,7 +79,10 @@ describe('ProjectsController', () => {
       serviceName: 'orders-api',
     };
 
-    const result = await controller.createProject(makeRequest(fakeUser, 'gh-token'), body);
+    const result = await controller.createProject(
+      makeRequest(fakeUser, 'gh-token'),
+      body,
+    );
 
     expect(service.createProject).toHaveBeenCalledWith(
       'user-1',

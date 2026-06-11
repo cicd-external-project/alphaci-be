@@ -130,10 +130,9 @@ export class UsersRepository {
   }
 
   async deleteById(userId: string): Promise<void> {
-    await this.databaseService.query(
-      `DELETE FROM app_users WHERE id = $1;`,
-      [userId],
-    );
+    await this.databaseService.query(`DELETE FROM app_users WHERE id = $1;`, [
+      userId,
+    ]);
   }
 
   async findById(userId: string): Promise<SessionUser | null> {

@@ -15,10 +15,7 @@ describe('OutboxRepository', () => {
   beforeEach(async () => {
     db = makeDatabaseService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        OutboxRepository,
-        { provide: DatabaseService, useValue: db },
-      ],
+      providers: [OutboxRepository, { provide: DatabaseService, useValue: db }],
     }).compile();
 
     repo = module.get(OutboxRepository);

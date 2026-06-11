@@ -23,7 +23,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const response = await fetch(`${RENDER_API_URL}/owners?limit=1`, {
       headers: this.headers(token),
     });
-    this.assertOk(response, 'Render connection validation failed');
+    await this.assertOk(response, 'Render connection validation failed');
     const owners = (await response.json()) as Array<{
       owner?: { id?: string; name?: string };
     }>;
@@ -31,6 +31,10 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     return {
       id: owner?.id ?? 'render-account',
       name: owner?.name ?? 'Render account',
+      metadata: {
+        ownerId: owner?.id ?? 'render-account',
+        ownerName: owner?.name ?? 'Render account',
+      },
     };
   }
 
@@ -38,7 +42,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const response = await fetch(`${RENDER_API_URL}/services?limit=100`, {
       headers: this.headers(token),
     });
-    this.assertOk(response, 'Render services could not be loaded');
+    await this.assertOk(response, 'Render services could not be loaded');
     const services = (await response.json()) as Array<{
       service?: { id?: string; name?: string };
     }>;
@@ -64,30 +68,51 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const response = await fetch(`${RENDER_API_URL}/services`, {
       method: 'POST',
       headers: this.headers(input.token),
-      body: JSON.stringify({
-        type: 'web_service',
-        name: input.projectName,
-        ownerId,
-        repo: `https://github.com/${input.repoFullName}`,
-        branch: input.branchName,
-        rootDir: input.rootDirectory,
-        buildCommand: input.buildCommand,
-        startCommand: input.startCommand,
-      }),
+      body: JSON.stringify(this.buildCreateServiceBody(input, ownerId)),
     });
-    this.assertOk(response, 'Render service could not be created');
+    await this.assertOk(response, 'Render service could not be created');
     const payload = (await response.json()) as {
+      id?: string;
+      name?: string;
       service?: { id?: string; name?: string };
     };
-    const service = payload.service;
-    if (!service?.id || !service.name) {
+    const serviceId = payload.service?.id ?? payload.id;
+    const serviceName = payload.service?.name ?? payload.name;
+    if (!serviceId || !serviceName) {
       throw new Error('Render service creation returned an invalid response');
     }
+    const renderServiceType = input.renderServiceType ?? 'web_service';
+    const renderEnvironmentName =
+      input.renderEnvironmentName ??
+      this.environmentFromBranch(input.branchName);
+    const dockerContext =
+      input.dockerContext ?? input.rootDirectory?.trim() ?? '.';
+    const dockerfilePath = input.dockerfilePath ?? 'Dockerfile';
 
     return {
-      id: service.id,
-      name: service.name,
+      id: serviceId,
+      name: serviceName,
       provider: this.provider,
+      metadata: {
+        deploymentStrategy: input.deploymentStrategy ?? 'render_git_connected',
+        renderServiceId: serviceId,
+        renderOwnerId: ownerId,
+        renderServiceType,
+        renderInstanceType: input.renderInstanceType ?? null,
+        renderRegion: input.renderRegion ?? null,
+        renderEnvironmentName,
+        renderRegistryCredentialId: this.getRegistryCredentialId(),
+        dockerContext,
+        dockerfilePath,
+        imageUrl:
+          input.deploymentStrategy === 'render_image_pushed'
+            ? (input.imageUrl ?? this.getBootstrapImage())
+            : null,
+        bootstrapImage:
+          input.deploymentStrategy === 'render_image_pushed'
+            ? this.getBootstrapImage()
+            : null,
+      },
     };
   }
 
@@ -98,7 +123,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       `${RENDER_API_URL}/services/${input.targetId}/env-vars`,
       { headers: this.headers(input.token) },
     );
-    this.assertOk(currentResponse, 'Render env vars could not be loaded');
+    await this.assertOk(currentResponse, 'Render env vars could not be loaded');
     const current = (await currentResponse.json()) as Array<{
       envVar?: { key?: string; value?: string };
     }>;
@@ -122,7 +147,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         ),
       },
     );
-    this.assertOk(response, 'Render env vars could not be updated');
+    await this.assertOk(response, 'Render env vars could not be updated');
 
     return {
       provisioned: input.vars.map((variable) => ({
@@ -137,7 +162,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const response = await fetch(`${RENDER_API_URL}/owners?limit=1`, {
       headers: this.headers(token),
     });
-    this.assertOk(response, 'Render workspace could not be loaded');
+    await this.assertOk(response, 'Render workspace could not be loaded');
     const owners = (await response.json()) as Array<{
       owner?: { id?: string };
     }>;
@@ -147,6 +172,92 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     }
 
     return ownerId;
+  }
+
+  private buildCreateServiceBody(
+    input: CreateProviderTargetInput,
+    ownerId: string,
+  ): Record<string, unknown> {
+    const type = input.renderServiceType ?? 'web_service';
+    const serviceDetails = this.serviceDetails(input);
+    if (input.deploymentStrategy === 'render_image_pushed') {
+      return {
+        type,
+        name: input.projectName,
+        ownerId,
+        autoDeploy: 'no',
+        image: {
+          ownerId,
+          imagePath: input.imageUrl ?? this.getBootstrapImage(),
+          ...(this.getRegistryCredentialId()
+            ? { registryCredentialId: this.getRegistryCredentialId() }
+            : {}),
+        },
+        serviceDetails,
+      };
+    }
+
+    return {
+      type,
+      name: input.projectName,
+      ownerId,
+      repo: `https://github.com/${input.repoFullName}`,
+      branch: input.branchName,
+      rootDir: input.rootDirectory,
+      buildCommand: input.buildCommand,
+      startCommand: input.startCommand,
+      serviceDetails,
+    };
+  }
+
+  private serviceDetails(
+    input: CreateProviderTargetInput,
+  ): Record<string, unknown> {
+    const runtime =
+      input.deploymentStrategy === 'render_image_pushed' ? 'image' : 'node';
+
+    return {
+      runtime,
+      ...(input.renderInstanceType ? { plan: input.renderInstanceType } : {}),
+      ...(input.renderRegion ? { region: input.renderRegion } : {}),
+      ...(input.startCommand &&
+      input.deploymentStrategy !== 'render_image_pushed'
+        ? { startCommand: input.startCommand }
+        : {}),
+      ...(input.buildCommand &&
+      input.deploymentStrategy !== 'render_image_pushed'
+        ? { buildCommand: input.buildCommand }
+        : {}),
+    };
+  }
+
+  private getBootstrapImage(): string {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return (
+      config?.envProvisioning.flowciManaged.renderBootstrapImage ??
+      'docker.io/library/nginx:alpine'
+    );
+  }
+
+  private getRegistryCredentialId(): string | null {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return (
+      config?.envProvisioning.flowciManaged.renderRegistryCredentialId?.trim() ||
+      null
+    );
+  }
+
+  private environmentFromBranch(
+    branchName: string | undefined,
+  ): 'test' | 'uat' | 'production' {
+    if (branchName === 'main') {
+      return 'production';
+    }
+    if (branchName === 'uat' || branchName === 'production') {
+      return branchName;
+    }
+
+    return 'test';
   }
 
   private getConfiguredOwnerId(): string | null {
@@ -164,9 +275,27 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
-  private assertOk(response: Response, message: string): void {
+  private async assertOk(response: Response, message: string): Promise<void> {
     if (!response.ok) {
-      throw new Error(`${message}: ${response.status}`);
+      const body = await response.text().catch(() => '');
+      if (response.status === 402) {
+        throw new Error(
+          'Render billing is not configured for this workspace or the selected instance type requires payment.',
+        );
+      }
+      if (response.status === 409) {
+        throw new Error(
+          'A Render service with this name already exists in the selected workspace.',
+        );
+      }
+      if (response.status === 401) {
+        throw new Error(
+          'Render API key is invalid or missing required workspace access.',
+        );
+      }
+
+      const summary = body ? ` ${body.slice(0, 300)}` : '';
+      throw new Error(`${message}: ${response.status}${summary}`);
     }
   }
 }

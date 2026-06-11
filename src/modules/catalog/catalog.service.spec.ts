@@ -30,7 +30,7 @@ const makeEntry = (name: string) =>
     name,
     isFile: () => true,
     isDirectory: () => false,
-  } as unknown as import('node:fs').Dirent);
+  }) as unknown as import('node:fs').Dirent;
 
 const mockReaddir = (entries: import('node:fs').Dirent[]) => {
   mockFs.readdir.mockResolvedValue(entries as never);
@@ -173,9 +173,7 @@ describe('CatalogService', () => {
 
     it('loads and returns templates from property files', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const result = await service.listTemplates();
@@ -191,11 +189,9 @@ describe('CatalogService', () => {
 
     it('skips templates whose workflow file does not exist', async () => {
       mockFs.access
-        .mockResolvedValueOnce(undefined)  // root folder
+        .mockResolvedValueOnce(undefined) // root folder
         .mockRejectedValueOnce(new Error('ENOENT')); // workflow file missing
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
 
       const result = await service.listTemplates();
       expect(result).toEqual([]);
@@ -203,9 +199,7 @@ describe('CatalogService', () => {
 
     it('skips templates with malformed JSON in properties file', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('bad-template.properties.json'),
-      ]);
+      mockReaddir([makeEntry('bad-template.properties.json')]);
       mockReadFile('not json');
 
       const result = await service.listTemplates();
@@ -214,9 +208,7 @@ describe('CatalogService', () => {
 
     it('returns cached results on second call within TTL', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       await service.listTemplates();
@@ -227,9 +219,7 @@ describe('CatalogService', () => {
 
     it('filters by stack', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const result = await service.listTemplates({ stack: 'nextjs' });
@@ -238,9 +228,7 @@ describe('CatalogService', () => {
 
     it('filters by category', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const result = await service.listTemplates({ category: 'nestjs' });
@@ -249,9 +237,7 @@ describe('CatalogService', () => {
 
     it('filters by search query', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const matchResult = await service.listTemplates({ q: 'nestjs' });
@@ -262,9 +248,7 @@ describe('CatalogService', () => {
   describe('listCategories', () => {
     it('returns categories sorted by count desc then name asc', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const result = await service.listCategories();
@@ -278,9 +262,7 @@ describe('CatalogService', () => {
   describe('getTemplateById', () => {
     it('returns the template when found', async () => {
       mockFs.access.mockResolvedValue(undefined);
-      mockReaddir([
-        makeEntry('nestjs-be.properties.json'),
-      ]);
+      mockReaddir([makeEntry('nestjs-be.properties.json')]);
       mockReadFile(sampleProperties);
 
       const result = await service.getTemplateById('nestjs-be');

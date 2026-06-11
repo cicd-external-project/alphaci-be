@@ -8,11 +8,12 @@ import type { SessionUser } from '../interfaces/session-user.interface.js';
 
 const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
 
-const makeContext = (session: Record<string, unknown>) => ({
-  switchToHttp: () => ({
-    getRequest: () => ({ session }),
-  }),
-}) as unknown as ExecutionContext;
+const makeContext = (session: Record<string, unknown>) =>
+  ({
+    switchToHttp: () => ({
+      getRequest: () => ({ session }),
+    }),
+  }) as unknown as ExecutionContext;
 
 const makeUsersRepo = () =>
   ({
