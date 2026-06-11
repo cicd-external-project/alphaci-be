@@ -68,12 +68,39 @@ export interface ProjectOptionsResult {
 
 // ─── Static fallback catalog ─────────────────────────────────────────────────
 
+// Order matters: the FE preselects the first enabled shape, so the simplest
+// option (standalone) must come first. 'mono' is parked as disabled until the
+// monorepo scaffold produces a real multi-package workspace with per-package
+// pipelines — today it would mislead users into a generic TS workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
-    { id: 'mono', label: 'Monorepo', enabled: true, description: 'Single repo, multiple apps/packages' },
-    { id: 'multi', label: 'Multi-repo', enabled: true, description: 'Separate repo per service' },
-    { id: 'standalone', label: 'Standalone', enabled: true, description: 'Single app, single repo' },
-    { id: 'microservices', label: 'Microservices', enabled: true, description: 'Single repo, backend + frontend services with separate CI workflows' },
+    {
+      id: 'standalone',
+      label: 'Single application',
+      enabled: true,
+      description:
+        'One repository with one app. The simplest way to start — best for most projects.',
+    },
+    {
+      id: 'microservices',
+      label: 'Backend + frontend (one repo)',
+      enabled: true,
+      description:
+        'One repository with backend/ and frontend/ folders. Each service gets its own CI pipeline.',
+    },
+    {
+      id: 'multi',
+      label: 'Backend + frontend (two repos)',
+      enabled: true,
+      description:
+        'Creates two repositories — one for your backend API, one for your frontend app — each with its own CI/CD pipeline.',
+    },
+    {
+      id: 'mono',
+      label: 'Monorepo (workspaces)',
+      enabled: false,
+      description: 'Multiple packages in one repository. Coming soon.',
+    },
   ],
   projectTypes: [
     {
@@ -83,7 +110,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       language: 'TypeScript',
       framework: 'Next.js',
       starterPath: 'starters/nextjs',
-      repoShapes: ['standalone', 'mono', 'microservices'],
+      repoShapes: ['standalone', 'mono', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -95,7 +122,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       language: 'TypeScript',
       framework: 'React',
       starterPath: 'starters/react',
-      repoShapes: ['standalone', 'mono', 'microservices'],
+      repoShapes: ['standalone', 'mono', 'multi', 'microservices'],
       defaultRecipe: 'standard',
       allowedRecipes: ['standard', 'minimal'],
       defaultOptions: { lint: true, unit: true, build: true, coverage: true },
@@ -458,10 +485,12 @@ export class CatalogService {
     }
 
     const projectTypes = usableStacks.map((stack) => {
+      // Frontend stacks must include 'multi': the multi-repo shape provisions
+      // a frontend repository, so its Language picker draws from this list.
       const repoShapes =
         stack.kind === 'backend'
           ? ['standalone', 'multi', 'microservices']
-          : ['standalone', 'mono', 'microservices'];
+          : ['standalone', 'mono', 'multi', 'microservices'];
 
       return {
         id: stack.key,

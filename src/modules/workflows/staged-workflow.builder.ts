@@ -59,7 +59,11 @@ export function buildStagedWorkflowBundle(
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
   const testJobId = isBackend ? 'backend-tests' : 'frontend-tests';
-  const testCommand = isBackend ? 'npm test' : 'npm run test';
+  // The central test workflows enforce coverage by parsing
+  // coverage/coverage-summary.json, so the command must produce it.
+  const testCommand = isBackend
+    ? 'npm test -- --coverage --coverageReporters=json-summary'
+    : 'npm run test -- --coverage --coverageReporters=json-summary';
   const lintCommand = 'npm run lint';
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
@@ -122,7 +126,11 @@ export function buildStagedWorkflowBundle(
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
-              ...(isBackend ? { 'backend-stack': stack } : {}),
+              ...(isBackend
+                ? { 'backend-stack': stack }
+                : // Scaffolded repos keep their specs in src/, not the
+                  // frontend-tests default of tests/unit.
+                  { 'unit-tests-directory': 'src' }),
               'node-version': Number(nodeVersion),
               'coverage-threshold': coverageThreshold,
               'enforce-coverage': true,

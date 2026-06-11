@@ -86,6 +86,20 @@ function buildGitignore(): string {
   ].join('\n');
 }
 
+// Pinned dependency ranges. '*' versions made scaffolds non-reproducible and
+// broke CI the moment a major release changed behaviour (e.g. ESLint 9 dropped
+// --ext and .eslintrc support). Keep these in sync with the lint/test/build
+// commands the generated workflows run.
+const SCAFFOLD_DEV_DEPENDENCIES: Record<string, string> = {
+  typescript: '^5.6.3',
+  eslint: '^9.17.0',
+  'typescript-eslint': '^8.18.0',
+  jest: '^29.7.0',
+  'ts-jest': '^29.2.5',
+  '@types/jest': '^29.5.14',
+  '@types/node': '^22.10.0',
+};
+
 function buildPackageJson(packageName: string, stack: string): string {
   const isNextJs = stack === 'nextjs';
   const isNestJs = stack === 'nestjs';
@@ -97,7 +111,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'next start',
       dev: 'next dev',
       test: 'jest',
-      lint: 'eslint . --ext .ts,.tsx',
+      lint: 'eslint src',
     };
   } else if (isNestJs) {
     scripts = {
@@ -105,7 +119,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'node dist/main.js',
       dev: 'ts-node src/main.ts',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     };
   } else {
     scripts = {
@@ -113,7 +127,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'node dist/index.js',
       dev: 'ts-node src/index.ts',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     };
   }
 
@@ -122,31 +136,31 @@ function buildPackageJson(packageName: string, stack: string): string {
     version: '0.1.0',
     scripts,
     dependencies: {} as Record<string, string>,
-    devDependencies: {
-      typescript: '*',
-      eslint: '*',
-      jest: '*',
-      'ts-jest': '*',
-      '@types/jest': '*',
-      '@types/node': '*',
-      '@typescript-eslint/parser': '*',
-      '@typescript-eslint/eslint-plugin': '*',
-    } as Record<string, string>,
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
   };
 
   if (isNestJs) {
-    pkg.dependencies['@nestjs/common'] = '*';
-    pkg.dependencies['@nestjs/core'] = '*';
-    pkg.dependencies['@nestjs/platform-express'] = '*';
-    pkg.devDependencies['@nestjs/testing'] = '*';
+    pkg.dependencies['@nestjs/common'] = '^11.0.0';
+    pkg.dependencies['@nestjs/core'] = '^11.0.0';
+    pkg.dependencies['@nestjs/platform-express'] = '^11.0.0';
+    // Required NestJS peer dependencies — without them tsc cannot resolve
+    // the framework's type imports and the build job fails.
+    pkg.dependencies['reflect-metadata'] = '^0.2.2';
+    pkg.dependencies['rxjs'] = '^7.8.1';
+    pkg.devDependencies['@nestjs/testing'] = '^11.0.0';
+    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   if (isNextJs) {
-    pkg.dependencies['next'] = '*';
-    pkg.dependencies['react'] = '*';
-    pkg.dependencies['react-dom'] = '*';
-    pkg.devDependencies['@types/react'] = '*';
-    pkg.devDependencies['@types/react-dom'] = '*';
+    pkg.dependencies['next'] = '^15.1.0';
+    pkg.dependencies['react'] = '^19.0.0';
+    pkg.dependencies['react-dom'] = '^19.0.0';
+    pkg.devDependencies['@types/react'] = '^19.0.0';
+    pkg.devDependencies['@types/react-dom'] = '^19.0.0';
+  }
+
+  if (!isNextJs && !isNestJs) {
+    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   return JSON.stringify(pkg, null, 2);
@@ -220,18 +234,18 @@ function buildEntrySpec(serviceName: string): string {
   ].join('\n');
 }
 
+// ESLint 9 flat config — .eslintrc.json and the --ext flag were removed in
+// ESLint 9, so the scaffold ships eslint.config.mjs and lints via `eslint src`.
 function buildEslintConfig(): string {
-  return JSON.stringify(
-    {
-      root: true,
-      parser: '@typescript-eslint/parser',
-      plugins: ['@typescript-eslint'],
-      extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
-      rules: {},
-    },
-    null,
-    2,
-  );
+  return [
+    "import tseslint from 'typescript-eslint';",
+    '',
+    'export default tseslint.config(',
+    "  { ignores: ['dist/', 'coverage/', '.next/', 'out/', 'node_modules/'] },",
+    '  ...tseslint.configs.recommended,',
+    ');',
+    '',
+  ].join('\n');
 }
 
 function buildEnvExample(): string {
@@ -267,8 +281,32 @@ function buildNestMain(): string {
 
 function buildNextPage(serviceName: string): string {
   return [
-    'export default function Home(): React.JSX.Element {',
-    `  return <main><h1>${serviceName}</h1></main>;`,
+    'export default function Home() {',
+    '  return (',
+    '    <main>',
+    `      <h1>${serviceName}</h1>`,
+    '    </main>',
+    '  );',
+    '}',
+  ].join('\n');
+}
+
+// next build fails without a root layout in the App Router — it is not
+// auto-generated in CI the way `next dev` creates one locally.
+function buildNextLayout(serviceName: string): string {
+  return [
+    "import type { ReactNode } from 'react';",
+    '',
+    'export const metadata = {',
+    `  title: '${serviceName}',`,
+    '};',
+    '',
+    'export default function RootLayout({ children }: { children: ReactNode }) {',
+    '  return (',
+    '    <html lang="en">',
+    '      <body>{children}</body>',
+    '    </html>',
+    '  );',
     '}',
   ].join('\n');
 }
@@ -285,11 +323,13 @@ function buildNextConfig(): string {
 // ─── Docker files ─────────────────────────────────────────────────────────────
 
 function buildDockerfile(nodeVersion: string): string {
+  // npm ci requires package-lock.json, which the scaffold does not ship (it is
+  // generated by the customer's first npm install) — fall back to npm install.
   return [
     `FROM node:${nodeVersion}-alpine AS builder`,
     'WORKDIR /app',
     'COPY package*.json ./',
-    'RUN npm ci',
+    'RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi',
     'COPY . .',
     'RUN npm run build',
     '',
@@ -298,7 +338,7 @@ function buildDockerfile(nodeVersion: string): string {
     'ENV NODE_ENV=production',
     'COPY --from=builder /app/dist ./dist',
     'COPY --from=builder /app/package*.json ./',
-    'RUN npm ci --omit=dev',
+    'RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi',
     'EXPOSE 3000',
     'CMD ["node", "dist/main.js"]',
   ].join('\n');
@@ -320,18 +360,9 @@ function buildMonorepoRootPackageJson(packageName: string): string {
       scripts: {
         build: 'tsc -b',
         test: 'jest --passWithNoTests',
-        lint: 'eslint . --ext .ts',
+        lint: 'eslint packages',
       },
-      devDependencies: {
-        typescript: '*',
-        eslint: '*',
-        jest: '*',
-        'ts-jest': '*',
-        '@types/jest': '*',
-        '@types/node': '*',
-        '@typescript-eslint/parser': '*',
-        '@typescript-eslint/eslint-plugin': '*',
-      },
+      devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
     },
     null,
     2,
@@ -408,24 +439,19 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
     scripts: {
       build: 'tsc -p tsconfig.json',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     },
     dependencies: {} as Record<string, string>,
-    devDependencies: {
-      typescript: '*',
-      eslint: '*',
-      jest: '*',
-      'ts-jest': '*',
-      '@types/jest': '*',
-      '@types/node': '*',
-    } as Record<string, string>,
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
   };
 
   if (stack === 'nestjs') {
-    pkg.dependencies['@nestjs/common'] = '*';
-    pkg.dependencies['@nestjs/core'] = '*';
-    pkg.dependencies['@nestjs/platform-express'] = '*';
-    pkg.devDependencies['@nestjs/testing'] = '*';
+    pkg.dependencies['@nestjs/common'] = '^11.0.0';
+    pkg.dependencies['@nestjs/core'] = '^11.0.0';
+    pkg.dependencies['@nestjs/platform-express'] = '^11.0.0';
+    pkg.dependencies['reflect-metadata'] = '^0.2.2';
+    pkg.dependencies['rxjs'] = '^7.8.1';
+    pkg.devDependencies['@nestjs/testing'] = '^11.0.0';
   }
 
   return JSON.stringify(pkg, null, 2);
@@ -482,7 +508,7 @@ function buildServiceSubdirFiles(
     },
     { path: `${dir}/tsconfig.json`, content: buildTsConfig(stack) },
     { path: `${dir}/jest.config.ts`, content: buildJestConfig() },
-    { path: `${dir}/.eslintrc.json`, content: buildEslintConfig() },
+    { path: `${dir}/eslint.config.mjs`, content: buildEslintConfig() },
     { path: `${dir}/.env.example`, content: buildEnvExample() },
     { path: `${dir}/src/index.ts`, content: buildEntryPoint(serviceName) },
     { path: `${dir}/src/index.spec.ts`, content: buildEntrySpec(serviceName) },
@@ -506,6 +532,10 @@ function buildServiceSubdirFiles(
     });
     files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
   } else if (stack === 'nextjs') {
+    files.push({
+      path: `${dir}/src/app/layout.tsx`,
+      content: buildNextLayout(serviceName),
+    });
     files.push({
       path: `${dir}/src/app/page.tsx`,
       content: buildNextPage(serviceName),
@@ -533,7 +563,7 @@ function buildStandaloneScaffold(
       path: 'sonar-project.properties',
       content: buildSonarProperties(serviceName),
     },
-    { path: '.eslintrc.json', content: buildEslintConfig() },
+    { path: 'eslint.config.mjs', content: buildEslintConfig() },
     { path: '.env.example', content: buildEnvExample() },
     { path: 'src/index.ts', content: buildEntryPoint(serviceName) },
     { path: 'src/index.spec.ts', content: buildEntrySpec(serviceName) },
@@ -547,6 +577,7 @@ function buildStandaloneScaffold(
     ];
   } else if (stack === 'nextjs') {
     stackFiles = [
+      { path: 'src/app/layout.tsx', content: buildNextLayout(serviceName) },
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
       { path: 'next.config.ts', content: buildNextConfig() },
     ];
@@ -582,7 +613,7 @@ function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
       path: 'sonar-project.properties',
       content: buildMonorepoSonarProperties(serviceName),
     },
-    { path: '.eslintrc.json', content: buildEslintConfig() },
+    { path: 'eslint.config.mjs', content: buildEslintConfig() },
     { path: '.env.example', content: buildEnvExample() },
     // packages/core — rename or duplicate to add more packages
     {
