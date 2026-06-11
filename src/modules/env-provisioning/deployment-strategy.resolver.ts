@@ -14,14 +14,7 @@ export interface ResolveDeploymentStrategyInput {
 @Injectable()
 export class DeploymentStrategyResolver {
   resolve(input: ResolveDeploymentStrategyInput): DeploymentStrategy {
-    if (
-      input.provider === 'vercel' &&
-      input.ownershipMode === 'flowci_managed'
-    ) {
-      return 'vercel_git_connected';
-    }
-
-    if (input.provider === 'vercel' && input.ownershipMode === 'byo') {
+    if (input.provider === 'vercel') {
       return 'vercel_ci_pushed';
     }
 

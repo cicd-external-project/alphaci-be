@@ -935,10 +935,7 @@ export class ProjectsService {
 
     return request.targets
       .filter(
-        (target) =>
-          slots.includes(target.slot) &&
-          target.provider === 'vercel' &&
-          target.ownershipMode === 'byo',
+        (target) => slots.includes(target.slot) && target.provider === 'vercel',
       )
       .map((target) => {
         const descriptor: DeploymentWorkflowTarget = {

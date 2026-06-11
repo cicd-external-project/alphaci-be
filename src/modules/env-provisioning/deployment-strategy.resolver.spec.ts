@@ -3,13 +3,13 @@ import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 describe('DeploymentStrategyResolver', () => {
   const resolver = new DeploymentStrategyResolver();
 
-  it('uses Vercel Git connection for FlowCI-managed Vercel targets', () => {
+  it('uses CI-pushed deployments for FlowCI-managed Vercel targets', () => {
     expect(
       resolver.resolve({
         provider: 'vercel',
         ownershipMode: 'flowci_managed',
       }),
-    ).toBe('vercel_git_connected');
+    ).toBe('vercel_ci_pushed');
   });
 
   it('uses CI-pushed deployments for BYO Vercel targets', () => {

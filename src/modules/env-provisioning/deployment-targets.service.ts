@@ -200,10 +200,15 @@ export class DeploymentTargetsService {
         config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
       const teamSlug =
         config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
+      if (!teamId) {
+        throw new BadRequestException(
+          'FLOWCI_VERCEL_TEAM_ID is required for FlowCI-managed Vercel deployment targets',
+        );
+      }
 
       return {
-        ...(teamId ? { vercelOrgId: teamId } : {}),
-        ...(teamId ? { vercelTeamId: teamId } : {}),
+        vercelOrgId: teamId,
+        vercelTeamId: teamId,
         ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
       };
     }

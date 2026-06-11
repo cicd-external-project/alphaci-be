@@ -157,6 +157,45 @@ describe('WorkflowsService', () => {
       );
     });
 
+    it('adds CI-pushed Vercel deploy jobs with installed GitHub secret names', async () => {
+      const result = await service.generate('user-1', {
+        templateId: 'nestjs-be',
+        serviceName: 'my-service',
+        servicePath: '.',
+        deploymentTargets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            deploymentStrategy: 'vercel_ci_pushed',
+            rootDirectory: '.',
+            secretNames: {
+              token: 'VERCEL_FRONTEND_TOKEN',
+              orgId: 'VERCEL_FRONTEND_ORG_ID',
+              projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+            },
+          },
+        ],
+      });
+
+      const packageWorkflow = result.workflowFiles[2]?.yaml ?? '';
+      expect(packageWorkflow).toContain(
+        'cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1',
+      );
+      expect(packageWorkflow).toContain('deploy-vercel-frontend:');
+      expect(packageWorkflow).toContain(
+        'VERCEL_TOKEN: ${{ secrets.VERCEL_FRONTEND_TOKEN }}',
+      );
+      expect(packageWorkflow).toContain(
+        'VERCEL_ORG_ID: ${{ secrets.VERCEL_FRONTEND_ORG_ID }}',
+      );
+      expect(packageWorkflow).toContain(
+        'VERCEL_PROJECT_ID: ${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}',
+      );
+      expect(packageWorkflow).toContain(
+        'checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}',
+      );
+    });
+
     it('saves to history and publishes outbox event', async () => {
       await service.generate('user-1', {
         templateId: 'nestjs-be',

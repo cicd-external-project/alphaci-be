@@ -26,7 +26,9 @@ Runtime env var values are write-only. FlowCI sends them to the selected provide
 
 - Building a full encrypted app-secret vault.
 - Letting users recover or view previously submitted env values.
-- Provisioning GitHub Actions secrets for app runtime env vars.
+- Provisioning GitHub Actions secrets for app runtime env vars. Vercel deploy
+  credentials are an exception: FlowCI installs per-slot `VERCEL_*` repository
+  secrets so generated workflows can deploy CI-pushed Vercel projects.
 - Configuring custom domains, DNS, SSL policy, or rollback automation for newly created provider targets.
 - Guaranteeing the first successful deployment after target creation; this feature creates provider targets and provisions env vars, while deployment execution remains handled by provider/GitHub workflows.
 - Implementing per-secret rollback.
@@ -104,10 +106,23 @@ root_directory
 build_command
 start_command
 environment_map       jsonb, maps test/uat/production to provider env names or ids
+deployment_strategy   provider_native | vercel_git_connected | vercel_ci_pushed
+provider_metadata     jsonb, provider ids, org/team ids, and generated secret names
 status                active | missing | failed
 created_at
 updated_at
 ```
+
+Current strategy mapping:
+
+```text
+vercel + flowci_managed => vercel_ci_pushed
+vercel + byo            => vercel_ci_pushed
+render + any ownership  => provider_native
+```
+
+`vercel_git_connected` is retained only for legacy records or a future advanced
+mode. Normal provisioning should not select it.
 
 ### `project_env_var_metadata`
 
