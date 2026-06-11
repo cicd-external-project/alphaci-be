@@ -144,7 +144,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
         ),
         renderBootstrapImage:
           env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
-          'ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22',
+          'docker.io/library/nginx:alpine',
         renderRegistryCredentialId:
           env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() || null,
         renderRegistryUsername:

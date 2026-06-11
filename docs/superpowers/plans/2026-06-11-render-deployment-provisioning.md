@@ -87,7 +87,7 @@ backend:
 Render image-backed service creation needs an image URL before the customer app image exists. This plan solves that by using a FlowCI-owned bootstrap image:
 
 ```env
-FLOWCI_RENDER_BOOTSTRAP_IMAGE=ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22
+FLOWCI_RENDER_BOOTSTRAP_IMAGE=docker.io/library/nginx:alpine
 ```
 
 FlowCI creates the Render service with the bootstrap image, installs the Render API deployment secrets, then the first package workflow builds the real application image and deploys it through `POST /v1/services/{serviceId}/deploys` with `imageUrl`.
@@ -503,7 +503,7 @@ renderAllowPaidManaged: env['FLOWCI_RENDER_ALLOW_PAID_MANAGED'] === 'true',
 renderManagedMaxServicesPerUser: Number(env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2'),
 renderBootstrapImage:
   env['FLOWCI_RENDER_BOOTSTRAP_IMAGE'] ??
-  'ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22',
+  'docker.io/library/nginx:alpine',
 renderRegistryUsername: env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() || null,
 renderRegistryToken: env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() || null,
 ```
@@ -774,7 +774,7 @@ private getBootstrapImage(): string {
   const config = this.configService?.getOrThrow<AppConfig>('app');
   return (
     config?.envProvisioning.flowciManaged.renderBootstrapImage ??
-    'ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22'
+    'docker.io/library/nginx:alpine'
   );
 }
 ```
@@ -1837,7 +1837,7 @@ FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE=free
 FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES=free
 FLOWCI_RENDER_ALLOW_PAID_MANAGED=false
 FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER=2
-FLOWCI_RENDER_BOOTSTRAP_IMAGE=ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22
+FLOWCI_RENDER_BOOTSTRAP_IMAGE=docker.io/library/nginx:alpine
 FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID=
 
 FLOWCI_VERCEL_TOKEN=

@@ -235,7 +235,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const config = this.configService?.getOrThrow<AppConfig>('app');
     return (
       config?.envProvisioning.flowciManaged.renderBootstrapImage ??
-      'ghcr.io/cicd-external-project/flowci-render-bootstrap:node-22'
+      'docker.io/library/nginx:alpine'
     );
   }
 
