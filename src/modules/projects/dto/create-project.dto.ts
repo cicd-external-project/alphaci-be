@@ -136,8 +136,17 @@ export class CreateProjectDto {
   @IsIn(['private', 'public'])
   visibility!: 'private' | 'public';
 
+  // Catalog IDs ('mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
+  // are both accepted; the service normalizes via normalizeRepoShape().
   @IsOptional()
-  @IsString()
+  @IsIn([
+    'standalone',
+    'mono',
+    'monorepo',
+    'multi',
+    'multi-repo',
+    'microservices',
+  ])
   repoShape?: string;
 
   @IsString()

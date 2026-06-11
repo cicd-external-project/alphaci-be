@@ -29,7 +29,11 @@ import type {
   DeploymentProvider,
   DeploymentWorkflowTarget,
 } from '../workflows/dto/generate-workflow.dto';
-import { buildProjectScaffold, defaultIncludeDocker } from './scaffold.builder';
+import {
+  buildProjectScaffold,
+  defaultIncludeDocker,
+  normalizeRepoShape,
+} from './scaffold.builder';
 import type {
   DeploymentProvisioningRequestDto,
   DeploymentProvisioningTargetDto,
@@ -151,7 +155,11 @@ export class ProjectsService {
       accessToken,
     );
 
-    if (dto.repoShape === 'microservices') {
+    // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
+    // the flow dispatch never silently falls back to the standalone path.
+    const repoShape = normalizeRepoShape(dto.repoShape);
+
+    if (repoShape === 'microservices') {
       return this.createMicroservicesProject(
         userId,
         userLogin,
@@ -160,7 +168,7 @@ export class ProjectsService {
       );
     }
 
-    if (dto.repoShape === 'multi-repo') {
+    if (repoShape === 'multi-repo') {
       return this.createMultiRepoProject(
         userId,
         userLogin,
@@ -180,24 +188,23 @@ export class ProjectsService {
     );
 
     // 2. Load template and build workflow YAML
-    const { workflowFiles, outputFileName } = await this.buildWorkflowBundle(
+    const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
       templateId,
-      dto.serviceName,
-      dto.servicePath,
-      dto.nodeVersion,
-      dto.coverageThreshold,
-      dto.outputFileName,
-      undefined,
-      this.extractDeploymentProvider(
+      serviceName: dto.serviceName,
+      servicePath: dto.servicePath,
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      customOutputFileName: dto.outputFileName,
+      deploymentProvider: this.extractDeploymentProvider(
         dto.deploymentProvisioning,
         deploymentSlots[0] ?? 'standalone',
       ),
-      this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         deploymentSlots,
         dto.servicePath,
       ),
-    );
+    });
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
     const { repoUrl, ownerLogin, repoName } =
@@ -212,7 +219,7 @@ export class ProjectsService {
     await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
       projectName: dto.serviceName,
       stack: dto.projectTypeId,
-      repoShape: dto.repoShape ?? 'standalone',
+      repoShape,
       ...(dto.tests?.['docker'] !== undefined && {
         includeDocker: dto.tests['docker'],
       }),
@@ -221,7 +228,8 @@ export class ProjectsService {
     // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
     // uat inherit the workflow files — GitHub Actions reads the YAML from the
     // branch being pushed to, so it must exist on those branches.
-    const workflowPath = `.github/workflows/${outputFileName}`;
+    const workflowPath =
+      workflowFiles[0]?.path ?? `.github/workflows/${outputFileName}`;
     const { commitSha, commitUrl } = await this.pushWorkflowFiles(
       provisioningToken,
       ownerLogin,
@@ -262,7 +270,7 @@ export class ProjectsService {
       githubCommitUrl: commitUrl,
       repoUrl,
       visibility: dto.visibility,
-      repoShape: dto.repoShape ?? null,
+      repoShape,
       projectTypeId: dto.projectTypeId,
       workflowRecipeId: dto.workflowRecipeId ?? null,
       projectOptions: {
@@ -330,44 +338,50 @@ export class ProjectsService {
       frontend.workflowRecipeId,
     );
 
-    // 2. Build workflow YAML for both slots
+    // 2. Build workflow YAML for both slots. Each slot gets a variant suffix
+    // so the two pipelines coexist in one repo without overwriting each other,
+    // and service paths default to the scaffold's backend/ and frontend/ dirs.
     const {
       workflowFiles: backendWorkflowFiles,
       outputFileName: backendOutputFileName,
-    } = await this.buildWorkflowBundle(
-      backendTemplateId,
-      backend.serviceName,
-      backend.servicePath,
-      dto.nodeVersion,
-      dto.coverageThreshold,
-      undefined,
-      undefined,
-      this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
-      this.resolveDeploymentWorkflowTargets(
+    } = await this.buildWorkflowBundle({
+      templateId: backendTemplateId,
+      serviceName: backend.serviceName,
+      servicePath: backend.servicePath ?? 'backend',
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         ['backend'],
-        backend.servicePath,
+        backend.servicePath ?? 'backend',
       ),
-    );
+      workflowVariant: 'backend',
+    });
 
     const {
       workflowFiles: frontendWorkflowFiles,
       outputFileName: frontendOutputFileName,
-    } = await this.buildWorkflowBundle(
-      frontendTemplateId,
-      frontend.serviceName,
-      frontend.servicePath,
-      dto.nodeVersion,
-      dto.coverageThreshold,
-      undefined,
-      undefined,
-      this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
-      this.resolveDeploymentWorkflowTargets(
+    } = await this.buildWorkflowBundle({
+      templateId: frontendTemplateId,
+      serviceName: frontend.serviceName,
+      servicePath: frontend.servicePath ?? 'frontend',
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'frontend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         ['frontend'],
-        frontend.servicePath,
+        frontend.servicePath ?? 'frontend',
       ),
-    );
+      workflowVariant: 'frontend',
+    });
 
     // 3. Create the GitHub repository once
     const { repoUrl, ownerLogin, repoName } =
@@ -461,7 +475,7 @@ export class ProjectsService {
       githubCommitUrl: backendCommitUrl,
       repoUrl,
       visibility: dto.visibility,
-      repoShape: dto.repoShape ?? null,
+      repoShape: normalizeRepoShape(dto.repoShape),
       projectTypeId: backend.projectTypeId,
       workflowRecipeId: backend.workflowRecipeId ?? null,
       projectOptions: {
@@ -506,7 +520,7 @@ export class ProjectsService {
           githubCommitUrl: frontendPushResult.commitUrl,
           repoUrl,
           visibility: dto.visibility,
-          repoShape: dto.repoShape ?? null,
+          repoShape: normalizeRepoShape(dto.repoShape),
           projectTypeId: frontend.projectTypeId,
           workflowRecipeId: frontend.workflowRecipeId ?? null,
           projectOptions: {
@@ -563,24 +577,24 @@ export class ProjectsService {
     );
 
     // 1. Build workflow YAML from the given templateId
-    const { workflowFiles, outputFileName } = await this.buildWorkflowBundle(
-      dto.templateId,
-      dto.serviceName,
-      dto.servicePath,
-      dto.nodeVersion,
-      dto.coverageThreshold,
-      dto.outputFileName,
-      dto.enhancements,
-      this.extractDeploymentProvider(
+    const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
+      templateId: dto.templateId,
+      serviceName: dto.serviceName,
+      servicePath: dto.servicePath,
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      customOutputFileName: dto.outputFileName,
+      enhancements: dto.enhancements,
+      deploymentProvider: this.extractDeploymentProvider(
         dto.deploymentProvisioning,
         deploymentSlots[0] ?? 'standalone',
       ),
-      this.resolveDeploymentWorkflowTargets(
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         deploymentSlots,
         dto.servicePath,
       ),
-    );
+    });
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
@@ -981,22 +995,38 @@ export class ProjectsService {
     return slots.length > 0 ? Array.from(new Set(slots)) : ['standalone'];
   }
 
-  private async buildWorkflowBundle(
-    templateId: string,
-    serviceName: string,
-    servicePath?: string,
-    nodeVersion?: string,
-    coverageThreshold?: number,
-    customOutputFileName?: string,
-    enhancements?: Array<
-      | 'strictProductionApproval'
-      | 'enableUatApproval'
-      | 'disablePlaywright'
-      | 'disableK6'
-    >,
-    deploymentProvider?: DeploymentProvider,
-    deploymentTargets: DeploymentWorkflowTarget[] = [],
-  ): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
+  private async buildWorkflowBundle(options: {
+    templateId: string;
+    serviceName: string;
+    servicePath?: string | undefined;
+    nodeVersion?: string | undefined;
+    coverageThreshold?: number | undefined;
+    customOutputFileName?: string | undefined;
+    enhancements?:
+      | Array<
+          | 'strictProductionApproval'
+          | 'enableUatApproval'
+          | 'disablePlaywright'
+          | 'disableK6'
+        >
+      | undefined;
+    deploymentProvider?: DeploymentProvider | undefined;
+    deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
+    workflowVariant?: 'backend' | 'frontend' | undefined;
+  }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
+    const {
+      templateId,
+      serviceName,
+      servicePath,
+      nodeVersion,
+      coverageThreshold,
+      customOutputFileName,
+      enhancements,
+      deploymentProvider,
+      deploymentTargets = [],
+      workflowVariant,
+    } = options;
+
     const template = await this.catalogService.getTemplateById(templateId);
     if (!template) {
       throw new NotFoundException(`Template '${templateId}' not found`);
@@ -1011,6 +1041,7 @@ export class ProjectsService {
       ...(enhancements !== undefined && { enhancements }),
       ...(deploymentProvider !== undefined && { deploymentProvider }),
       ...(deploymentTargets.length > 0 && { deploymentTargets }),
+      ...(workflowVariant !== undefined && { workflowVariant }),
     });
 
     const outputFileName = customOutputFileName ?? '00-flowci-access.yml';
@@ -1247,24 +1278,28 @@ export class ProjectsService {
       backend.projectTypeId,
       backend.workflowRecipeId,
     );
+    // Each repo carries a flat standalone scaffold, so the workflow always
+    // runs at the repo root — slot servicePaths like 'backend/' only apply to
+    // single-repo shapes and would point at a directory that does not exist.
     const {
       workflowFiles: backendWorkflowFiles,
       outputFileName: backendOutputFileName,
-    } = await this.buildWorkflowBundle(
-      backendTemplateId,
-      backend.serviceName,
-      backend.servicePath,
-      dto.nodeVersion,
-      dto.coverageThreshold,
-      undefined,
-      undefined,
-      this.extractDeploymentProvider(dto.deploymentProvisioning, 'backend'),
-      this.resolveDeploymentWorkflowTargets(
+    } = await this.buildWorkflowBundle({
+      templateId: backendTemplateId,
+      serviceName: backend.serviceName,
+      servicePath: '.',
+      nodeVersion: dto.nodeVersion,
+      coverageThreshold: dto.coverageThreshold,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
         dto.deploymentProvisioning,
         ['backend'],
-        backend.servicePath,
+        '.',
       ),
-    );
+    });
 
     const {
       repoUrl: beRepoUrl,
@@ -1327,7 +1362,7 @@ export class ProjectsService {
       githubCommitUrl: backendCommitUrl,
       repoUrl: beRepoUrl,
       visibility: dto.visibility,
-      repoShape: dto.repoShape ?? null,
+      repoShape: normalizeRepoShape(dto.repoShape),
       projectTypeId: backend.projectTypeId,
       workflowRecipeId: backend.workflowRecipeId ?? null,
       projectOptions: {
@@ -1373,21 +1408,22 @@ export class ProjectsService {
       const {
         workflowFiles: frontendWorkflowFiles,
         outputFileName: frontendOutputFileName,
-      } = await this.buildWorkflowBundle(
-        frontendTemplateId,
-        frontend.serviceName,
-        frontend.servicePath,
-        dto.nodeVersion,
-        dto.coverageThreshold,
-        undefined,
-        undefined,
-        this.extractDeploymentProvider(dto.deploymentProvisioning, 'frontend'),
-        this.resolveDeploymentWorkflowTargets(
+      } = await this.buildWorkflowBundle({
+        templateId: frontendTemplateId,
+        serviceName: frontend.serviceName,
+        servicePath: '.',
+        nodeVersion: dto.nodeVersion,
+        coverageThreshold: dto.coverageThreshold,
+        deploymentProvider: this.extractDeploymentProvider(
+          dto.deploymentProvisioning,
+          'frontend',
+        ),
+        deploymentTargets: this.resolveDeploymentWorkflowTargets(
           dto.deploymentProvisioning,
           ['frontend'],
-          frontend.servicePath,
+          '.',
         ),
-      );
+      });
 
       const {
         repoUrl: resolvedFeRepoUrl,
@@ -1451,7 +1487,7 @@ export class ProjectsService {
         githubCommitUrl: frontendCommitUrl,
         repoUrl: feRepoUrl,
         visibility: dto.visibility,
-        repoShape: dto.repoShape ?? null,
+        repoShape: normalizeRepoShape(dto.repoShape),
         projectTypeId: frontend.projectTypeId,
         workflowRecipeId: frontend.workflowRecipeId ?? null,
         projectOptions: {

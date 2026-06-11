@@ -69,6 +69,7 @@ describe('ProjectsService', () => {
   let projectDeploymentProvisioningService: {
     provisionForProject: jest.Mock;
   };
+  let pushWorkflowFileSpy: jest.SpyInstance;
 
   beforeEach(() => {
     mockedReadFile.mockResolvedValue(`
@@ -100,7 +101,7 @@ jobs:
       projectDeploymentProvisioningService as never,
     );
 
-    jest
+    pushWorkflowFileSpy = jest
       .spyOn(
         service as unknown as {
           pushWorkflowFile: (
@@ -384,5 +385,134 @@ jobs:
 
     expect(result.repoFullName).toBe('tone/orders-api');
     expect(result.deploymentProvisioning.status).toBe('failed');
+  });
+
+  it('records the actual staged workflow path even when a custom outputFileName is supplied', async () => {
+    const result = await service.createProject(
+      'user-1',
+      'tone',
+      'oauth-token',
+      {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        outputFileName: 'ci.yml',
+      },
+    );
+
+    expect(result.workflowPath).toBe('.github/workflows/00-flowci-access.yml');
+  });
+
+  it("dispatches the catalog shape ID 'multi' to the multi-repo flow (two repos)", async () => {
+    const result = await service.createProject(
+      'user-1',
+      'tone',
+      'oauth-token',
+      {
+        repoName: 'orders',
+        visibility: 'private',
+        repoShape: 'multi',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-backend',
+        multiRepoConfig: {
+          backend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-backend',
+            servicePath: 'backend/',
+          },
+          frontend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-frontend',
+            servicePath: 'frontend/',
+          },
+        },
+      },
+    );
+
+    expect(githubServiceMock.createRepo).toHaveBeenCalledTimes(2);
+    expect(githubServiceMock.createRepo).toHaveBeenNthCalledWith(
+      1,
+      'app-token',
+      expect.objectContaining({ repoName: 'orders-be' }),
+    );
+    expect(githubServiceMock.createRepo).toHaveBeenNthCalledWith(
+      2,
+      'app-token',
+      expect.objectContaining({ repoName: 'orders-fe' }),
+    );
+    expect(result.secondaryRepoFullName).toBeDefined();
+  });
+
+  it("renders the monorepo scaffold for the catalog shape ID 'mono'", async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders',
+      visibility: 'private',
+      repoShape: 'mono',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-platform',
+    });
+
+    const pushedPaths = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).map((call) => call[3]);
+    expect(pushedPaths).toContain('packages/core/package.json');
+  });
+
+  it('pushes variant-suffixed workflow files for the microservices shape so the slots do not collide', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders',
+      visibility: 'private',
+      repoShape: 'microservices',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-backend',
+      microservicesConfig: {
+        backend: {
+          projectTypeId: 'nestjs-api',
+          workflowRecipeId: 'backend-api-ci',
+          serviceName: 'orders-backend',
+          servicePath: 'backend/',
+        },
+        frontend: {
+          projectTypeId: 'nestjs-api',
+          workflowRecipeId: 'backend-api-ci',
+          serviceName: 'orders-frontend',
+          servicePath: 'frontend/',
+        },
+      },
+    });
+
+    const pushedPaths = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).map((call) => call[3]);
+
+    expect(pushedPaths).toEqual(
+      expect.arrayContaining([
+        '.github/workflows/00-flowci-access-backend.yml',
+        '.github/workflows/10-flowci-quality-backend.yml',
+        '.github/workflows/20-flowci-package-backend.yml',
+        '.github/workflows/00-flowci-access-frontend.yml',
+        '.github/workflows/10-flowci-quality-frontend.yml',
+        '.github/workflows/20-flowci-package-frontend.yml',
+      ]),
+    );
+    // The unsuffixed paths would mean one slot overwrote the other.
+    expect(pushedPaths).not.toContain('.github/workflows/00-flowci-access.yml');
+    expect(pushedPaths).not.toContain(
+      '.github/workflows/10-flowci-quality.yml',
+    );
+    expect(pushedPaths).not.toContain(
+      '.github/workflows/20-flowci-package.yml',
+    );
   });
 });
