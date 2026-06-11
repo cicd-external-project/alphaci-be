@@ -34,6 +34,12 @@ const CENTRAL_WORKFLOW_REF =
 const CI_VALIDATE_URL =
   'https://flowci-be-test.onrender.com/api/v1/ci/validate';
 
+const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
+
+const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
+  PROTECTED_DEPLOY_BRANCHES,
+);
+
 export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   /**
    * Distinguishes co-located pipelines in a single repository (microservices
@@ -254,6 +260,7 @@ function validationJob(stage: WorkflowStage) {
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
+    if: protectedDeployBranchExpression(),
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {
@@ -295,15 +302,17 @@ function vercelDeployJobs(
       {
         needs: ['build'],
         uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-        if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+        if: protectedDeployBranchExpression(),
         with: {
           'system-name':
             target.slot === 'standalone' ? serviceName : target.slot,
           'working-directory': target.rootDirectory ?? servicePath,
           'checkout-ref':
             '${{ github.event.workflow_run.head_sha || github.sha }}',
+          'source-branch':
+            '${{ github.event.workflow_run.head_branch || github.ref_name }}',
           environment:
-            "${{ github.event.workflow_run.head_branch == 'main' && 'production' || 'preview' }}",
+            "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
         },
         secrets: {
           VERCEL_TOKEN: `\${{ secrets.${target.secretNames.token} }}`,
@@ -318,6 +327,7 @@ function vercelDeployJobs(
 function renderDeployJob(serviceName: string) {
   return {
     needs: ['build'],
+    if: protectedDeployBranchExpression(),
     uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
     with: {
       'system-name': serviceName,
@@ -327,6 +337,21 @@ function renderDeployJob(serviceName: string) {
     },
     secrets: 'inherit',
   };
+}
+
+function protectedDeployBranchExpression(): string {
+  return [
+    '${{',
+    '(',
+    "github.event_name == 'workflow_dispatch' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
+    ') || (',
+    "github.event_name == 'workflow_run' &&",
+    "github.event.workflow_run.conclusion == 'success' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
+    ')',
+    '}}',
+  ].join(' ');
 }
 
 function dumpWorkflow(workflow: Record<string, unknown>): string {

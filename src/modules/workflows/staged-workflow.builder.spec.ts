@@ -22,7 +22,10 @@ interface ParsedWorkflow {
   on: {
     workflow_run?: { workflows: string[] };
   };
-  jobs: Record<string, { with?: Record<string, unknown> } | undefined>;
+  jobs: Record<
+    string,
+    { if?: string; with?: Record<string, unknown> } | undefined
+  >;
 }
 
 describe('buildStagedWorkflowBundle', () => {
@@ -115,5 +118,51 @@ describe('buildStagedWorkflowBundle', () => {
 
     expect(backend.workflowFiles[1]!.yaml).toContain('backend-tests.yml@v1');
     expect(frontend.workflowFiles[1]!.yaml).toContain('frontend-tests.yml@v1');
+  });
+
+  it('only allows Vercel deployment jobs from protected branches', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
+      templateId: 'fe-nextjs',
+      serviceName: 'orders-web',
+      deploymentTargets: [
+        {
+          slot: 'frontend',
+          provider: 'vercel',
+          deploymentStrategy: 'vercel_ci_pushed',
+          secretNames: {
+            token: 'VERCEL_FRONTEND_TOKEN',
+            orgId: 'VERCEL_FRONTEND_ORG_ID',
+            projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+          },
+        },
+      ],
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+
+    expect(pkg.jobs['deploy-vercel-frontend']?.if).toContain(
+      'github.event.workflow_run.head_branch',
+    );
+    expect(pkg.jobs['deploy-vercel-frontend']?.if).toContain(
+      '["test","uat","main"]',
+    );
+    expect(pkg.jobs['deploy-vercel-frontend']?.with?.['source-branch']).toBe(
+      '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+    );
+  });
+
+  it('only allows Render deployment jobs from protected branches', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('nestjs'), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      deploymentProvider: 'render',
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+
+    expect(pkg.jobs['deploy-render']?.if).toContain(
+      'github.event.workflow_run.head_branch',
+    );
+    expect(pkg.jobs['deploy-render']?.if).toContain('["test","uat","main"]');
   });
 });
