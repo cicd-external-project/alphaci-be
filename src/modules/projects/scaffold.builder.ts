@@ -13,13 +13,42 @@ export interface ScaffoldFile {
   content: string;
 }
 
+export type CanonicalRepoShape =
+  | 'standalone'
+  | 'monorepo'
+  | 'microservices'
+  | 'multi-repo';
+
+/**
+ * Map a repo shape ID to its canonical form. The catalog (and therefore the
+ * FE) uses the short IDs 'mono' and 'multi', while internal flow logic uses
+ * 'monorepo' and 'multi-repo'. Accept both so a catalog-driven request never
+ * silently falls back to the standalone flow.
+ */
+export function normalizeRepoShape(
+  repoShape: string | null | undefined,
+): CanonicalRepoShape {
+  switch (repoShape) {
+    case 'mono':
+    case 'monorepo':
+      return 'monorepo';
+    case 'multi':
+    case 'multi-repo':
+      return 'multi-repo';
+    case 'microservices':
+      return 'microservices';
+    default:
+      return 'standalone';
+  }
+}
+
 export interface BuildScaffoldOptions {
   serviceName: string;
   /** 'nestjs' | 'nodejs' | 'nextjs' | 'react' */
   stack: string;
   includeDocker: boolean;
   nodeVersion?: string;
-  /** 'standalone' | 'monorepo' | 'microservices' | 'multi-repo' — defaults to 'standalone' */
+  /** Canonical or catalog shape ID ('mono'/'multi' accepted) — defaults to 'standalone' */
   repoShape?: string;
   // Microservices shape only: secondary (frontend) service info
   frontendStack?: string;
@@ -29,10 +58,12 @@ export interface BuildScaffoldOptions {
 
 // Convert a human-readable service name to a valid npm package name (kebab-case).
 function toPackageName(name: string): string {
-  return name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9-]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '') || 'service';
+  return (
+    name
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '') || 'service'
+  );
 }
 
 // ─── Shared file builders (all stacks) ────────────────────────────────────────
@@ -55,6 +86,20 @@ function buildGitignore(): string {
   ].join('\n');
 }
 
+// Pinned dependency ranges. '*' versions made scaffolds non-reproducible and
+// broke CI the moment a major release changed behaviour (e.g. ESLint 9 dropped
+// --ext and .eslintrc support). Keep these in sync with the lint/test/build
+// commands the generated workflows run.
+const SCAFFOLD_DEV_DEPENDENCIES: Record<string, string> = {
+  typescript: '^5.6.3',
+  eslint: '^9.17.0',
+  'typescript-eslint': '^8.18.0',
+  jest: '^29.7.0',
+  'ts-jest': '^29.2.5',
+  '@types/jest': '^29.5.14',
+  '@types/node': '^22.10.0',
+};
+
 function buildPackageJson(packageName: string, stack: string): string {
   const isNextJs = stack === 'nextjs';
   const isNestJs = stack === 'nestjs';
@@ -66,7 +111,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'next start',
       dev: 'next dev',
       test: 'jest',
-      lint: 'eslint . --ext .ts,.tsx',
+      lint: 'eslint src',
     };
   } else if (isNestJs) {
     scripts = {
@@ -74,7 +119,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'node dist/main.js',
       dev: 'ts-node src/main.ts',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     };
   } else {
     scripts = {
@@ -82,7 +127,7 @@ function buildPackageJson(packageName: string, stack: string): string {
       start: 'node dist/index.js',
       dev: 'ts-node src/index.ts',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     };
   }
 
@@ -91,31 +136,31 @@ function buildPackageJson(packageName: string, stack: string): string {
     version: '0.1.0',
     scripts,
     dependencies: {} as Record<string, string>,
-    devDependencies: {
-      typescript: '*',
-      eslint: '*',
-      jest: '*',
-      'ts-jest': '*',
-      '@types/jest': '*',
-      '@types/node': '*',
-      '@typescript-eslint/parser': '*',
-      '@typescript-eslint/eslint-plugin': '*',
-    } as Record<string, string>,
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
   };
 
   if (isNestJs) {
-    pkg.dependencies['@nestjs/common'] = '*';
-    pkg.dependencies['@nestjs/core'] = '*';
-    pkg.dependencies['@nestjs/platform-express'] = '*';
-    pkg.devDependencies['@nestjs/testing'] = '*';
+    pkg.dependencies['@nestjs/common'] = '^11.0.0';
+    pkg.dependencies['@nestjs/core'] = '^11.0.0';
+    pkg.dependencies['@nestjs/platform-express'] = '^11.0.0';
+    // Required NestJS peer dependencies — without them tsc cannot resolve
+    // the framework's type imports and the build job fails.
+    pkg.dependencies['reflect-metadata'] = '^0.2.2';
+    pkg.dependencies['rxjs'] = '^7.8.1';
+    pkg.devDependencies['@nestjs/testing'] = '^11.0.0';
+    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   if (isNextJs) {
-    pkg.dependencies['next'] = '*';
-    pkg.dependencies['react'] = '*';
-    pkg.dependencies['react-dom'] = '*';
-    pkg.devDependencies['@types/react'] = '*';
-    pkg.devDependencies['@types/react-dom'] = '*';
+    pkg.dependencies['next'] = '^15.1.0';
+    pkg.dependencies['react'] = '^19.0.0';
+    pkg.dependencies['react-dom'] = '^19.0.0';
+    pkg.devDependencies['@types/react'] = '^19.0.0';
+    pkg.devDependencies['@types/react-dom'] = '^19.0.0';
+  }
+
+  if (!isNextJs && !isNestJs) {
+    pkg.devDependencies['ts-node'] = '^10.9.2';
   }
 
   return JSON.stringify(pkg, null, 2);
@@ -174,9 +219,7 @@ function buildSonarProperties(serviceName: string): string {
 }
 
 function buildEntryPoint(serviceName: string): string {
-  return [
-    `export const SERVICE_NAME = '${serviceName}';`,
-  ].join('\n');
+  return [`export const SERVICE_NAME = '${serviceName}';`].join('\n');
 }
 
 function buildEntrySpec(serviceName: string): string {
@@ -191,18 +234,18 @@ function buildEntrySpec(serviceName: string): string {
   ].join('\n');
 }
 
+// ESLint 9 flat config — .eslintrc.json and the --ext flag were removed in
+// ESLint 9, so the scaffold ships eslint.config.mjs and lints via `eslint src`.
 function buildEslintConfig(): string {
-  return JSON.stringify(
-    {
-      root: true,
-      parser: '@typescript-eslint/parser',
-      plugins: ['@typescript-eslint'],
-      extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
-      rules: {},
-    },
-    null,
-    2,
-  );
+  return [
+    "import tseslint from 'typescript-eslint';",
+    '',
+    'export default tseslint.config(',
+    "  { ignores: ['dist/', 'coverage/', '.next/', 'out/', 'node_modules/'] },",
+    '  ...tseslint.configs.recommended,',
+    ');',
+    '',
+  ].join('\n');
 }
 
 function buildEnvExample(): string {
@@ -238,8 +281,32 @@ function buildNestMain(): string {
 
 function buildNextPage(serviceName: string): string {
   return [
-    'export default function Home(): React.JSX.Element {',
-    `  return <main><h1>${serviceName}</h1></main>;`,
+    'export default function Home() {',
+    '  return (',
+    '    <main>',
+    `      <h1>${serviceName}</h1>`,
+    '    </main>',
+    '  );',
+    '}',
+  ].join('\n');
+}
+
+// next build fails without a root layout in the App Router — it is not
+// auto-generated in CI the way `next dev` creates one locally.
+function buildNextLayout(serviceName: string): string {
+  return [
+    "import type { ReactNode } from 'react';",
+    '',
+    'export const metadata = {',
+    `  title: '${serviceName}',`,
+    '};',
+    '',
+    'export default function RootLayout({ children }: { children: ReactNode }) {',
+    '  return (',
+    '    <html lang="en">',
+    '      <body>{children}</body>',
+    '    </html>',
+    '  );',
     '}',
   ].join('\n');
 }
@@ -256,11 +323,13 @@ function buildNextConfig(): string {
 // ─── Docker files ─────────────────────────────────────────────────────────────
 
 function buildDockerfile(nodeVersion: string): string {
+  // npm ci requires package-lock.json, which the scaffold does not ship (it is
+  // generated by the customer's first npm install) — fall back to npm install.
   return [
     `FROM node:${nodeVersion}-alpine AS builder`,
     'WORKDIR /app',
     'COPY package*.json ./',
-    'RUN npm ci',
+    'RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi',
     'COPY . .',
     'RUN npm run build',
     '',
@@ -269,7 +338,7 @@ function buildDockerfile(nodeVersion: string): string {
     'ENV NODE_ENV=production',
     'COPY --from=builder /app/dist ./dist',
     'COPY --from=builder /app/package*.json ./',
-    'RUN npm ci --omit=dev',
+    'RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi',
     'EXPOSE 3000',
     'CMD ["node", "dist/main.js"]',
   ].join('\n');
@@ -291,18 +360,9 @@ function buildMonorepoRootPackageJson(packageName: string): string {
       scripts: {
         build: 'tsc -b',
         test: 'jest --passWithNoTests',
-        lint: 'eslint . --ext .ts',
+        lint: 'eslint packages',
       },
-      devDependencies: {
-        typescript: '*',
-        eslint: '*',
-        jest: '*',
-        'ts-jest': '*',
-        '@types/jest': '*',
-        '@types/node': '*',
-        '@typescript-eslint/parser': '*',
-        '@typescript-eslint/eslint-plugin': '*',
-      },
+      devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
     },
     null,
     2,
@@ -379,24 +439,19 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
     scripts: {
       build: 'tsc -p tsconfig.json',
       test: 'jest',
-      lint: 'eslint . --ext .ts',
+      lint: 'eslint src',
     },
     dependencies: {} as Record<string, string>,
-    devDependencies: {
-      typescript: '*',
-      eslint: '*',
-      jest: '*',
-      'ts-jest': '*',
-      '@types/jest': '*',
-      '@types/node': '*',
-    } as Record<string, string>,
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
   };
 
   if (stack === 'nestjs') {
-    pkg.dependencies['@nestjs/common'] = '*';
-    pkg.dependencies['@nestjs/core'] = '*';
-    pkg.dependencies['@nestjs/platform-express'] = '*';
-    pkg.devDependencies['@nestjs/testing'] = '*';
+    pkg.dependencies['@nestjs/common'] = '^11.0.0';
+    pkg.dependencies['@nestjs/core'] = '^11.0.0';
+    pkg.dependencies['@nestjs/platform-express'] = '^11.0.0';
+    pkg.dependencies['reflect-metadata'] = '^0.2.2';
+    pkg.dependencies['rxjs'] = '^7.8.1';
+    pkg.devDependencies['@nestjs/testing'] = '^11.0.0';
   }
 
   return JSON.stringify(pkg, null, 2);
@@ -447,26 +502,45 @@ function buildServiceSubdirFiles(
   const packageName = toPackageName(serviceName);
 
   const files: ScaffoldFile[] = [
-    { path: `${dir}/package.json`,       content: buildPackageJson(packageName, stack) },
-    { path: `${dir}/tsconfig.json`,      content: buildTsConfig(stack) },
-    { path: `${dir}/jest.config.ts`,     content: buildJestConfig() },
-    { path: `${dir}/.eslintrc.json`,     content: buildEslintConfig() },
-    { path: `${dir}/.env.example`,       content: buildEnvExample() },
-    { path: `${dir}/src/index.ts`,       content: buildEntryPoint(serviceName) },
-    { path: `${dir}/src/index.spec.ts`,  content: buildEntrySpec(serviceName) },
+    {
+      path: `${dir}/package.json`,
+      content: buildPackageJson(packageName, stack),
+    },
+    { path: `${dir}/tsconfig.json`, content: buildTsConfig(stack) },
+    { path: `${dir}/jest.config.ts`, content: buildJestConfig() },
+    { path: `${dir}/eslint.config.mjs`, content: buildEslintConfig() },
+    { path: `${dir}/.env.example`, content: buildEnvExample() },
+    { path: `${dir}/src/index.ts`, content: buildEntryPoint(serviceName) },
+    { path: `${dir}/src/index.spec.ts`, content: buildEntrySpec(serviceName) },
   ];
 
   if (stack === 'nestjs') {
-    files.push({ path: `${dir}/src/app.module.ts`, content: buildNestAppModule() });
-    files.push({ path: `${dir}/src/main.ts`,       content: buildNestMain() });
-    files.push({ path: `${dir}/Dockerfile`,        content: buildDockerfile(nodeVersion) });
-    files.push({ path: `${dir}/.dockerignore`,     content: buildDockerignore() });
+    files.push({
+      path: `${dir}/src/app.module.ts`,
+      content: buildNestAppModule(),
+    });
+    files.push({ path: `${dir}/src/main.ts`, content: buildNestMain() });
+    files.push({
+      path: `${dir}/Dockerfile`,
+      content: buildDockerfile(nodeVersion),
+    });
+    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
   } else if (stack === 'nodejs') {
-    files.push({ path: `${dir}/Dockerfile`,        content: buildDockerfile(nodeVersion) });
-    files.push({ path: `${dir}/.dockerignore`,     content: buildDockerignore() });
+    files.push({
+      path: `${dir}/Dockerfile`,
+      content: buildDockerfile(nodeVersion),
+    });
+    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
   } else if (stack === 'nextjs') {
-    files.push({ path: `${dir}/src/app/page.tsx`,  content: buildNextPage(serviceName) });
-    files.push({ path: `${dir}/next.config.ts`,    content: buildNextConfig() });
+    files.push({
+      path: `${dir}/src/app/layout.tsx`,
+      content: buildNextLayout(serviceName),
+    });
+    files.push({
+      path: `${dir}/src/app/page.tsx`,
+      content: buildNextPage(serviceName),
+    });
+    files.push({ path: `${dir}/next.config.ts`, content: buildNextConfig() });
   }
 
   return files;
@@ -474,32 +548,38 @@ function buildServiceSubdirFiles(
 
 // ─── Shape-specific scaffold builders ─────────────────────────────────────────
 
-function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
+function buildStandaloneScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
   const { serviceName, stack, includeDocker, nodeVersion = '22' } = options;
   const packageName = toPackageName(serviceName);
 
   const sharedFiles: ScaffoldFile[] = [
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'package.json',             content: buildPackageJson(packageName, stack) },
-    { path: 'tsconfig.json',            content: buildTsConfig(stack) },
-    { path: 'jest.config.ts',           content: buildJestConfig() },
-    { path: 'sonar-project.properties', content: buildSonarProperties(serviceName) },
-    { path: '.eslintrc.json',           content: buildEslintConfig() },
-    { path: '.env.example',             content: buildEnvExample() },
-    { path: 'src/index.ts',             content: buildEntryPoint(serviceName) },
-    { path: 'src/index.spec.ts',        content: buildEntrySpec(serviceName) },
+    { path: '.gitignore', content: buildGitignore() },
+    { path: 'package.json', content: buildPackageJson(packageName, stack) },
+    { path: 'tsconfig.json', content: buildTsConfig(stack) },
+    { path: 'jest.config.ts', content: buildJestConfig() },
+    {
+      path: 'sonar-project.properties',
+      content: buildSonarProperties(serviceName),
+    },
+    { path: 'eslint.config.mjs', content: buildEslintConfig() },
+    { path: '.env.example', content: buildEnvExample() },
+    { path: 'src/index.ts', content: buildEntryPoint(serviceName) },
+    { path: 'src/index.spec.ts', content: buildEntrySpec(serviceName) },
   ];
 
   let stackFiles: ScaffoldFile[];
   if (stack === 'nestjs') {
     stackFiles = [
       { path: 'src/app.module.ts', content: buildNestAppModule() },
-      { path: 'src/main.ts',       content: buildNestMain() },
+      { path: 'src/main.ts', content: buildNestMain() },
     ];
   } else if (stack === 'nextjs') {
     stackFiles = [
+      { path: 'src/app/layout.tsx', content: buildNextLayout(serviceName) },
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
-      { path: 'next.config.ts',   content: buildNextConfig() },
+      { path: 'next.config.ts', content: buildNextConfig() },
     ];
   } else {
     stackFiles = [];
@@ -507,7 +587,7 @@ function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] 
 
   const dockerFiles: ScaffoldFile[] = includeDocker
     ? [
-        { path: 'Dockerfile',    content: buildDockerfile(nodeVersion) },
+        { path: 'Dockerfile', content: buildDockerfile(nodeVersion) },
         { path: '.dockerignore', content: buildDockerignore() },
       ]
     : [];
@@ -516,29 +596,46 @@ function buildStandaloneScaffold(options: BuildScaffoldOptions): ScaffoldFile[] 
 }
 
 function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
-  const { serviceName, stack, nodeVersion = '22' } = options;
+  const { serviceName, stack } = options;
   const rootPackageName = toPackageName(serviceName);
   const corePackageName = `@${rootPackageName}/core`;
 
   return [
     // Root workspace files
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'package.json',             content: buildMonorepoRootPackageJson(rootPackageName) },
-    { path: 'tsconfig.json',            content: buildMonorepoRootTsConfig() },
-    { path: 'jest.config.ts',           content: buildMonorepoRootJestConfig() },
-    { path: 'sonar-project.properties', content: buildMonorepoSonarProperties(serviceName) },
-    { path: '.eslintrc.json',           content: buildEslintConfig() },
-    { path: '.env.example',             content: buildEnvExample() },
+    { path: '.gitignore', content: buildGitignore() },
+    {
+      path: 'package.json',
+      content: buildMonorepoRootPackageJson(rootPackageName),
+    },
+    { path: 'tsconfig.json', content: buildMonorepoRootTsConfig() },
+    { path: 'jest.config.ts', content: buildMonorepoRootJestConfig() },
+    {
+      path: 'sonar-project.properties',
+      content: buildMonorepoSonarProperties(serviceName),
+    },
+    { path: 'eslint.config.mjs', content: buildEslintConfig() },
+    { path: '.env.example', content: buildEnvExample() },
     // packages/core — rename or duplicate to add more packages
-    { path: 'packages/core/package.json',      content: buildPackagePackageJson(corePackageName, stack) },
-    { path: 'packages/core/tsconfig.json',     content: buildPackageTsConfig() },
-    { path: 'packages/core/jest.config.ts',    content: buildJestConfig() },
-    { path: 'packages/core/src/index.ts',      content: buildEntryPoint(serviceName) },
-    { path: 'packages/core/src/index.spec.ts', content: buildEntrySpec(serviceName) },
+    {
+      path: 'packages/core/package.json',
+      content: buildPackagePackageJson(corePackageName, stack),
+    },
+    { path: 'packages/core/tsconfig.json', content: buildPackageTsConfig() },
+    { path: 'packages/core/jest.config.ts', content: buildJestConfig() },
+    {
+      path: 'packages/core/src/index.ts',
+      content: buildEntryPoint(serviceName),
+    },
+    {
+      path: 'packages/core/src/index.spec.ts',
+      content: buildEntrySpec(serviceName),
+    },
   ];
 }
 
-function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
+function buildMicroservicesScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
   const {
     serviceName,
     stack: backendStack,
@@ -552,12 +649,18 @@ function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile
   const feName = frontendServiceName ?? `${serviceName}-fe`;
 
   const rootFiles: ScaffoldFile[] = [
-    { path: '.gitignore',               content: buildGitignore() },
-    { path: 'sonar-project.properties', content: buildMicroservicesSonarProperties(serviceName) },
+    { path: '.gitignore', content: buildGitignore() },
+    {
+      path: 'sonar-project.properties',
+      content: buildMicroservicesSonarProperties(serviceName),
+    },
   ];
 
   if (options.includeDocker ?? defaultIncludeDocker(backendStack)) {
-    rootFiles.push({ path: 'docker-compose.yml', content: buildDockerCompose() });
+    rootFiles.push({
+      path: 'docker-compose.yml',
+      content: buildDockerCompose(),
+    });
   }
 
   return [
@@ -579,11 +682,16 @@ function buildMicroservicesScaffold(options: BuildScaffoldOptions): ScaffoldFile
  * - monorepo: workspace root + packages/core with TypeScript project references
  * - microservices: backend/ and frontend/ subdirectories, optional docker-compose
  */
-export function buildProjectScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
-  switch (options.repoShape) {
-    case 'monorepo':      return buildMonorepoScaffold(options);
-    case 'microservices': return buildMicroservicesScaffold(options);
-    default:              return buildStandaloneScaffold(options);
+export function buildProjectScaffold(
+  options: BuildScaffoldOptions,
+): ScaffoldFile[] {
+  switch (normalizeRepoShape(options.repoShape)) {
+    case 'monorepo':
+      return buildMonorepoScaffold(options);
+    case 'microservices':
+      return buildMicroservicesScaffold(options);
+    default:
+      return buildStandaloneScaffold(options);
   }
 }
 

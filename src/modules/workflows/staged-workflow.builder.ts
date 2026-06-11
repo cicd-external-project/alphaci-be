@@ -2,7 +2,6 @@ import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import type {
-  DeploymentProvider,
   DeploymentWorkflowTarget,
   GenerateWorkflowDto,
 } from './dto/generate-workflow.dto';
@@ -35,12 +34,23 @@ const CENTRAL_WORKFLOW_REF =
 const CI_VALIDATE_URL =
   'https://flowci-be-test.onrender.com/api/v1/ci/validate';
 
+export interface StagedWorkflowOptions extends GenerateWorkflowDto {
+  /**
+   * Distinguishes co-located pipelines in a single repository (microservices
+   * shape). When set, every workflow file path and workflow `name:` is
+   * suffixed so the backend and frontend chains do not overwrite each other —
+   * GitHub Actions resolves `workflow_run` triggers by workflow name, so the
+   * names must be unique per slot for the stage chains to stay independent.
+   */
+  workflowVariant?: 'backend' | 'frontend';
+}
+
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
-  dto: GenerateWorkflowDto,
+  dto: StagedWorkflowOptions,
 ): StagedWorkflowBundle {
   const serviceName = dto.serviceName;
-  const servicePath = dto.servicePath ?? '.';
+  const servicePath = normalizeServicePath(dto.servicePath);
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
   const deploymentProvider = dto.deploymentProvider;
@@ -49,17 +59,27 @@ export function buildStagedWorkflowBundle(
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
   const testJobId = isBackend ? 'backend-tests' : 'frontend-tests';
-  const testCommand = isBackend ? 'npm test' : 'npm run test';
+  // The central test workflows enforce coverage by parsing
+  // coverage/coverage-summary.json, so the command must produce it.
+  const testCommand = isBackend
+    ? 'npm test -- --coverage --coverageReporters=json-summary'
+    : 'npm run test -- --coverage --coverageReporters=json-summary';
   const lintCommand = 'npm run lint';
+
+  const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
+  const nameSuffix = dto.workflowVariant ? ` (${dto.workflowVariant})` : '';
+  const accessName = `FlowCI Access Gate${nameSuffix}`;
+  const qualityName = `FlowCI Quality${nameSuffix}`;
+  const packageName = `FlowCI Package${nameSuffix}`;
 
   const files: StagedWorkflowFile[] = [
     {
       stage: 'access',
-      name: 'FlowCI Access Gate',
-      path: '.github/workflows/00-flowci-access.yml',
+      name: accessName,
+      path: `.github/workflows/00-flowci-access${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Access Gate',
+        name: accessName,
         on: {
           push: { branches: ['test', 'uat', 'main'] },
           pull_request: { branches: ['test', 'uat', 'main'] },
@@ -76,14 +96,14 @@ export function buildStagedWorkflowBundle(
     },
     {
       stage: 'quality',
-      name: 'FlowCI Quality',
-      path: '.github/workflows/10-flowci-quality.yml',
+      name: qualityName,
+      path: `.github/workflows/10-flowci-quality${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Quality',
+        name: qualityName,
         on: {
           workflow_run: {
-            workflows: ['FlowCI Access Gate'],
+            workflows: [accessName],
             types: ['completed'],
           },
           workflow_dispatch: {},
@@ -106,7 +126,11 @@ export function buildStagedWorkflowBundle(
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
-              ...(isBackend ? { 'backend-stack': stack } : {}),
+              ...(isBackend
+                ? { 'backend-stack': stack }
+                : // Scaffolded repos keep their specs in src/, not the
+                  // frontend-tests default of tests/unit.
+                  { 'unit-tests-directory': 'src' }),
               'node-version': Number(nodeVersion),
               'coverage-threshold': coverageThreshold,
               'enforce-coverage': true,
@@ -144,14 +168,14 @@ export function buildStagedWorkflowBundle(
     },
     {
       stage: 'package',
-      name: 'FlowCI Package',
-      path: '.github/workflows/20-flowci-package.yml',
+      name: packageName,
+      path: `.github/workflows/20-flowci-package${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
-        name: 'FlowCI Package',
+        name: packageName,
         on: {
           workflow_run: {
-            workflows: ['FlowCI Quality'],
+            workflows: [qualityName],
             types: ['completed'],
           },
           workflow_dispatch: {},
@@ -187,6 +211,16 @@ export function buildStagedWorkflowBundle(
       gated: file.gated,
     })),
   };
+}
+
+/**
+ * Normalize a user-supplied service path for use as a workflow
+ * working-directory: trims trailing slashes (the FE sends "backend/") and
+ * falls back to the repository root.
+ */
+function normalizeServicePath(servicePath: string | undefined): string {
+  const trimmed = (servicePath ?? '.').trim().replace(/\/+$/, '');
+  return trimmed === '' ? '.' : trimmed;
 }
 
 function validationJob(stage: WorkflowStage) {
@@ -237,11 +271,14 @@ function buildJob(servicePath: string, nodeVersion: string) {
         uses: 'actions/setup-node@v6',
         with: {
           'node-version': Number(nodeVersion),
-          cache: 'npm',
-          'cache-dependency-path': '**/package-lock.json',
         },
       },
-      { run: 'npm ci --ignore-scripts' },
+      {
+        name: 'Install dependencies',
+        // Fresh FlowCI scaffolds have no package-lock.json yet (the customer
+        // generates it on first `npm install`), so npm ci would hard-fail.
+        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+      },
       { run: 'npm run build' },
     ],
   };
@@ -286,8 +323,7 @@ function renderDeployJob(serviceName: string) {
       'system-name': serviceName,
       environment:
         "${{ github.event.workflow_run.head_branch == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
-      branch:
-        '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+      branch: '${{ github.event.workflow_run.head_branch || github.ref_name }}',
     },
     secrets: 'inherit',
   };
