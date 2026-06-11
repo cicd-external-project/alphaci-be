@@ -141,4 +141,32 @@ describe('DeploymentTargetsService', () => {
       }),
     );
   });
+
+  it('rejects FlowCI-managed Vercel targets when the managed team id is missing', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: null,
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'flowci_managed',
+        provider: 'vercel',
+        projectName: 'demo-frontend',
+      }),
+    ).rejects.toThrow('FLOWCI_VERCEL_TEAM_ID is required');
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
 });

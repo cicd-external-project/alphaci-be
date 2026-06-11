@@ -98,6 +98,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
     const shouldConnectGit =
       input.deploymentStrategy !== 'vercel_ci_pushed' && Boolean(owner && repo);
+    const vercelOrgId = this.resolveVercelOrgId(input);
     const response = await fetch(
       this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),
       {
@@ -131,7 +132,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
       metadata: {
         deploymentStrategy: input.deploymentStrategy ?? 'vercel_git_connected',
         vercelProjectId: payload.id,
-        vercelOrgId: this.resolveVercelOrgId(input),
+        vercelOrgId,
         ...(input.vercelTeamId ? { vercelTeamId: input.vercelTeamId } : {}),
         ...(input.vercelTeamSlug
           ? { vercelTeamSlug: input.vercelTeamSlug }
@@ -243,9 +244,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     return withoutLeadingDotSlash;
   }
 
-  private resolveVercelOrgId(
-    input: CreateProviderTargetInput,
-  ): string {
+  private resolveVercelOrgId(input: CreateProviderTargetInput): string {
     if (input.vercelOrgId?.trim()) {
       return input.vercelOrgId.trim();
     }

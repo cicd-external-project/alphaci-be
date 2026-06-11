@@ -204,6 +204,7 @@ describe('VercelEnvClient', () => {
     ).rejects.toThrow(
       'Vercel org id is required when creating CI-pushed deployment targets',
     );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('validates Vercel team access', async () => {
