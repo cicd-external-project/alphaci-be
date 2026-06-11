@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import { ProjectsRepository } from '../projects/projects.repository';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
+import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type { EnvProvider } from './env-provisioning.types';
@@ -23,6 +24,7 @@ export class DeploymentTargetsService {
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly clientRegistry: ProviderClientRegistry,
     private readonly configService: ConfigService,
+    private readonly deploymentStrategyResolver: DeploymentStrategyResolver,
   ) {}
 
   async listDeploymentTargets(projectId: string, userId: string) {
@@ -43,16 +45,25 @@ export class DeploymentTargetsService {
     if (dto.providerConnectionId) {
       tokenInput.providerConnectionId = dto.providerConnectionId;
     }
-    const token = await this.resolveProviderToken(
+    const providerAuth = await this.resolveProviderToken(
       dto.provider,
       userId,
       tokenInput,
+    );
+    const deploymentStrategy = this.deploymentStrategyResolver.resolve({
+      provider: dto.provider,
+      ownershipMode: dto.ownershipMode,
+    });
+    const vercelScope = this.resolveVercelScope(
+      dto.provider,
+      dto.ownershipMode,
+      providerAuth.connectionMetadata,
     );
 
     const target =
       dto.action === 'create'
         ? await this.clientRegistry.getClient(dto.provider).createTarget({
-            token,
+            token: providerAuth.token,
             repoFullName: project.repo_full_name,
             projectName: this.requireString(dto.projectName, 'projectName'),
             branchName: dto.branchName?.trim() || 'test',
@@ -64,6 +75,16 @@ export class DeploymentTargetsService {
               : {}),
             ...(dto.startCommand?.trim()
               ? { startCommand: dto.startCommand.trim() }
+              : {}),
+            deploymentStrategy,
+            ...(vercelScope.vercelTeamId
+              ? { vercelTeamId: vercelScope.vercelTeamId }
+              : {}),
+            ...(vercelScope.vercelOrgId
+              ? { vercelOrgId: vercelScope.vercelOrgId }
+              : {}),
+            ...(vercelScope.vercelTeamSlug
+              ? { vercelTeamSlug: vercelScope.vercelTeamSlug }
               : {}),
           })
         : {
@@ -90,7 +111,21 @@ export class DeploymentTargetsService {
       buildCommand: dto.buildCommand?.trim() || null,
       startCommand: dto.startCommand?.trim() || null,
       environmentMap: dto.environmentMap ?? {},
+      deploymentStrategy,
+      providerMetadata: target.metadata ?? {},
     });
+  }
+
+  updateProviderMetadata(
+    targetId: string,
+    providerMetadata: Record<string, unknown>,
+    status?: 'active' | 'missing' | 'failed',
+  ) {
+    return this.deploymentTargetsRepository.updateProviderMetadata(
+      targetId,
+      providerMetadata,
+      status,
+    );
   }
 
   private async getProjectOrThrow(projectId: string, userId: string) {
@@ -112,7 +147,7 @@ export class DeploymentTargetsService {
       ownershipMode: string;
       providerConnectionId?: string;
     },
-  ): Promise<string> {
+  ): Promise<{ token: string; connectionMetadata: Record<string, unknown> }> {
     if (input.ownershipMode === 'flowci_managed') {
       const config = this.configService.getOrThrow<AppConfig>('app');
       const token =
@@ -125,7 +160,7 @@ export class DeploymentTargetsService {
         );
       }
 
-      return token;
+      return { token, connectionMetadata: {} };
     }
 
     if (!input.providerConnectionId) {
@@ -140,7 +175,63 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Provider connection not found');
     }
 
-    return this.encryptionService.decrypt(connection.encryptedToken);
+    return {
+      token: this.encryptionService.decrypt(connection.encryptedToken),
+      connectionMetadata: connection.metadata,
+    };
+  }
+
+  private resolveVercelScope(
+    provider: EnvProvider,
+    ownershipMode: string,
+    connectionMetadata: Record<string, unknown>,
+  ): {
+    vercelOrgId?: string;
+    vercelTeamId?: string;
+    vercelTeamSlug?: string;
+  } {
+    if (provider !== 'vercel') {
+      return {};
+    }
+
+    if (ownershipMode === 'flowci_managed') {
+      const config = this.configService.getOrThrow<AppConfig>('app');
+      const teamId =
+        config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
+      const teamSlug =
+        config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
+
+      return {
+        ...(teamId ? { vercelOrgId: teamId } : {}),
+        ...(teamId ? { vercelTeamId: teamId } : {}),
+        ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
+      };
+    }
+
+    const teamId =
+      typeof connectionMetadata['teamId'] === 'string'
+        ? connectionMetadata['teamId'].trim()
+        : '';
+    const teamSlug =
+      typeof connectionMetadata['teamSlug'] === 'string'
+        ? connectionMetadata['teamSlug'].trim()
+        : '';
+    const orgId =
+      typeof connectionMetadata['orgId'] === 'string'
+        ? connectionMetadata['orgId'].trim()
+        : '';
+
+    if (!orgId && !teamId) {
+      throw new BadRequestException(
+        'Vercel provider connection is missing org metadata. Reconnect the Vercel account before provisioning deployment targets.',
+      );
+    }
+
+    return {
+      vercelOrgId: orgId || teamId,
+      ...(teamId ? { vercelTeamId: teamId } : {}),
+      ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
+    };
   }
 
   private requireString(value: string | undefined, field: string): string {

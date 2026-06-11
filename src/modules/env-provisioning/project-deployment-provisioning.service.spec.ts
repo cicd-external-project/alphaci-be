@@ -7,6 +7,9 @@ describe('ProjectDeploymentProvisioningService', () => {
   const envVarsService = {
     provisionEnvVars: jest.fn(),
   };
+  const vercelCiSecretsService = {
+    installForTarget: jest.fn(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -26,6 +29,7 @@ describe('ProjectDeploymentProvisioningService', () => {
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
       envVarsService as never,
+      vercelCiSecretsService as never,
     );
 
     const result = await service.provisionForProject({
@@ -92,6 +96,7 @@ describe('ProjectDeploymentProvisioningService', () => {
     const service = new ProjectDeploymentProvisioningService(
       deploymentTargetsService as never,
       envVarsService as never,
+      vercelCiSecretsService as never,
     );
 
     const result = await service.provisionForProject({

@@ -180,6 +180,86 @@ jobs:
     ).rejects.toThrow(UnauthorizedException);
   });
 
+  it('generates BYO Vercel deploy jobs for frontend single-repo creation', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-ui',
+      visibility: 'private',
+      projectTypeId: 'react-app',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-ui',
+      servicePath: 'apps/web',
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'byo',
+            projectName: 'orders-ui-test',
+            rootDirectory: 'apps/web',
+            providerConnectionId: 'connection-1',
+            env: [],
+          },
+        ],
+      },
+    });
+
+    const packageWorkflow = (
+      (
+        service as unknown as {
+          pushWorkflowFile: jest.Mock;
+        }
+      ).pushWorkflowFile.mock.calls as Array<
+        [string, string, string, string, string]
+      >
+    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+  });
+
+  it('generates BYO Vercel deploy jobs for frontend single-repo setup', async () => {
+    await service.setupProject('user-1', 'oauth-token', {
+      repoFullName: 'tone/orders-ui',
+      templateId: 'be-nestjs',
+      serviceName: 'orders-ui',
+      servicePath: 'apps/web',
+      nodeVersion: '24',
+      coverageThreshold: 80,
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'byo',
+            projectName: 'orders-ui-test',
+            rootDirectory: 'apps/web',
+            providerConnectionId: 'connection-1',
+            env: [],
+          },
+        ],
+      },
+    });
+
+    const packageWorkflow = (
+      (
+        service as unknown as {
+          pushWorkflowFile: jest.Mock;
+        }
+      ).pushWorkflowFile.mock.calls as Array<
+        [string, string, string, string, string]
+      >
+    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+  });
+
   it('provisions deployment targets after the GitHub project row exists', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-api',
@@ -206,6 +286,7 @@ jobs:
       projectId: 'project-1',
       userId: 'user-1',
       repoFullName: 'tone/orders-api',
+      githubAccessToken: 'app-token',
       request: {
         enabled: true,
         targets: [

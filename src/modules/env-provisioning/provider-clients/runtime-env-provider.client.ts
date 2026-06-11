@@ -1,4 +1,5 @@
 import type {
+  DeploymentStrategy,
   EnvEnvironment,
   EnvProvider,
   EnvVarInput,
@@ -7,12 +8,14 @@ import type {
 export interface ProviderAccountSummary {
   id: string;
   name: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ProviderDeploymentTarget {
   id: string;
   name: string;
   provider: EnvProvider;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ProviderProvisionResult {
@@ -28,6 +31,10 @@ export interface CreateProviderTargetInput {
   rootDirectory?: string;
   buildCommand?: string;
   startCommand?: string;
+  deploymentStrategy?: DeploymentStrategy;
+  vercelOrgId?: string;
+  vercelTeamId?: string;
+  vercelTeamSlug?: string;
 }
 
 export interface UpsertProviderEnvInput {
@@ -40,6 +47,10 @@ export interface UpsertProviderEnvInput {
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
+  validateTeamAccess?(
+    token: string,
+    teamId: string,
+  ): Promise<{ id: string; slug?: string; name?: string }>;
   listTargets(token: string): Promise<ProviderDeploymentTarget[]>;
   createTarget(
     input: CreateProviderTargetInput,

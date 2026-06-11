@@ -3,12 +3,14 @@ import { Module } from '@nestjs/common';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { DatabaseModule } from '../database/database.module';
+import { GithubModule } from '../github/github.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { ProjectsRepository } from '../projects/projects.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
+import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import { EnvTokenEncryptionService } from './encryption.service';
 import { EnvFeatureGuard } from './env-feature.guard';
 import { EnvVarsController } from './env-vars.controller';
@@ -21,9 +23,10 @@ import { VercelEnvClient } from './provider-clients/vercel-env.client';
 import { ProviderConnectionsController } from './provider-connections.controller';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { ProviderConnectionsService } from './provider-connections.service';
+import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
 @Module({
-  imports: [DatabaseModule, PersistenceModule, SubscriptionModule],
+  imports: [DatabaseModule, GithubModule, PersistenceModule, SubscriptionModule],
   controllers: [
     ProviderConnectionsController,
     DeploymentTargetsController,
@@ -36,12 +39,14 @@ import { ProviderConnectionsService } from './provider-connections.service';
     EnvVarsRepository,
     ProviderConnectionsService,
     DeploymentTargetsService,
+    DeploymentStrategyResolver,
     EnvVarsService,
     EnvTokenEncryptionService,
     RenderEnvClient,
     VercelEnvClient,
     ProviderClientRegistry,
     ProjectDeploymentProvisioningService,
+    VercelCiSecretsService,
     EnvFeatureGuard,
     SessionAuthGuard,
     SubscriptionGuard,

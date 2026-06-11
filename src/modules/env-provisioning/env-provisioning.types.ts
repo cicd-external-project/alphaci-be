@@ -2,6 +2,12 @@ export type EnvProvider = 'render' | 'vercel';
 export type EnvEnvironment = 'test' | 'uat' | 'production';
 export type EnvOwnershipMode = 'byo' | 'flowci_managed';
 export type EnvTargetSlot = 'backend' | 'frontend' | 'standalone';
+export type VercelDeploymentStrategy =
+  | 'vercel_git_connected'
+  | 'vercel_ci_pushed';
+export type DeploymentStrategy =
+  | 'provider_native'
+  | VercelDeploymentStrategy;
 export type ProviderConnectionStatus = 'active' | 'revoked' | 'failed';
 export type DeploymentTargetStatus = 'active' | 'missing' | 'failed';
 export type EnvVarProvisionStatus = 'provisioned' | 'failed';
@@ -17,6 +23,7 @@ export interface ProviderConnectionSummary {
   label: string;
   tokenLastFour: string;
   status: ProviderConnectionStatus;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
@@ -41,6 +48,8 @@ export interface DeploymentTargetSummary {
   buildCommand: string | null;
   startCommand: string | null;
   environmentMap: Record<string, unknown>;
+  deploymentStrategy: DeploymentStrategy;
+  providerMetadata: Record<string, unknown>;
   status: DeploymentTargetStatus;
 }
 

@@ -32,10 +32,39 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     const payload = (await response.json()) as {
       user?: { uid?: string; username?: string; name?: string };
     };
+    const accountId = payload.user?.uid ?? 'vercel-account';
 
     return {
-      id: payload.user?.uid ?? 'vercel-account',
+      id: accountId,
       name: payload.user?.name ?? payload.user?.username ?? 'Vercel account',
+      metadata: {
+        accountType: 'user',
+        orgId: accountId,
+      },
+    };
+  }
+
+  async validateTeamAccess(
+    token: string,
+    teamId: string,
+  ): Promise<{ id: string; slug?: string; name?: string }> {
+    const response = await fetch(`${VERCEL_API_URL}/v2/teams/${teamId}`, {
+      headers: this.headers(token),
+    });
+    await this.assertOk(response, 'Vercel team access validation failed');
+    const payload = (await response.json()) as {
+      id?: string;
+      slug?: string;
+      name?: string;
+    };
+    if (!payload.id) {
+      throw new Error('Vercel team validation returned an invalid response');
+    }
+
+    return {
+      id: payload.id,
+      ...(payload.slug ? { slug: payload.slug } : {}),
+      ...(payload.name ? { name: payload.name } : {}),
     };
   }
 
@@ -67,20 +96,23 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
     const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
+    const shouldConnectGit =
+      input.deploymentStrategy !== 'vercel_ci_pushed' && Boolean(owner && repo);
     const response = await fetch(
-      this.withScope(`${VERCEL_API_URL}/v11/projects`),
+      this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),
       {
         method: 'POST',
         headers: this.headers(input.token),
         body: JSON.stringify({
           name: input.projectName,
-          gitRepository:
-            owner && repo
-              ? {
+          ...(shouldConnectGit
+            ? {
+                gitRepository: {
                   type: 'github',
                   repo: input.repoFullName,
-                }
-              : undefined,
+                },
+              }
+            : {}),
           rootDirectory,
           buildCommand: input.buildCommand,
         }),
@@ -96,6 +128,16 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
       id: payload.id,
       name: payload.name,
       provider: this.provider,
+      metadata: {
+        deploymentStrategy: input.deploymentStrategy ?? 'vercel_git_connected',
+        vercelProjectId: payload.id,
+        vercelOrgId: this.resolveVercelOrgId(input),
+        ...(input.vercelTeamId ? { vercelTeamId: input.vercelTeamId } : {}),
+        ...(input.vercelTeamSlug
+          ? { vercelTeamSlug: input.vercelTeamSlug }
+          : {}),
+        gitConnected: shouldConnectGit,
+      },
     };
   }
 
@@ -157,6 +199,30 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     };
   }
 
+  private withTargetScope(
+    url: string,
+    input: CreateProviderTargetInput,
+  ): string {
+    const teamId = input.vercelTeamId?.trim();
+    const slug = input.vercelTeamSlug?.trim();
+    if (teamId || slug) {
+      const scopedUrl = new URL(url);
+      if (teamId) {
+        scopedUrl.searchParams.set('teamId', teamId);
+      } else if (slug) {
+        scopedUrl.searchParams.set('slug', slug);
+      }
+
+      return scopedUrl.toString();
+    }
+
+    if (input.deploymentStrategy === 'vercel_ci_pushed') {
+      return url;
+    }
+
+    return this.withScope(url);
+  }
+
   private normalizeRootDirectory(
     rootDirectory: string | null | undefined,
   ): string | undefined {
@@ -175,6 +241,26 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     }
 
     return withoutLeadingDotSlash;
+  }
+
+  private resolveVercelOrgId(
+    input: CreateProviderTargetInput,
+  ): string {
+    if (input.vercelOrgId?.trim()) {
+      return input.vercelOrgId.trim();
+    }
+
+    if (input.vercelTeamId?.trim()) {
+      return input.vercelTeamId.trim();
+    }
+
+    if (input.deploymentStrategy === 'vercel_ci_pushed') {
+      throw new Error(
+        'Vercel org id is required when creating CI-pushed deployment targets',
+      );
+    }
+
+    return 'vercel-account';
   }
 
   private async assertOk(response: Response, message: string): Promise<void> {

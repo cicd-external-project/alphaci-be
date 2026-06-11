@@ -1,7 +1,10 @@
 import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
+import type {
+  DeploymentWorkflowTarget,
+  GenerateWorkflowDto,
+} from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package';
 
@@ -51,6 +54,7 @@ export function buildStagedWorkflowBundle(
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
   const deploymentProvider = dto.deploymentProvider;
+  const deploymentTargets = dto.deploymentTargets ?? [];
   const stack = template.stack;
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
@@ -181,9 +185,7 @@ export function buildStagedWorkflowBundle(
             ...validationJob('package'),
           },
           build: buildJob(servicePath, nodeVersion),
-          ...(deploymentProvider === 'vercel' && {
-            'deploy-vercel': vercelDeployJob(serviceName, servicePath),
-          }),
+          ...vercelDeployJobs(serviceName, servicePath, deploymentTargets),
           ...(deploymentProvider === 'render' && {
             'deploy-render': renderDeployJob(serviceName),
           }),
@@ -261,28 +263,48 @@ function buildJob(servicePath: string, nodeVersion: string) {
         uses: 'actions/setup-node@v6',
         with: {
           'node-version': Number(nodeVersion),
-          cache: 'npm',
-          'cache-dependency-path': '**/package-lock.json',
         },
       },
-      { run: 'npm ci --ignore-scripts' },
+      {
+        name: 'Install dependencies',
+        // Fresh FlowCI scaffolds have no package-lock.json yet (the customer
+        // generates it on first `npm install`), so npm ci would hard-fail.
+        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+      },
       { run: 'npm run build' },
     ],
   };
 }
 
-function vercelDeployJob(serviceName: string, servicePath: string) {
-  return {
-    needs: ['build'],
-    uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-    with: {
-      'system-name': serviceName,
-      'working-directory': servicePath,
-      environment:
-        "${{ github.event.workflow_run.head_branch == 'main' && 'production' || 'preview' }}",
-    },
-    secrets: 'inherit',
-  };
+function vercelDeployJobs(
+  serviceName: string,
+  servicePath: string,
+  targets: DeploymentWorkflowTarget[],
+) {
+  return Object.fromEntries(
+    targets.map((target) => [
+      `deploy-vercel-${target.slot}`,
+      {
+        needs: ['build'],
+        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+        if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
+        with: {
+          'system-name':
+            target.slot === 'standalone' ? serviceName : target.slot,
+          'working-directory': target.rootDirectory ?? servicePath,
+          'checkout-ref':
+            '${{ github.event.workflow_run.head_sha || github.sha }}',
+          environment:
+            "${{ github.event.workflow_run.head_branch == 'main' && 'production' || 'preview' }}",
+        },
+        secrets: {
+          VERCEL_TOKEN: `\${{ secrets.${target.secretNames.token} }}`,
+          VERCEL_ORG_ID: `\${{ secrets.${target.secretNames.orgId} }}`,
+          VERCEL_PROJECT_ID: `\${{ secrets.${target.secretNames.projectId} }}`,
+        },
+      },
+    ]),
+  );
 }
 
 function renderDeployJob(serviceName: string) {
