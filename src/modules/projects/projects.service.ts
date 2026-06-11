@@ -213,7 +213,9 @@ export class ProjectsService {
       projectName: dto.serviceName,
       stack: dto.projectTypeId,
       repoShape: dto.repoShape ?? 'standalone',
-      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
+      ...(dto.tests?.['docker'] !== undefined && {
+        includeDocker: dto.tests['docker'],
+      }),
     });
 
     // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
@@ -381,7 +383,9 @@ export class ProjectsService {
       projectName: dto.repoName,
       stack: backend.projectTypeId,
       repoShape: 'microservices',
-      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
+      ...(dto.tests?.['docker'] !== undefined && {
+        includeDocker: dto.tests['docker'],
+      }),
       backendServiceName: backend.serviceName,
       frontendStack: frontend.projectTypeId,
       frontendServiceName: frontend.serviceName,
@@ -917,10 +921,7 @@ export class ProjectsService {
 
     return request.targets
       .filter(
-        (target) =>
-          slots.includes(target.slot) &&
-          target.provider === 'vercel' &&
-          target.ownershipMode === 'byo',
+        (target) => slots.includes(target.slot) && target.provider === 'vercel',
       )
       .map((target) => {
         const descriptor: DeploymentWorkflowTarget = {
@@ -1280,7 +1281,9 @@ export class ProjectsService {
       projectName: backend.serviceName || actualBeRepoName,
       stack: backend.projectTypeId,
       repoShape: 'standalone',
-      ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
+      ...(dto.tests?.['docker'] !== undefined && {
+        includeDocker: dto.tests['docker'],
+      }),
     });
 
     const backendWorkflowPath =
@@ -1402,7 +1405,9 @@ export class ProjectsService {
         projectName: frontend.serviceName || actualFeRepoName,
         stack: frontend.projectTypeId,
         repoShape: 'standalone',
-        ...(dto.tests?.['docker'] !== undefined && { includeDocker: dto.tests['docker'] }),
+        ...(dto.tests?.['docker'] !== undefined && {
+          includeDocker: dto.tests['docker'],
+        }),
       });
 
       const frontendWorkflowPath =

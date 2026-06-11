@@ -2,7 +2,6 @@ import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import type {
-  DeploymentProvider,
   DeploymentWorkflowTarget,
   GenerateWorkflowDto,
 } from './dto/generate-workflow.dto';
@@ -286,8 +285,7 @@ function renderDeployJob(serviceName: string) {
       'system-name': serviceName,
       environment:
         "${{ github.event.workflow_run.head_branch == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
-      branch:
-        '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+      branch: '${{ github.event.workflow_run.head_branch || github.ref_name }}',
     },
     secrets: 'inherit',
   };

@@ -46,6 +46,16 @@ describe('DeploymentTargetsService', () => {
     );
     encryptionService.decrypt.mockReturnValue('vercel-token');
     clientRegistry.getClient.mockReturnValue(vercelClient);
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+    });
 
     service = new DeploymentTargetsService(
       projectsRepository as never,
@@ -84,5 +94,51 @@ describe('DeploymentTargetsService', () => {
     expect(
       deploymentTargetsRepository.createDeploymentTarget,
     ).not.toHaveBeenCalled();
+  });
+
+  it('creates FlowCI-managed Vercel targets as CI-pushed projects in the managed team', async () => {
+    vercelClient.createTarget.mockResolvedValueOnce({
+      id: 'prj_1',
+      name: 'demo-frontend',
+      provider: 'vercel',
+      metadata: {
+        deploymentStrategy: 'vercel_ci_pushed',
+        vercelOrgId: 'team_flowci',
+        vercelProjectId: 'prj_1',
+        vercelTeamId: 'team_flowci',
+        gitConnected: false,
+      },
+    });
+    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
+      id: 'target-1',
+    });
+
+    await service.createDeploymentTarget('project-1', 'user-1', {
+      action: 'create',
+      slot: 'frontend',
+      ownershipMode: 'flowci_managed',
+      provider: 'vercel',
+      projectName: 'demo-frontend',
+    });
+
+    expect(vercelClient.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'flowci-vercel-token',
+        deploymentStrategy: 'vercel_ci_pushed',
+        vercelOrgId: 'team_flowci',
+        vercelTeamId: 'team_flowci',
+        vercelTeamSlug: 'flowci-team',
+      }),
+    );
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownershipMode: 'flowci_managed',
+        provider: 'vercel',
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerConnectionId: null,
+      }),
+    );
   });
 });
