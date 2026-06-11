@@ -5,7 +5,10 @@ import { AuthService } from './auth.service.js';
 import { SubscriptionService } from '../subscription/subscription.service.js';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import type { SessionUser, SubscriptionState } from '../../common/interfaces/session-user.interface.js';
+import type {
+  SessionUser,
+  SubscriptionState,
+} from '../../common/interfaces/session-user.interface.js';
 
 const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
 
@@ -29,8 +32,12 @@ const makeResponse = () => {
 
 const makeAuthService = () =>
   ({
-    startGitHubAuth: jest.fn().mockReturnValue('https://github.com/login/oauth/authorize?mock=1'),
-    handleGitHubCallback: jest.fn().mockResolvedValue('http://localhost:3000?auth=success'),
+    startGitHubAuth: jest
+      .fn()
+      .mockReturnValue('https://github.com/login/oauth/authorize?mock=1'),
+    handleGitHubCallback: jest
+      .fn()
+      .mockResolvedValue('http://localhost:3000?auth=success'),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
     logout: jest.fn().mockResolvedValue(undefined),
   }) as unknown as AuthService;
@@ -42,7 +49,9 @@ const makeSubscriptionService = () =>
 
 const makeConfigService = () =>
   ({
-    getOrThrow: jest.fn().mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
+    getOrThrow: jest
+      .fn()
+      .mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
   }) as unknown as ConfigService;
 
 describe('AuthController', () => {
@@ -62,7 +71,9 @@ describe('AuthController', () => {
         { provide: ConfigService, useValue: makeConfigService() },
       ],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -94,7 +105,9 @@ describe('AuthController', () => {
         'code123',
         'state-abc',
       );
-      expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000?auth=success');
+      expect(res.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000?auth=success',
+      );
     });
   });
 

@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join, isAbsolute, resolve } from 'node:path';
 
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
@@ -51,7 +55,12 @@ export interface WorkflowRecipeOption {
   workflowRefByProjectType?: Record<string, string>;
   mandatoryJobs?: string[];
   supportedOptions: ProjectOptionSet;
-  optionJobs: Partial<Record<'lint' | 'unit' | 'build' | 'coverage' | 'security' | 'docker' | 'e2e', string>>;
+  optionJobs: Partial<
+    Record<
+      'lint' | 'unit' | 'build' | 'coverage' | 'security' | 'docker' | 'e2e',
+      string
+    >
+  >;
 }
 
 export interface NodeVersionOption {
@@ -180,7 +189,8 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
     {
       id: 'standard',
       label: 'Standard',
-      description: 'Full CI pipeline: lint, test, build, coverage, security scan',
+      description:
+        'Full CI pipeline: lint, test, build, coverage, security scan',
       supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs'],
       templateByProjectType: {
         nextjs: 'nextjs-service-pipeline',
@@ -189,7 +199,15 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
         nodejs: 'nodejs-service-pipeline',
       },
       mandatoryJobs: ['lint', 'build'],
-      supportedOptions: { lint: true, unit: true, build: true, coverage: true, security: true, docker: true, e2e: true },
+      supportedOptions: {
+        lint: true,
+        unit: true,
+        build: true,
+        coverage: true,
+        security: true,
+        docker: true,
+        e2e: true,
+      },
       optionJobs: {
         lint: 'lint',
         unit: 'test',
@@ -203,7 +221,14 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       id: 'minimal',
       label: 'Minimal',
       description: 'Lightweight CI: lint and build only',
-      supportedProjectTypes: ['nextjs', 'react', 'nestjs', 'nodejs', 'react-native', 'expo'],
+      supportedProjectTypes: [
+        'nextjs',
+        'react',
+        'nestjs',
+        'nodejs',
+        'react-native',
+        'expo',
+      ],
       templateByProjectType: {
         nextjs: 'nextjs-service-pipeline',
         react: 'react-service-pipeline',
@@ -262,7 +287,7 @@ interface WorkflowPropertiesFile {
 interface EngineStackFile {
   key?: string;
   label?: string;
-  kind?: 'frontend' | 'backend' | string;
+  kind?: string;
   runtime?: string;
   serviceWorkflow?: string;
 }
@@ -462,7 +487,10 @@ export class CatalogService {
 
   private loadEngineProjectOptions(): ProjectOptionsResult {
     const catalogRoot = join(this.resolveTemplateRepoPath(), 'catalog');
-    const stacks = this.readCatalogJson<EngineStackFile[]>(catalogRoot, 'stacks.json');
+    const stacks = this.readCatalogJson<EngineStackFile[]>(
+      catalogRoot,
+      'stacks.json',
+    );
     this.readCatalogJson<unknown[]>(catalogRoot, 'actions.json');
     this.readCatalogJson<unknown[]>(catalogRoot, 'providers.json');
     this.readCatalogJson<unknown[]>(catalogRoot, 'plans.json');
@@ -472,7 +500,9 @@ export class CatalogService {
     );
 
     const usableStacks = stacks.filter(
-      (stack): stack is Required<Pick<EngineStackFile, 'key' | 'label'>> &
+      (
+        stack,
+      ): stack is Required<Pick<EngineStackFile, 'key' | 'label'>> &
         EngineStackFile =>
         typeof stack.key === 'string' &&
         stack.key.length > 0 &&
@@ -522,19 +552,25 @@ export class CatalogService {
 
     const nodeVersions = (workflowRefs.nodeVersions ?? []).filter(
       (v): v is NodeVersionOption =>
-        typeof v.value === 'string' && v.value.length > 0 &&
-        typeof v.label === 'string' && v.label.length > 0,
+        typeof v.value === 'string' &&
+        v.value.length > 0 &&
+        typeof v.label === 'string' &&
+        v.label.length > 0,
     );
 
     return {
       repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
       projectTypes,
-      nodeVersions: nodeVersions.length > 0 ? nodeVersions : STATIC_PROJECT_OPTIONS.nodeVersions,
+      nodeVersions:
+        nodeVersions.length > 0
+          ? nodeVersions
+          : STATIC_PROJECT_OPTIONS.nodeVersions,
       recipes: [
         {
           id: 'standard',
           label: 'Standard',
-          description: 'Full CI pipeline generated from the workflow engine catalog.',
+          description:
+            'Full CI pipeline generated from the workflow engine catalog.',
           supportedProjectTypes,
           templateByProjectType,
           workflowRefByProjectType,
@@ -560,7 +596,8 @@ export class CatalogService {
         {
           id: 'minimal',
           label: 'Minimal',
-          description: 'Lightweight CI generated from the workflow engine catalog.',
+          description:
+            'Lightweight CI generated from the workflow engine catalog.',
           supportedProjectTypes,
           templateByProjectType,
           workflowRefByProjectType,
@@ -584,7 +621,10 @@ export class CatalogService {
       : resolve(__dirname, configuredPath);
   }
 
-  private templateIdForStack(stackKey: string, serviceWorkflow?: string): string {
+  private templateIdForStack(
+    stackKey: string,
+    serviceWorkflow?: string,
+  ): string {
     const workflowKeyMap: Record<string, string> = {
       nextjsService: 'nextjs-service-pipeline',
       nestjsService: 'nest-service-pipeline',
@@ -595,7 +635,7 @@ export class CatalogService {
     };
 
     return serviceWorkflow
-      ? workflowKeyMap[serviceWorkflow] ?? `${stackKey}-service-pipeline`
+      ? (workflowKeyMap[serviceWorkflow] ?? `${stackKey}-service-pipeline`)
       : `${stackKey}-service-pipeline`;
   }
 
@@ -639,7 +679,8 @@ export class CatalogService {
     }
 
     if (
-      (normalizedId.includes('nest') && !normalizedId.includes('react-native')) ||
+      (normalizedId.includes('nest') &&
+        !normalizedId.includes('react-native')) ||
       normalizedCategories.includes('nestjs')
     ) {
       return 'nestjs';

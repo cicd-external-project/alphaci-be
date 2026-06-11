@@ -5,6 +5,32 @@ describe('RenderEnvClient', () => {
     jest.restoreAllMocks();
   });
 
+  it('returns owner metadata when validating Render connections', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          {
+            owner: {
+              id: 'usr-owner-1',
+              name: 'FlowCI Test',
+            },
+          },
+        ]),
+    });
+
+    const account = await new RenderEnvClient().validateConnection('rnd_test');
+
+    expect(account).toEqual({
+      id: 'usr-owner-1',
+      name: 'FlowCI Test',
+      metadata: {
+        ownerId: 'usr-owner-1',
+        ownerName: 'FlowCI Test',
+      },
+    });
+  });
+
   it('merges env vars before Render replace update', async () => {
     global.fetch = jest
       .fn()
@@ -78,27 +104,101 @@ describe('RenderEnvClient', () => {
       startCommand: 'npm run start:prod',
     });
 
-    expect(target).toEqual({
+    expect(target).toMatchObject({
       id: 'srv-1',
       name: 'api-service-test',
       provider: 'render',
+      metadata: {
+        deploymentStrategy: 'render_git_connected',
+        renderServiceId: 'srv-1',
+        renderServiceType: 'web_service',
+        renderEnvironmentName: 'test',
+        dockerContext: '.',
+        dockerfilePath: 'Dockerfile',
+      },
     });
-    expect(fetch).toHaveBeenCalledWith(
-      'https://api.render.com/v1/services',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          type: 'web_service',
-          name: 'api-service-test',
-          ownerId: 'tea-1',
-          repo: 'https://github.com/owner/api-service',
-          branch: 'test',
-          rootDir: '.',
-          buildCommand: 'npm ci && npm run build',
-          startCommand: 'npm run start:prod',
+    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+      string,
+      { body: string; method: string },
+    ];
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body)).toEqual({
+      type: 'web_service',
+      name: 'api-service-test',
+      ownerId: 'tea-1',
+      repo: 'https://github.com/owner/api-service',
+      branch: 'test',
+      rootDir: '.',
+      buildCommand: 'npm ci && npm run build',
+      startCommand: 'npm run start:prod',
+      serviceDetails: {
+        runtime: 'node',
+        buildCommand: 'npm ci && npm run build',
+        startCommand: 'npm run start:prod',
+      },
+    });
+  });
+
+  it('creates image-backed Render services with the bootstrap image', async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          service: {
+            id: 'srv-image',
+            name: 'api-service-test',
+          },
         }),
+    });
+    global.fetch = fetchMock;
+
+    const configService = {
+      getOrThrow: jest.fn().mockReturnValue({
+        envProvisioning: {
+          flowciManaged: {
+            renderOwnerId: 'tea-configured',
+            renderBootstrapImage: 'ghcr.io/flowci/bootstrap:node-22',
+            renderRegistryCredentialId: 'crd-1',
+          },
+        },
       }),
-    );
+    };
+    const client = new RenderEnvClient(configService as never);
+
+    const target = await client.createTarget({
+      token: 'rnd',
+      repoFullName: 'owner/api-service',
+      projectName: 'api-service-test',
+      branchName: 'test',
+      deploymentStrategy: 'render_image_pushed',
+      renderInstanceType: 'free',
+      renderRegion: 'singapore',
+    });
+
+    expect(target.metadata).toMatchObject({
+      deploymentStrategy: 'render_image_pushed',
+      bootstrapImage: 'ghcr.io/flowci/bootstrap:node-22',
+      imageUrl: 'ghcr.io/flowci/bootstrap:node-22',
+      renderInstanceType: 'free',
+      renderRegion: 'singapore',
+    });
+    const [, request] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(request.body)).toMatchObject({
+      type: 'web_service',
+      name: 'api-service-test',
+      ownerId: 'tea-configured',
+      autoDeploy: 'no',
+      image: {
+        ownerId: 'tea-configured',
+        imagePath: 'ghcr.io/flowci/bootstrap:node-22',
+        registryCredentialId: 'crd-1',
+      },
+      serviceDetails: {
+        runtime: 'image',
+        plan: 'free',
+        region: 'singapore',
+      },
+    });
   });
 
   it('uses configured FlowCI Render owner id when creating services', async () => {

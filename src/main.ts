@@ -99,7 +99,9 @@ async function bootstrap(): Promise<void> {
 
   // CORS — CISO-managed factory (security.config.ts)
   const allowedOriginsEnv = configService.get<string>('ALLOWED_ORIGINS');
-  const allowedPatternsEnv = configService.get<string>('ALLOWED_ORIGIN_PATTERNS');
+  const allowedPatternsEnv = configService.get<string>(
+    'ALLOWED_ORIGIN_PATTERNS',
+  );
   app.enableCors(corsOptions(allowedOriginsEnv, allowedPatternsEnv));
 
   // Global validation pipe

@@ -69,7 +69,11 @@ export class SubscriptionController {
     @Body() body: unknown,
     @Headers('paymongo-signature') signature?: string,
   ) {
-    return this.subscriptionService.handlePayMongoWebhook(body, req.rawBody, signature);
+    return this.subscriptionService.handlePayMongoWebhook(
+      body,
+      req.rawBody,
+      signature,
+    );
   }
 
   private async activateInternal(req: Request, body: ActivateSubscriptionDto) {

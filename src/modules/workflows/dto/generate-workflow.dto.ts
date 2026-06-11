@@ -15,13 +15,26 @@ export type DeploymentProvider = 'vercel' | 'render';
 
 export interface DeploymentWorkflowTarget {
   slot: 'backend' | 'frontend' | 'standalone';
-  provider: 'vercel';
-  deploymentStrategy: 'vercel_ci_pushed';
+  provider: 'vercel' | 'render';
+  deploymentStrategy:
+    | 'vercel_ci_pushed'
+    | 'render_image_pushed'
+    | 'render_git_connected'
+    | 'render_existing_service';
   rootDirectory?: string;
-  secretNames: {
-    token: string;
-    orgId: string;
-    projectId: string;
+  dockerContext?: string | null;
+  dockerfilePath?: string | null;
+  imageName?: string | null;
+  renderServiceType?: string | null;
+  renderInstanceType?: string | null;
+  secretNames?: {
+    token?: string;
+    orgId?: string;
+    projectId?: string;
+    apiKey?: string;
+    serviceId?: string;
+    ownerId?: string;
+    registryCredentialId?: string;
   };
 }
 

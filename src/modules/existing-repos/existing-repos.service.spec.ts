@@ -78,9 +78,9 @@ jobs:
       baseBranch: 'main',
     });
 
-    expect(githubService.getInstallationAccessTokenForUser).toHaveBeenCalledWith(
-      'user-1',
-    );
+    expect(
+      githubService.getInstallationAccessTokenForUser,
+    ).toHaveBeenCalledWith('user-1');
     expect(githubService.getFileContent).toHaveBeenCalledWith(
       'app-token',
       'tone',

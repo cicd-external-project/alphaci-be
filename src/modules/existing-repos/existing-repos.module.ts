@@ -10,17 +10,8 @@ import { ExistingReposController } from './existing-repos.controller';
 import { ExistingReposService } from './existing-repos.service';
 
 @Module({
-  imports: [
-    PersistenceModule,
-    CatalogModule,
-    GithubModule,
-    SubscriptionModule,
-  ],
+  imports: [PersistenceModule, CatalogModule, GithubModule, SubscriptionModule],
   controllers: [ExistingReposController],
-  providers: [
-    ExistingReposService,
-    SessionAuthGuard,
-    SubscriptionGuard,
-  ],
+  providers: [ExistingReposService, SessionAuthGuard, SubscriptionGuard],
 })
 export class ExistingReposModule {}

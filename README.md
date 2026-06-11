@@ -265,13 +265,13 @@ Before the first pipeline run, configure these in your GitHub repository:
 | `GH_PR_TOKEN` | Token with PR write permissions for auto-promotion |
 | `K6_CLOUD_TOKEN` | Grafana Cloud token for k6 execution |
 | `K6_CLOUD_PROJECT_ID` | Grafana Cloud project ID for k6 execution |
-| `RENDER_DEPLOY_HOOK_URL_TEST` | Required for `test` branch Render deployments |
-| `RENDER_DEPLOY_HOOK_URL_UAT` | Required for `uat` branch Render deployments |
-| `RENDER_DEPLOY_HOOK_URL_MAIN` | Required for `main` branch Render deployments |
+| `RENDER_API_KEY` | Render API key used by the reusable deployment workflow |
+| `RENDER_SERVICE_ID` | Render service ID to update and deploy |
+| `RENDER_OWNER_ID` | Render workspace owner ID for image-backed services |
+| `RENDER_REGISTRY_CREDENTIAL_ID` | Optional Render registry credential ID for private images |
 | `RENDER_HEALTHCHECK_URL_TEST` | Required health URL for `test` branch verification |
 | `RENDER_HEALTHCHECK_URL_UAT` | Required health URL for `uat` branch verification |
 | `RENDER_HEALTHCHECK_URL_MAIN` | Required health URL for `main` branch verification |
-| `RENDER_DEPLOY_HOOK_URL` | Optional fallback deploy hook URL if branch-specific secret is omitted |
 | `RENDER_HEALTHCHECK_URL` | Optional fallback health URL if branch-specific secret is omitted |
 
 ### Pipeline Stages
@@ -282,7 +282,7 @@ Before the first pipeline run, configure these in your GitHub repository:
 4. **Docker build** — multi-stage build + Trivy vulnerability scan (main branch only)
 5. **Deploy lanes (central reusable pipeline)**
   - `deploy-preview` on `test`/`uat` (staging lane)
-  - `render-deploy` on `test`/`uat`/`main` (deploy hook + health verification)
+  - `render-deploy` on `test`/`uat`/`main` (GHCR image deploy + health verification)
 6. **k6 smoke test** — runs on configured branches after deploy lanes
 7. **Versioning** — semantic version tag per branch
 8. **Promotion** — auto-creates PR to next branch when required quality gates pass
@@ -299,22 +299,22 @@ This template now uses Render for backend deployments through the central reusab
 
 1. The caller workflow delegates deployment to `master-pipeline-be.yml` and keeps deploy lanes enabled on push.
 2. The central `render-deploy` reusable lane runs on `test`, `uat`, and `main` branches.
-3. The lane triggers the branch-specific Render deploy hook.
+3. The lane builds/pushes the Docker image to GHCR, updates the Render service image configuration, then triggers a Render deploy with `imageUrl`.
 4. The lane polls the configured health endpoint and requires `checks.apiCenter=true` before passing.
 
 ### Setup
 
 1. Create Render services/environments for `test`, `uat`, and `main` deployment targets.
-2. Add deploy hooks in GitHub secrets:
-  - `RENDER_DEPLOY_HOOK_URL_TEST`
-  - `RENDER_DEPLOY_HOOK_URL_UAT`
-  - `RENDER_DEPLOY_HOOK_URL_MAIN`
+2. Add Render API deployment secrets in GitHub:
+  - `RENDER_API_KEY`
+  - `RENDER_SERVICE_ID`
+  - `RENDER_OWNER_ID`
+  - `RENDER_REGISTRY_CREDENTIAL_ID` if Render needs explicit private registry credentials
 3. Add health URLs in GitHub secrets:
   - `RENDER_HEALTHCHECK_URL_TEST`
   - `RENDER_HEALTHCHECK_URL_UAT`
   - `RENDER_HEALTHCHECK_URL_MAIN`
-4. Optional fallbacks:
-  - `RENDER_DEPLOY_HOOK_URL`
+4. Optional fallback:
   - `RENDER_HEALTHCHECK_URL`
 5. Configure Render runtime environment variables (same set as `.env.example`).
   - Ensure APICenter values are present in production lanes so `checks.apiCenter=true` health validation passes.

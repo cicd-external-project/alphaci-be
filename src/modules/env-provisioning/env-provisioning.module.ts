@@ -18,6 +18,8 @@ import { EnvVarsRepository } from './env-vars.repository';
 import { EnvVarsService } from './env-vars.service';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProjectDeploymentProvisioningService } from './project-deployment-provisioning.service';
+import { RenderCiSecretsService } from './render-ci-secrets.service';
+import { RenderCostPolicyService } from './render-cost-policy.service';
 import { RenderEnvClient } from './provider-clients/render-env.client';
 import { VercelEnvClient } from './provider-clients/vercel-env.client';
 import { ProviderConnectionsController } from './provider-connections.controller';
@@ -26,7 +28,12 @@ import { ProviderConnectionsService } from './provider-connections.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
 @Module({
-  imports: [DatabaseModule, GithubModule, PersistenceModule, SubscriptionModule],
+  imports: [
+    DatabaseModule,
+    GithubModule,
+    PersistenceModule,
+    SubscriptionModule,
+  ],
   controllers: [
     ProviderConnectionsController,
     DeploymentTargetsController,
@@ -46,6 +53,8 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     VercelEnvClient,
     ProviderClientRegistry,
     ProjectDeploymentProvisioningService,
+    RenderCiSecretsService,
+    RenderCostPolicyService,
     VercelCiSecretsService,
     EnvFeatureGuard,
     SessionAuthGuard,

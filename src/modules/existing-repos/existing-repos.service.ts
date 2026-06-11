@@ -73,7 +73,10 @@ export class ExistingReposService {
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
     const baseBranch = dto.baseBranch ?? 'main';
     const workflowRecipeId = dto.workflowRecipeId ?? 'standard';
-    const templateId = this.resolveTemplateId(dto.projectTypeId, workflowRecipeId);
+    const templateId = this.resolveTemplateId(
+      dto.projectTypeId,
+      workflowRecipeId,
+    );
     const { generatedYaml, outputFileName } = await this.buildWorkflowYaml(
       templateId,
       dto.serviceName,
@@ -85,7 +88,13 @@ export class ExistingReposService {
     const branchName = `flowci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`;
     const workflowPath = `.github/workflows/${outputFileName}`;
 
-    await this.githubService.createBranch(token, owner, repo, branchName, baseBranch);
+    await this.githubService.createBranch(
+      token,
+      owner,
+      repo,
+      branchName,
+      baseBranch,
+    );
     await this.githubService.putFileContent(
       token,
       owner,
@@ -95,17 +104,22 @@ export class ExistingReposService {
       branchName,
       'ci: add FlowCI Studio workflow',
     );
-    const pullRequest = await this.githubService.createPullRequest(token, owner, repo, {
-      title: 'Add FlowCI Studio workflow',
-      head: branchName,
-      base: baseBranch,
-      body: [
-        'This PR adds a FlowCI Studio workflow for this existing repository.',
-        '',
-        `Service: ${dto.serviceName}`,
-        `Workflow: ${workflowPath}`,
-      ].join('\n'),
-    });
+    const pullRequest = await this.githubService.createPullRequest(
+      token,
+      owner,
+      repo,
+      {
+        title: 'Add FlowCI Studio workflow',
+        head: branchName,
+        base: baseBranch,
+        body: [
+          'This PR adds a FlowCI Studio workflow for this existing repository.',
+          '',
+          `Service: ${dto.serviceName}`,
+          `Workflow: ${workflowPath}`,
+        ].join('\n'),
+      },
+    );
 
     return {
       repoFullName: dto.repoFullName,
@@ -176,7 +190,10 @@ export class ExistingReposService {
     return null;
   }
 
-  private resolveTemplateId(projectTypeId: string, workflowRecipeId: string): string {
+  private resolveTemplateId(
+    projectTypeId: string,
+    workflowRecipeId: string,
+  ): string {
     const { recipes } = this.catalogService.getProjectOptions();
     const recipe = recipes.find((item) => item.id === workflowRecipeId);
     const mapped = recipe?.templateByProjectType[projectTypeId];
@@ -197,12 +214,15 @@ export class ExistingReposService {
     }
 
     const source = await readFile(template.workflowPath, 'utf8');
-    const parsed = yaml.load(source, { schema: yaml.DEFAULT_SCHEMA }) as
-      | Record<string, unknown>
-      | null;
+    const parsed = yaml.load(source, { schema: yaml.DEFAULT_SCHEMA }) as Record<
+      string,
+      unknown
+    > | null;
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new UnprocessableEntityException('Workflow template could not be parsed');
+      throw new UnprocessableEntityException(
+        'Workflow template could not be parsed',
+      );
     }
 
     parsed.name = `${serviceName} - ${template.name}`;
@@ -219,7 +239,12 @@ export class ExistingReposService {
       this.setInputDefault(inputConfig, 'node_version', nodeVersion, 'string');
     }
     if (coverageThreshold !== undefined) {
-      this.setInputDefault(inputConfig, 'coverage_threshold', coverageThreshold, 'number');
+      this.setInputDefault(
+        inputConfig,
+        'coverage_threshold',
+        coverageThreshold,
+        'number',
+      );
     }
 
     return {
@@ -228,7 +253,9 @@ export class ExistingReposService {
         noRefs: true,
         sortKeys: false,
       }),
-      outputFileName: customOutputFileName ?? this.deriveOutputFileName(serviceName, templateId),
+      outputFileName:
+        customOutputFileName ??
+        this.deriveOutputFileName(serviceName, templateId),
     };
   }
 
@@ -270,7 +297,10 @@ export class ExistingReposService {
     }
   }
 
-  private deriveOutputFileName(serviceName: string, templateId: string): string {
+  private deriveOutputFileName(
+    serviceName: string,
+    templateId: string,
+  ): string {
     return `${this.sanitizeBranchSlug(serviceName) || 'service'}-${templateId}.yml`;
   }
 

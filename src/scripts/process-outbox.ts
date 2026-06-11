@@ -60,14 +60,13 @@ async function run(): Promise<void> {
     brokers,
     logLevel: logLevel.ERROR,
     ssl: process.env['KAFKA_SSL'] === 'true',
-    sasl:
-      process.env['KAFKA_SASL_USERNAME']
-        ? {
-            mechanism: 'plain',
-            username: process.env['KAFKA_SASL_USERNAME'] ?? '',
-            password: process.env['KAFKA_SASL_PASSWORD'] ?? '',
-          }
-        : undefined,
+    sasl: process.env['KAFKA_SASL_USERNAME']
+      ? {
+          mechanism: 'plain',
+          username: process.env['KAFKA_SASL_USERNAME'] ?? '',
+          password: process.env['KAFKA_SASL_PASSWORD'] ?? '',
+        }
+      : undefined,
   });
 
   const producer = kafka.producer({

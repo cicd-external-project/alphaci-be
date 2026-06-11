@@ -169,4 +169,55 @@ describe('DeploymentTargetsService', () => {
       deploymentTargetsRepository.createDeploymentTarget,
     ).not.toHaveBeenCalled();
   });
+
+  it('registers existing Render services without storing legacy deploy hook metadata', async () => {
+    providerConnectionsRepository.findActiveProviderConnection.mockResolvedValueOnce(
+      {
+        id: 'connection-1',
+        provider: 'render',
+        encryptedToken: 'encrypted',
+        metadata: {
+          ownerId: 'usr-render-owner',
+        },
+      },
+    );
+    encryptionService.decrypt.mockReturnValueOnce('render-token');
+    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
+      id: 'target-1',
+    });
+
+    await service.createDeploymentTarget('project-1', 'user-1', {
+      action: 'register_existing',
+      slot: 'backend',
+      ownershipMode: 'byo',
+      provider: 'render',
+      providerConnectionId: 'connection-1',
+      providerProjectId: 'srv-1',
+      providerProjectName: 'orders-api-test',
+      renderDeployMethod: 'existing_service',
+      environmentMap: {
+        deployHookUrl: 'https://api.render.com/deploy/legacy',
+      },
+    });
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'render',
+        providerConnectionId: 'connection-1',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        deploymentStrategy: 'render_existing_service',
+      }),
+    );
+    const [createInput] = deploymentTargetsRepository.createDeploymentTarget
+      .mock.calls[0] as [
+      {
+        providerMetadata: Record<string, unknown>;
+      },
+    ];
+    expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
+  });
 });

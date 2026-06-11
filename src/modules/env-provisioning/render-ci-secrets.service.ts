@@ -1,0 +1,205 @@
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+import type { AppConfig } from '../../config/app.config';
+import { GithubService } from '../github/github.service';
+import { EnvTokenEncryptionService } from './encryption.service';
+import type {
+  DeploymentTargetSummary,
+  EnvTargetSlot,
+} from './env-provisioning.types';
+import { ProviderConnectionsRepository } from './provider-connections.repository';
+
+export interface RenderCiSecretNames {
+  apiKey: string;
+  serviceId: string;
+  ownerId: string;
+  registryCredentialId: string;
+}
+
+@Injectable()
+export class RenderCiSecretsService {
+  constructor(
+    private readonly githubService: GithubService,
+    private readonly providerConnectionsRepository: ProviderConnectionsRepository,
+    private readonly encryptionService: EnvTokenEncryptionService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  async installForTarget(input: {
+    githubAccessToken: string;
+    repoFullName: string;
+    userId: string;
+    providerConnectionId: string | null;
+    target: DeploymentTargetSummary;
+  }): Promise<{ githubSecrets: RenderCiSecretNames }> {
+    if (
+      input.target.provider !== 'render' ||
+      !['render_image_pushed', 'render_existing_service'].includes(
+        input.target.deploymentStrategy,
+      )
+    ) {
+      return { githubSecrets: this.renderSecretNames(input.target.slot) };
+    }
+
+    const [owner, repo] = this.parseRepoFullName(input.repoFullName);
+    const secretNames = this.renderSecretNames(input.target.slot);
+    const renderApiKey = await this.resolveRenderToken(input);
+
+    await this.githubService.setActionsSecretStrict(
+      input.githubAccessToken,
+      owner,
+      repo,
+      secretNames.apiKey,
+      renderApiKey,
+    );
+    await this.githubService.setActionsSecretStrict(
+      input.githubAccessToken,
+      owner,
+      repo,
+      secretNames.serviceId,
+      input.target.providerProjectId,
+    );
+    await this.githubService.setActionsSecretStrict(
+      input.githubAccessToken,
+      owner,
+      repo,
+      secretNames.ownerId,
+      await this.resolveRenderOwnerId(input),
+    );
+    const registryCredentialId = this.providerMetadataString(
+      input.target.providerMetadata,
+      'renderRegistryCredentialId',
+    );
+    if (registryCredentialId) {
+      await this.githubService.setActionsSecretStrict(
+        input.githubAccessToken,
+        owner,
+        repo,
+        secretNames.registryCredentialId,
+        registryCredentialId,
+      );
+    }
+
+    return { githubSecrets: secretNames };
+  }
+
+  renderSecretNames(slot: EnvTargetSlot): RenderCiSecretNames {
+    const prefix = `RENDER_${slot.toUpperCase()}`;
+    return {
+      apiKey: `${prefix}_API_KEY`,
+      serviceId: `${prefix}_SERVICE_ID`,
+      ownerId: `${prefix}_OWNER_ID`,
+      registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
+    };
+  }
+
+  private parseRepoFullName(repoFullName: string): [string, string] {
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) {
+      throw new BadRequestException(
+        `Invalid repoFullName '${repoFullName}'. Expected owner/repo.`,
+      );
+    }
+
+    return [owner, repo];
+  }
+
+  private async resolveRenderToken(input: {
+    userId: string;
+    providerConnectionId: string | null;
+    target: DeploymentTargetSummary;
+  }): Promise<string> {
+    if (input.target.ownershipMode === 'flowci_managed') {
+      const config = this.configService.getOrThrow<AppConfig>('app');
+      const token = config.envProvisioning.flowciManaged.renderToken.trim();
+      if (!token) {
+        throw new InternalServerErrorException(
+          'FLOWCI_RENDER_API_KEY is required for FlowCI-managed Render deployments',
+        );
+      }
+
+      return token;
+    }
+
+    if (!input.providerConnectionId) {
+      throw new BadRequestException(
+        'providerConnectionId is required for BYO Render deployment secrets',
+      );
+    }
+
+    const connection =
+      await this.providerConnectionsRepository.findActiveProviderConnection(
+        input.providerConnectionId,
+        input.userId,
+      );
+    if (!connection || connection.provider !== 'render') {
+      throw new NotFoundException('Render provider connection not found');
+    }
+
+    return this.encryptionService.decrypt(connection.encryptedToken);
+  }
+
+  private async resolveRenderOwnerId(input: {
+    userId: string;
+    providerConnectionId: string | null;
+    target: DeploymentTargetSummary;
+  }): Promise<string> {
+    const metadataOwnerId = this.providerMetadataString(
+      input.target.providerMetadata,
+      'renderOwnerId',
+    );
+    if (metadataOwnerId) {
+      return metadataOwnerId;
+    }
+
+    if (input.target.ownershipMode === 'byo') {
+      if (!input.providerConnectionId) {
+        throw new BadRequestException(
+          'providerConnectionId is required for BYO Render owner metadata',
+        );
+      }
+
+      const connection =
+        await this.providerConnectionsRepository.findActiveProviderConnection(
+          input.providerConnectionId,
+          input.userId,
+        );
+      if (!connection || connection.provider !== 'render') {
+        throw new NotFoundException('Render provider connection not found');
+      }
+
+      const connectionOwnerId = this.providerMetadataString(
+        connection.metadata,
+        'ownerId',
+      );
+      if (connectionOwnerId) {
+        return connectionOwnerId;
+      }
+    }
+
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    const ownerId =
+      config.envProvisioning.flowciManaged.renderOwnerId?.trim() ?? '';
+    if (!ownerId) {
+      throw new BadRequestException(
+        'Render owner id is required for image deployment secrets',
+      );
+    }
+
+    return ownerId;
+  }
+
+  private providerMetadataString(
+    metadata: Record<string, unknown>,
+    key: string,
+  ): string | null {
+    const value = metadata[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+}
