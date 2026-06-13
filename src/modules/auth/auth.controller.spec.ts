@@ -1,11 +1,16 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
+import { UnauthorizedException } from '@nestjs/common';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { SubscriptionService } from '../subscription/subscription.service.js';
 import { ConfigService } from '@nestjs/config';
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard.js';
 import type { Request, Response } from 'express';
-import type { SessionUser, SubscriptionState } from '../../common/interfaces/session-user.interface.js';
+import type {
+  SessionUser,
+  SubscriptionState,
+} from '../../common/interfaces/session-user.interface.js';
 
 const fakeUser: SessionUser = {
   id: 'user-1',
@@ -20,8 +25,20 @@ const fakeFreeSub: SubscriptionState = {
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const makeRequest = (user?: SessionUser) =>
-  ({ session: { user } }) as unknown as Request;
+const makeRequest = (
+  user?: SessionUser,
+  sessionExtra: Record<string, unknown> = {},
+) =>
+  ({
+    session: {
+      user,
+      ...sessionExtra,
+      save: jest.fn().mockImplementation((cb: (err: null) => void) => cb(null)),
+      destroy: jest
+        .fn()
+        .mockImplementation((cb: (err: null) => void) => cb(null)),
+    },
+  }) as unknown as Request;
 
 const makeResponse = () => {
   const res = {
@@ -33,10 +50,18 @@ const makeResponse = () => {
 
 const makeAuthService = () =>
   ({
-    startGitHubAuth: jest.fn().mockReturnValue('https://github.com/login/oauth/authorize?mock=1'),
-    handleGitHubCallback: jest.fn().mockResolvedValue('http://localhost:3000?auth=success'),
+    startGitHubAuth: jest
+      .fn()
+      .mockReturnValue('https://github.com/login/oauth/authorize?mock=1'),
+    handleGitHubCallback: jest
+      .fn()
+      .mockResolvedValue('http://localhost:3000?auth=success'),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
     logout: jest.fn().mockResolvedValue(undefined),
+    deleteAccount: jest.fn().mockResolvedValue(undefined),
+    getPendingArchivedAccount: jest.fn().mockResolvedValue({ pending: false }),
+    restoreArchivedAccount: jest.fn().mockResolvedValue(undefined),
+    startFreshAccount: jest.fn().mockResolvedValue(undefined),
   }) as unknown as AuthService;
 
 const makeSubscriptionService = () =>
@@ -46,7 +71,9 @@ const makeSubscriptionService = () =>
 
 const makeConfigService = () =>
   ({
-    getOrThrow: jest.fn().mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
+    getOrThrow: jest
+      .fn()
+      .mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
   }) as unknown as ConfigService;
 
 describe('AuthController', () => {
@@ -66,7 +93,7 @@ describe('AuthController', () => {
         { provide: ConfigService, useValue: makeConfigService() },
       ],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(SessionAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -82,6 +109,7 @@ describe('AuthController', () => {
       const req = makeRequest();
       const res = makeResponse();
       await controller.githubStart(req, res);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(res.redirect).toHaveBeenCalledWith(
         'https://github.com/login/oauth/authorize?mock=1',
       );
@@ -93,12 +121,16 @@ describe('AuthController', () => {
       const req = makeRequest();
       const res = makeResponse();
       await controller.githubCallback(req, res, 'code123', 'state-abc');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(authService.handleGitHubCallback).toHaveBeenCalledWith(
         req,
         'code123',
         'state-abc',
       );
-      expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000?auth=success');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(res.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000?auth=success',
+      );
     });
   });
 
@@ -126,9 +158,103 @@ describe('AuthController', () => {
       const req = makeRequest(fakeUser);
       const res = makeResponse();
       const result = await controller.logout(req, res);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(authService.logout).toHaveBeenCalledWith(req);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(res.clearCookie).toHaveBeenCalledWith('cicd_workflow_sid');
       expect(result).toEqual({ ok: true });
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('calls archiveById via deleteAccount and returns { ok, archived }', async () => {
+      const req = makeRequest(fakeUser);
+      const res = makeResponse();
+      const result = await controller.deleteAccount(req, res);
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(authService.deleteAccount).toHaveBeenCalledWith(req);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(res.clearCookie).toHaveBeenCalledWith('cicd_workflow_sid');
+      expect(result).toEqual({ ok: true, archived: true });
+    });
+
+    it('throws UnauthorizedException when no user in session', async () => {
+      const req = makeRequest();
+      const res = makeResponse();
+      await expect(controller.deleteAccount(req, res)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  describe('getPendingArchivedAccount', () => {
+    it('returns { pending: false } when service returns pending false', async () => {
+      const req = makeRequest();
+      const result = await controller.getPendingArchivedAccount(req);
+      expect(result).toEqual({ pending: false });
+    });
+
+    it('returns pending info when service returns pending true', async () => {
+      const pendingInfo = {
+        pending: true as const,
+        login: 'testuser',
+        archivedAt: '2026-05-01T00:00:00.000Z',
+        purgeAt: '2026-05-31T00:00:00.000Z',
+        retentionDays: 30,
+      };
+      (
+        authService.getPendingArchivedAccount as jest.Mock
+      ).mockResolvedValueOnce(pendingInfo);
+      const req = makeRequest();
+      const result = await controller.getPendingArchivedAccount(req);
+      expect(result).toEqual(pendingInfo);
+    });
+  });
+
+  describe('restoreArchivedAccount', () => {
+    it('returns { ok, restored } when pendingArchived is in session', async () => {
+      const req = makeRequest(undefined, {
+        pendingArchived: {
+          githubUserId: '12345',
+          login: 'testuser',
+          accessToken: 'tok',
+        },
+      });
+      const result = await controller.restoreArchivedAccount(req);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(authService.restoreArchivedAccount).toHaveBeenCalledWith(req);
+      expect(result).toEqual({ ok: true, restored: true });
+    });
+
+    it('throws UnauthorizedException when no pendingArchived in session', async () => {
+      const req = makeRequest(undefined, {});
+      await expect(controller.restoreArchivedAccount(req)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  describe('startFreshAccount', () => {
+    it('returns { ok, created } when pendingArchived is in session', async () => {
+      const req = makeRequest(undefined, {
+        pendingArchived: {
+          githubUserId: '12345',
+          login: 'testuser',
+          accessToken: 'tok',
+        },
+      });
+      const result = await controller.startFreshAccount(req);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(authService.startFreshAccount).toHaveBeenCalledWith(req);
+      expect(result).toEqual({ ok: true, created: true });
+    });
+
+    it('throws UnauthorizedException when no pendingArchived in session', async () => {
+      const req = makeRequest(undefined, {});
+      await expect(controller.startFreshAccount(req)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 });

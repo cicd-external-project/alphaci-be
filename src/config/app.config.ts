@@ -53,6 +53,7 @@ export interface AppConfig {
     secure: boolean;
     storeDriver: 'postgres' | 'memory';
   };
+  archivedAccountRetentionDays: number;
 }
 
 export const appConfig = registerAs('app', (): AppConfig => {
@@ -143,5 +144,8 @@ export const appConfig = registerAs('app', (): AppConfig => {
       storeDriver:
         env['SESSION_STORE_DRIVER'] === 'postgres' ? 'postgres' : 'memory',
     },
+    archivedAccountRetentionDays: Number(
+      env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] ?? 30,
+    ),
   };
 });
