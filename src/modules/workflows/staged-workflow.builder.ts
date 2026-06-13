@@ -55,6 +55,12 @@ const CI_VALIDATE_URL =
  */
 const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
 
+const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
+
+const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
+  PROTECTED_DEPLOY_BRANCHES,
+);
+
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
 
 /** Extra coverage demanded on uat/main on top of the baseline, capped. */
@@ -389,6 +395,21 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   };
 }
 
+function protectedDeployBranchExpression(): string {
+  return [
+    '${{',
+    '(',
+    "github.event_name == 'workflow_dispatch' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
+    ') || (',
+    "github.event_name == 'workflow_run' &&",
+    "github.event.workflow_run.conclusion == 'success' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
+    ')',
+    '}}',
+  ].join(' ');
+}
+
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
@@ -458,27 +479,30 @@ function vercelDeployJobs(
   targets: DeploymentWorkflowTarget[],
 ) {
   return Object.fromEntries(
-    targets.map((target) => [
-      `deploy-vercel-${target.slot}`,
-      {
-        needs: ['build', 'production-gate'],
-        if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-        with: {
-          'system-name':
-            target.slot === 'standalone' ? serviceName : target.slot,
-          'working-directory': target.rootDirectory ?? servicePath,
-          'checkout-ref':
-            '${{ github.event.workflow_run.head_sha || github.sha }}',
-          environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
+    targets.map((target) => {
+      const secretNames = target.secretNames ?? {};
+      return [
+        `deploy-vercel-${target.slot}`,
+        {
+          needs: ['build', 'production-gate'],
+          if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+          uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+          with: {
+            'system-name':
+              target.slot === 'standalone' ? serviceName : target.slot,
+            'working-directory': target.rootDirectory ?? servicePath,
+            'checkout-ref':
+              '${{ github.event.workflow_run.head_sha || github.sha }}',
+            environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
+          },
+          secrets: {
+            VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
+            VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
+            VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
+          },
         },
-        secrets: {
-          VERCEL_TOKEN: `\${{ secrets.${target.secretNames.token} }}`,
-          VERCEL_ORG_ID: `\${{ secrets.${target.secretNames.orgId} }}`,
-          VERCEL_PROJECT_ID: `\${{ secrets.${target.secretNames.projectId} }}`,
-        },
-      },
-    ]),
+      ];
+    }),
   );
 }
 
