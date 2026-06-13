@@ -10,5 +10,13 @@ declare module 'express-session' {
     oauthReturnTo?: string;
     oauthProvider?: 'github' | 'google';
     githubAccessToken?: string;
+    pendingArchived?: {
+      githubUserId: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+      accessToken: string;
+    };
   }
 }

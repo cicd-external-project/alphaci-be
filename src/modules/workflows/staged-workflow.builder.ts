@@ -34,11 +34,32 @@ const CENTRAL_WORKFLOW_REF =
 const CI_VALIDATE_URL =
   'https://flowci-be-test.onrender.com/api/v1/ci/validate';
 
-const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
+/**
+ * Branch promotion model enforced by the generated pipelines:
+ *
+ *   test → full quality suite at the baseline thresholds (tests, lint,
+ *          security, Sonar analysis). CI-only: no deployments except the
+ *          Render `test` environment for backends.
+ *   uat  → the same suite under a stricter governance policy: higher
+ *          coverage threshold, lint warnings fail the build, and the
+ *          SonarCloud quality gate is blocking. Vercel deploys are
+ *          *preview* only.
+ *   main → production. A production-readiness gate (GitHub `production`
+ *          environment — honours required reviewers when configured) must
+ *          pass before any deployment, and deploys target the production
+ *          environment on the provider.
+ *
+ * Quality/package stages are `workflow_run`-triggered, which always executes
+ * in the default-branch context, so every branch decision below must use the
+ * originating branch instead of `github.ref_name` alone.
+ */
+const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
 
-const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
-  PROTECTED_DEPLOY_BRANCHES,
-);
+const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
+
+/** Extra coverage demanded on uat/main on top of the baseline, capped. */
+const STRICT_COVERAGE_BONUS = 10;
+const STRICT_COVERAGE_CAP = 95;
 
 export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   /**
@@ -59,16 +80,24 @@ export function buildStagedWorkflowBundle(
   const servicePath = normalizeServicePath(dto.servicePath);
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
+  const strictCoverageThreshold = Math.min(
+    coverageThreshold + STRICT_COVERAGE_BONUS,
+    STRICT_COVERAGE_CAP,
+  );
+  const deploymentProvider = dto.deploymentProvider;
   const deploymentTargets = dto.deploymentTargets ?? [];
+  const requireProductionApproval =
+    dto.enhancements?.includes('strictProductionApproval') ?? false;
   const stack = template.stack;
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
   const testJobId = isBackend ? 'backend-tests' : 'frontend-tests';
   // The central test workflows enforce coverage by parsing
-  // coverage/coverage-summary.json, so the command must produce it.
+  // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
+  // command must produce both reporters.
   const testCommand = isBackend
-    ? 'npm test -- --coverage --coverageReporters=json-summary'
-    : 'npm run test -- --coverage --coverageReporters=json-summary';
+    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov'
+    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov';
   const lintCommand = 'npm run lint';
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
@@ -76,6 +105,13 @@ export function buildStagedWorkflowBundle(
   const accessName = `FlowCI Access Gate${nameSuffix}`;
   const qualityName = `FlowCI Quality${nameSuffix}`;
   const packageName = `FlowCI Package${nameSuffix}`;
+
+  // Promotion PRs wait on every deploy job configured for the repo; skipped
+  // deploys are acceptable (e.g. Vercel jobs skip on the test branch).
+  const deployJobIds = [
+    ...deploymentTargets.map((target) => `deploy-vercel-${target.slot}`),
+    ...(deploymentProvider === 'render' ? ['deploy-render'] : []),
+  ];
 
   const files: StagedWorkflowFile[] = [
     {
@@ -125,8 +161,12 @@ export function buildStagedWorkflowBundle(
             if: "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}",
             ...validationJob('quality'),
           },
+          'branch-policy': branchPolicyJob(
+            coverageThreshold,
+            strictCoverageThreshold,
+          ),
           [testJobId]: {
-            needs: ['validate-access'],
+            needs: ['branch-policy'],
             uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@v1`,
             with: {
               'working-directory': servicePath,
@@ -137,23 +177,25 @@ export function buildStagedWorkflowBundle(
                   // frontend-tests default of tests/unit.
                   { 'unit-tests-directory': 'src' }),
               'node-version': Number(nodeVersion),
-              'coverage-threshold': coverageThreshold,
+              'coverage-threshold':
+                '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
               'enforce-coverage': true,
               'test-command': testCommand,
-              'checkout-ref':
-                '${{ github.event.workflow_run.head_sha || github.sha }}',
+              'checkout-ref': HEAD_SHA_EXPR,
             },
           },
           lint: {
-            needs: ['validate-access'],
+            needs: ['branch-policy'],
             uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@v1`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
               'node-version': Number(nodeVersion),
               'lint-command': lintCommand,
-              'checkout-ref':
-                '${{ github.event.workflow_run.head_sha || github.sha }}',
+              // Lint warnings are tolerated on test, fatal on uat/main.
+              'fail-on-warning':
+                '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
+              'checkout-ref': HEAD_SHA_EXPR,
             },
           },
           security: {
@@ -164,8 +206,32 @@ export function buildStagedWorkflowBundle(
               'system-name': serviceName,
               'node-version': Number(nodeVersion),
               'fail-on-high': true,
-              'checkout-ref':
-                '${{ github.event.workflow_run.head_sha || github.sha }}',
+              'checkout-ref': HEAD_SHA_EXPR,
+            },
+          },
+          sonar: {
+            needs: ['branch-policy', testJobId],
+            // Runs only when the FlowCI-provisioned SonarCloud secrets are
+            // present so repos without Sonar keep passing. The quality gate
+            // is advisory on test and blocking on uat/main (branch-policy
+            // decides via sonar-gate-wait).
+            if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
+            uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@v1`,
+            with: {
+              'working-directory': servicePath,
+              'system-name': serviceName,
+              'sources-path': 'src',
+              'tests-path': 'src',
+              'coverage-report-path': 'coverage/lcov.info',
+              'coverage-artifact-name': `${serviceName}-coverage`,
+              'quality-gate-wait':
+                '${{ fromJson(needs.branch-policy.outputs.sonar-gate-wait) }}',
+              'checkout-ref': HEAD_SHA_EXPR,
+            },
+            secrets: {
+              SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}',
+              SONAR_PROJECT_KEY: '${{ secrets.SONAR_PROJECT_KEY }}',
+              SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
             },
           },
         },
@@ -198,8 +264,27 @@ export function buildStagedWorkflowBundle(
             ...validationJob('package'),
           },
           build: buildJob(servicePath, nodeVersion),
+          'production-gate': productionGateJob(
+            serviceName,
+            isBackend,
+            requireProductionApproval,
+          ),
           ...vercelDeployJobs(serviceName, servicePath, deploymentTargets),
-          ...renderDeployJobs(serviceName, servicePath, deploymentTargets),
+          ...(deploymentProvider === 'render' && {
+            'deploy-render': renderDeployJob(serviceName),
+          }),
+          'promote-to-uat': promotionJob(
+            'test-to-uat',
+            'test',
+            serviceName,
+            deployJobIds,
+          ),
+          'promote-to-main': promotionJob(
+            'uat-to-main',
+            'uat',
+            serviceName,
+            deployJobIds,
+          ),
         },
       }),
     },
@@ -254,6 +339,56 @@ function validationJob(stage: WorkflowStage) {
   };
 }
 
+/**
+ * Resolves the per-branch governance policy once so every downstream job
+ * consumes the same decision. Feature branches and `test` get the baseline;
+ * `uat` and `main` get the strict profile. Sonar participation is detected
+ * from secret presence (job-level `if` cannot read the secrets context).
+ */
+function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
+  return {
+    needs: ['validate-access'],
+    runs_on: 'ubuntu-latest',
+    outputs: {
+      branch: '${{ steps.resolve.outputs.branch }}',
+      'coverage-threshold': '${{ steps.resolve.outputs.coverage-threshold }}',
+      'fail-on-warning': '${{ steps.resolve.outputs.fail-on-warning }}',
+      'sonar-enabled': '${{ steps.resolve.outputs.sonar-enabled }}',
+      'sonar-gate-wait': '${{ steps.resolve.outputs.sonar-gate-wait }}',
+    },
+    steps: [
+      {
+        name: 'Resolve branch policy',
+        id: 'resolve',
+        env: {
+          SONAR_CONFIGURED:
+            "${{ secrets.SONAR_TOKEN != '' && secrets.SONAR_ORGANIZATION != '' && secrets.SONAR_PROJECT_KEY != '' }}",
+        },
+        run: [
+          `BRANCH="\${{ ${BRANCH_EXPR} }}"`,
+          'if [ "$BRANCH" = "uat" ] || [ "$BRANCH" = "main" ]; then',
+          `  COVERAGE_THRESHOLD=${strictCoverage}`,
+          '  FAIL_ON_WARNING=true',
+          '  SONAR_GATE_WAIT=true',
+          'else',
+          `  COVERAGE_THRESHOLD=${baseCoverage}`,
+          '  FAIL_ON_WARNING=false',
+          '  SONAR_GATE_WAIT=false',
+          'fi',
+          '{',
+          '  echo "branch=$BRANCH"',
+          '  echo "coverage-threshold=$COVERAGE_THRESHOLD"',
+          '  echo "fail-on-warning=$FAIL_ON_WARNING"',
+          '  echo "sonar-enabled=$SONAR_CONFIGURED"',
+          '  echo "sonar-gate-wait=$SONAR_GATE_WAIT"',
+          '} >> "$GITHUB_OUTPUT"',
+          'echo "Branch policy: branch=$BRANCH coverage>=$COVERAGE_THRESHOLD failOnWarning=$FAIL_ON_WARNING sonar=$SONAR_CONFIGURED gateWait=$SONAR_GATE_WAIT"',
+        ].join('\n'),
+      },
+    ],
+  };
+}
+
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
@@ -288,105 +423,132 @@ function buildJob(servicePath: string, nodeVersion: string) {
   };
 }
 
+/**
+ * Production-readiness gate, main branch only. Routes through the GitHub
+ * `production` environment so required reviewers (when the customer
+ * configures them) block the deploy; the checklist + audit trail run either
+ * way.
+ */
+function productionGateJob(
+  serviceName: string,
+  isBackend: boolean,
+  requireApproval: boolean,
+) {
+  return {
+    needs: ['build'],
+    if: `\${{ (${BRANCH_EXPR}) == 'main' }}`,
+    uses: `${CENTRAL_WORKFLOW_REF}/production-gate.yml@v1`,
+    with: {
+      'system-dir': serviceName,
+      'app-type': isBackend ? 'api' : 'web',
+      'require-approval': requireApproval,
+    },
+  };
+}
+
+/**
+ * Vercel deployments follow the promotion model: nothing on test (CI-only),
+ * previews on uat, production on main — and main additionally requires the
+ * production gate to have passed. `!cancelled()` keeps the `if` evaluated
+ * when production-gate is skipped (every branch except main).
+ */
 function vercelDeployJobs(
   serviceName: string,
   servicePath: string,
   targets: DeploymentWorkflowTarget[],
 ) {
   return Object.fromEntries(
-    targets
-      .filter((target) => target.provider === 'vercel')
-      .map((target) => {
-        const secretNames = target.secretNames ?? {};
-        return [
-          `deploy-vercel-${target.slot}`,
-          {
-            needs: ['build'],
-            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-            if: protectedDeployBranchExpression(),
-            with: {
-              'system-name':
-                target.slot === 'standalone' ? serviceName : target.slot,
-              'working-directory': target.rootDirectory ?? servicePath,
-              'checkout-ref':
-                '${{ github.event.workflow_run.head_sha || github.sha }}',
-              'source-branch':
-                '${{ github.event.workflow_run.head_branch || github.ref_name }}',
-              environment:
-                "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
-            },
-            secrets: {
-              VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
-              VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
-              VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
-            },
-          },
-        ];
-      }),
+    targets.map((target) => [
+      `deploy-vercel-${target.slot}`,
+      {
+        needs: ['build', 'production-gate'],
+        if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+        uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+        with: {
+          'system-name':
+            target.slot === 'standalone' ? serviceName : target.slot,
+          'working-directory': target.rootDirectory ?? servicePath,
+          'checkout-ref':
+            '${{ github.event.workflow_run.head_sha || github.sha }}',
+          environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
+        },
+        secrets: {
+          VERCEL_TOKEN: `\${{ secrets.${target.secretNames.token} }}`,
+          VERCEL_ORG_ID: `\${{ secrets.${target.secretNames.orgId} }}`,
+          VERCEL_PROJECT_ID: `\${{ secrets.${target.secretNames.projectId} }}`,
+        },
+      },
+    ]),
   );
 }
 
-function renderDeployJobs(
+/**
+ * Render deployments map branches to provider environments (test → test,
+ * uat → uat, main → production); the production environment is reachable
+ * only after the production gate passes.
+ */
+function renderDeployJob(serviceName: string) {
+  return {
+    needs: ['build', 'production-gate'],
+    if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
+    with: {
+      'system-name': serviceName,
+      environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || (${BRANCH_EXPR}) }}`,
+      branch: `\${{ ${BRANCH_EXPR} }}`,
+    },
+    secrets: 'inherit',
+  };
+}
+
+/**
+ * Auto-promotion PR after a fully green package stage on a promotion source
+ * branch: test → uat once everything passed on test, uat → main once
+ * everything passed on uat. The package stage only starts after the quality
+ * stage concluded successfully, so a created PR implies tests, lint,
+ * security, and Sonar all passed under that branch's policy.
+ *
+ * `promotion.yml` updates the existing open PR instead of stacking
+ * duplicates, and skips when the source branch has no commits ahead of the
+ * target. Uses GH_PR_TOKEN (a PAT) when provisioned so the PR triggers the
+ * access-gate `pull_request` checks; falls back to github.token, which still
+ * creates the PR but GitHub suppresses workflow triggers for it.
+ */
+function promotionJob(
+  direction: 'test-to-uat' | 'uat-to-main',
+  sourceBranch: 'test' | 'uat',
   serviceName: string,
-  servicePath: string,
-  targets: DeploymentWorkflowTarget[],
+  deployJobIds: string[],
 ) {
-  return Object.fromEntries(
-    targets
-      .filter(
-        (target) =>
-          target.provider === 'render' &&
-          target.deploymentStrategy === 'render_image_pushed',
-      )
-      .map((target) => {
-        const secretNames = target.secretNames ?? {};
-        const secretPrefix = `RENDER_${target.slot.toUpperCase()}`;
-        return [
-          `deploy-render-${target.slot}`,
-          {
-            needs: ['build'],
-            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
-            if: protectedDeployBranchExpression(),
-            with: {
-              'system-name':
-                target.slot === 'standalone' ? serviceName : target.slot,
-              environment:
-                "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || github.event.workflow_run.head_branch || github.ref_name }}",
-              branch:
-                '${{ github.event.workflow_run.head_branch || github.ref_name }}',
-              'working-directory': target.rootDirectory ?? servicePath,
-              'docker-context':
-                target.dockerContext ?? target.rootDirectory ?? servicePath,
-              'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
-              'image-name': target.imageName ?? `flowci-${target.slot}`,
-              'checkout-ref':
-                '${{ github.event.workflow_run.head_sha || github.sha }}',
-            },
-            secrets: {
-              RENDER_API_KEY: `\${{ secrets.${secretNames.apiKey ?? `${secretPrefix}_API_KEY`} }}`,
-              RENDER_SERVICE_ID: `\${{ secrets.${secretNames.serviceId ?? `${secretPrefix}_SERVICE_ID`} }}`,
-              RENDER_OWNER_ID: `\${{ secrets.${secretNames.ownerId ?? `${secretPrefix}_OWNER_ID`} }}`,
-              RENDER_REGISTRY_CREDENTIAL_ID: `\${{ secrets.${secretNames.registryCredentialId ?? `${secretPrefix}_REGISTRY_CREDENTIAL_ID`} }}`,
-            },
-          },
-        ];
-      }),
-  );
-}
+  const conditions = [
+    '!cancelled()',
+    `(${BRANCH_EXPR}) == '${sourceBranch}'`,
+    "needs.build.result == 'success'",
+    ...deployJobIds.map(
+      (id) =>
+        `(needs.${id}.result == 'success' || needs.${id}.result == 'skipped')`,
+    ),
+  ];
 
-function protectedDeployBranchExpression(): string {
-  return [
-    '${{',
-    '(',
-    "github.event_name == 'workflow_dispatch' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
-    ') || (',
-    "github.event_name == 'workflow_run' &&",
-    "github.event.workflow_run.conclusion == 'success' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
-    ')',
-    '}}',
-  ].join(' ');
+  return {
+    permissions: {
+      contents: 'read',
+      'pull-requests': 'write',
+    },
+    needs: ['build', ...deployJobIds],
+    if: `\${{ ${conditions.join(' && ')} }}`,
+    uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@v1`,
+    with: {
+      'pipeline-kind': 'single',
+      direction,
+      'system1-name': serviceName,
+      'pipeline-result': 'success',
+    },
+    secrets: {
+      PR_TOKEN:
+        "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+    },
+  };
 }
 
 function dumpWorkflow(workflow: Record<string, unknown>): string {

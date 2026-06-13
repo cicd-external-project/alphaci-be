@@ -78,6 +78,7 @@ const appConfig: AppConfig = {
     secure: false,
     storeDriver: 'memory',
   },
+  archivedAccountRetentionDays: 30,
 };
 
 const makeConfigService = (config: AppConfig = appConfig) =>

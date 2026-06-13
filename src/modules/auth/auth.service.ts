@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
@@ -36,6 +36,23 @@ interface GitHubNormalizedUser {
   name?: string;
   avatarUrl?: string;
   email?: string;
+}
+
+/** Discriminated union returned by resolveAccountState. */
+type AccountState =
+  | { kind: 'active' | 'new'; user: SessionUser; accessToken: string }
+  | {
+      kind: 'archived';
+      profile: GitHubNormalizedUser;
+      accessToken: string;
+    };
+
+export interface PendingAccountInfo {
+  pending: true;
+  login: string;
+  archivedAt: string;
+  purgeAt: string;
+  retentionDays: number;
 }
 
 @Injectable()
@@ -86,21 +103,24 @@ export class AuthService {
     return this.handleOAuthProviderCallback(request, code, state);
   }
 
+  /**
+   * Archive the authenticated user's account (soft-delete). All child data is
+   * preserved via ON DELETE CASCADE being irrelevant here — FK children remain.
+   * The session is destroyed after archiving so the user cannot continue using
+   * a now-archived account.
+   */
   async deleteAccount(request: Request): Promise<void> {
     const userId = request.session.userId ?? request.session.user?.id;
     if (!userId) {
       return;
     }
 
-    // Hard-delete all user data in FK-safe order, then destroy the session.
-    // provisioned_projects, user_subscriptions, workflow_generations,
-    // outbox_events, and oauth_states all reference app_users by user_id
-    // with ON DELETE CASCADE — a single DELETE on app_users is sufficient.
-    // The session row is cleaned up by destroying the session below.
-    await this.usersRepository.deleteById(userId);
+    // Soft-delete: set archived_at so the row is hidden but recoverable.
+    // All child FK rows (projects, subscriptions, etc.) are preserved.
+    await this.usersRepository.archiveById(userId);
 
-    // Destroy session after data deletion so we don't leave a dangling session
-    // pointing at a now-deleted user.
+    // Destroy session after archiving so we don't leave a dangling session
+    // pointing at a now-archived user.
     await new Promise<void>((resolve, reject) => {
       request.session.destroy((error) => {
         if (error) {
@@ -144,6 +164,151 @@ export class AuthService {
     return user;
   }
 
+  async completeOnboarding(request: Request): Promise<void> {
+    const user = await this.getSessionUser(request);
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    await this.usersRepository.markOnboardingComplete(user.id);
+    // Keep the live session object in sync so a subsequent /auth/me call
+    // (which may read from request.session.user without a DB round-trip)
+    // immediately reflects the completed state.
+    if (request.session.user) {
+      request.session.user.onboardingCompleted = true;
+    }
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * GET /auth/account/pending
+   *
+   * Returns information about the archived account that triggered the
+   * archived_choice redirect, so the FE can display restore/start-fresh UI.
+   * No authentication required — the user is not logged in at this point.
+   */
+  async getPendingArchivedAccount(
+    request: Request,
+  ): Promise<PendingAccountInfo | { pending: false }> {
+    const pending = request.session.pendingArchived;
+    if (!pending) {
+      return { pending: false };
+    }
+
+    const row = await this.usersRepository.findByGithubUserIdIncludingArchived(
+      pending.githubUserId,
+    );
+
+    // The row must still be archived (user might have used another tab to
+    // restore already). Fall back gracefully.
+    const archivedAt = row?.archivedAt ?? null;
+    if (!archivedAt) {
+      return { pending: false };
+    }
+
+    const retentionDays = this.config.archivedAccountRetentionDays;
+    const archivedDate = new Date(archivedAt);
+    const purgeAt = new Date(archivedDate);
+    purgeAt.setDate(purgeAt.getDate() + retentionDays);
+
+    return {
+      pending: true,
+      login: pending.login,
+      archivedAt,
+      purgeAt: purgeAt.toISOString(),
+      retentionDays,
+    };
+  }
+
+  /**
+   * POST /auth/account/restore
+   *
+   * Clears archived_at on the pending user's row and establishes a full
+   * authenticated session. The pendingArchived payload is cleared afterwards.
+   */
+  async restoreArchivedAccount(request: Request): Promise<void> {
+    const pending = request.session.pendingArchived;
+    if (!pending) {
+      throw new UnauthorizedException(
+        'No pending archived account in this session',
+      );
+    }
+
+    const restoredUser = await this.usersRepository.restoreByGithubUserId(
+      pending.githubUserId,
+    );
+
+    await this.establishSession(request, restoredUser);
+    request.session.githubAccessToken = pending.accessToken;
+    delete request.session.pendingArchived;
+
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * POST /auth/account/start-fresh
+   *
+   * Hard-deletes the old archived row (cascade removes children), then inserts
+   * a brand-new active row via upsertGitHubUser (no conflict possible since
+   * the old row is gone). Sets up a default free subscription and establishes
+   * the session as if the user were signing up for the first time.
+   */
+  async startFreshAccount(request: Request): Promise<void> {
+    const pending = request.session.pendingArchived;
+    if (!pending) {
+      throw new UnauthorizedException(
+        'No pending archived account in this session',
+      );
+    }
+
+    // Permanently remove the archived row; ON DELETE CASCADE handles children.
+    await this.usersRepository.hardDeleteByGithubUserId(pending.githubUserId);
+
+    // Insert a fresh row — no conflict because the old row is gone.
+    // onboarding_completed_at is NULL by default so the new account will
+    // correctly be directed through the onboarding flow again.
+    const newUser = await this.usersRepository.upsertGitHubUser({
+      githubUserId: pending.githubUserId,
+      login: pending.login,
+      ...(pending.name !== undefined && { name: pending.name }),
+      ...(pending.email !== undefined && { email: pending.email }),
+      ...(pending.avatarUrl !== undefined && { avatarUrl: pending.avatarUrl }),
+    });
+
+    await this.subscriptionsRepository.ensureDefaultFreeSubscription(
+      newUser.id,
+    );
+
+    await this.establishSession(request, newUser);
+    request.session.githubAccessToken = pending.accessToken;
+    delete request.session.pendingArchived;
+
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
   private async handleOAuthProviderCallback(
     request: Request,
     code?: string,
@@ -170,13 +335,44 @@ export class AuthService {
     }
 
     try {
-      const result = await this.signInWithGitHubAndReturnToken(code);
-      const persistedUser = result.user;
+      const accountState = await this.resolveAccountState(code);
+
+      if (accountState.kind === 'archived') {
+        // User previously archived their account. Stash a pending-choice
+        // payload in the session so the FE can present restore/start-fresh.
+        // Do NOT set userId or session.user — the user is NOT authenticated.
+        const { profile, accessToken } = accountState;
+        request.session.pendingArchived = {
+          githubUserId: profile.githubUserId,
+          login: profile.login,
+          ...(profile.name !== undefined && { name: profile.name }),
+          ...(profile.email !== undefined && { email: profile.email }),
+          ...(profile.avatarUrl !== undefined && {
+            avatarUrl: profile.avatarUrl,
+          }),
+          accessToken,
+        };
+
+        await new Promise<void>((resolve, reject) => {
+          request.session.save((err) => {
+            if (err) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+              return;
+            }
+            resolve();
+          });
+        });
+
+        return this.withQuery(returnTo, 'auth', 'archived_choice');
+      }
+
+      // Active or new account — establish a full authenticated session.
+      const { user: persistedUser, accessToken } = accountState;
       await this.subscriptionsRepository.ensureDefaultFreeSubscription(
         persistedUser.id,
       );
       await this.establishSession(request, persistedUser);
-      request.session.githubAccessToken = result.accessToken;
+      request.session.githubAccessToken = accessToken;
       // Persist the access token to the store. `session.regenerate()` inside
       // `establishSession` saves userId + user, but subsequent writes to
       // `request.session` after the regenerate promise resolves are NOT
@@ -213,13 +409,34 @@ export class AuthService {
     }
   }
 
-  private async signInWithGitHubAndReturnToken(
-    code: string,
-  ): Promise<{ user: SessionUser; accessToken: string }> {
+  /**
+   * Exchange the OAuth code for a GitHub token, fetch the user profile, then
+   * determine whether this is an active user, a new user, or an archived user.
+   *
+   * Returns a discriminated union so handleOAuthProviderCallback can branch
+   * cleanly without duplicating token-exchange or profile-fetch logic.
+   */
+  private async resolveAccountState(code: string): Promise<AccountState> {
     const accessToken = await this.exchangeCodeForGitHubToken(code);
     const profile = await this.fetchGitHubUser(accessToken);
+
+    const existing =
+      await this.usersRepository.findByGithubUserIdIncludingArchived(
+        profile.githubUserId,
+      );
+
+    if (existing && existing.archivedAt !== null) {
+      // Archived — do not upsert; return enough info to build pendingArchived.
+      return { kind: 'archived', profile, accessToken };
+    }
+
+    // Active or new — upsertGitHubUser handles both paths:
+    // - no existing row: INSERT (new user).
+    // - existing active row: UPDATE last_login_at + profile fields.
     const user = await this.usersRepository.upsertGitHubUser(profile);
-    return { user, accessToken };
+
+    const kind = existing ? 'active' : 'new';
+    return { kind, user, accessToken };
   }
 
   private buildGitHubAuthorizationUrl(state: string): string {
@@ -368,24 +585,10 @@ export class AuthService {
         delete request.session.oauthState;
         delete request.session.oauthReturnTo;
         delete request.session.oauthProvider;
+        delete request.session.pendingArchived;
         resolve();
       });
     });
-  }
-
-  private normalizeLogin(value: string): string {
-    const normalized = value
-      .trim()
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9._-]+/g, '-')
-      .replaceAll(/-+/g, '-')
-      .replaceAll(/^-+|-+$/g, '');
-
-    if (normalized) {
-      return normalized;
-    }
-
-    return `user-${randomUUID().slice(0, 8)}`;
   }
 
   private hasGitHubCredentials(): boolean {

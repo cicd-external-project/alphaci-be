@@ -15,7 +15,11 @@ import type {
   SubscriptionState,
 } from '../../common/interfaces/session-user.interface.js';
 
-const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
+const fakeUser: SessionUser = {
+  id: 'user-1',
+  login: 'testuser',
+  onboardingCompleted: false,
+};
 
 const fakeFreeSub: SubscriptionState = {
   plan: 'free',
