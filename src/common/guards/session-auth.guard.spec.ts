@@ -12,11 +12,12 @@ const fakeUser: SessionUser = {
   onboardingCompleted: false,
 };
 
-const makeContext = (session: Record<string, unknown>) => ({
-  switchToHttp: () => ({
-    getRequest: () => ({ session }),
-  }),
-}) as unknown as ExecutionContext;
+const makeContext = (session: Record<string, unknown>) =>
+  ({
+    switchToHttp: () => ({
+      getRequest: () => ({ session }),
+    }),
+  }) as unknown as ExecutionContext;
 
 const makeUsersRepo = () =>
   ({

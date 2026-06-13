@@ -134,23 +134,31 @@ export class GithubService {
 
     const payload = (await response.json()) as { token?: string };
     if (!payload.token) {
-      throw new BadGatewayException('GitHub installation token response did not include a token');
+      throw new BadGatewayException(
+        'GitHub installation token response did not include a token',
+      );
     }
 
     return payload.token;
   }
 
-  async getInstallationAccessTokenForUser(userId: string): Promise<string | null> {
+  async getInstallationAccessTokenForUser(
+    userId: string,
+  ): Promise<string | null> {
     if (!this.githubInstallationsRepository) return null;
 
-    const installations = await this.githubInstallationsRepository.findByUserId(userId);
+    const installations =
+      await this.githubInstallationsRepository.findByUserId(userId);
     const installation =
-      installations.find((item) => item.repositorySelection === 'all') ?? installations[0];
+      installations.find((item) => item.repositorySelection === 'all') ??
+      installations[0];
 
     if (!installation) return null;
 
     try {
-      return await this.createInstallationAccessToken(installation.installationId);
+      return await this.createInstallationAccessToken(
+        installation.installationId,
+      );
     } catch (error) {
       this.logger.warn(
         `Could not create installation token for user ${userId}: ${(error as Error).message}`,
@@ -175,8 +183,10 @@ export class GithubService {
       accountId = metadata.account?.id ?? null;
       repositorySelection = metadata.repository_selection ?? 'selected';
 
-      const installationToken = await this.createInstallationAccessToken(installationId);
-      repoFullNames = await this.fetchInstallationRepositories(installationToken);
+      const installationToken =
+        await this.createInstallationAccessToken(installationId);
+      repoFullNames =
+        await this.fetchInstallationRepositories(installationToken);
       reposLinked = repoFullNames.length;
     } catch (error) {
       this.logger.warn(
@@ -226,7 +236,9 @@ export class GithubService {
     }
   }
 
-  async listInstallationAccounts(userId: string): Promise<GithubInstallation[]> {
+  async listInstallationAccounts(
+    userId: string,
+  ): Promise<GithubInstallation[]> {
     if (!this.githubInstallationsRepository) return [];
     try {
       return await this.githubInstallationsRepository.findByUserId(userId);
@@ -243,7 +255,10 @@ export class GithubService {
    * Returns false on 404 (deleted or never existed) or 403/401 (no access).
    * Throws on unexpected non-2xx/4xx statuses (5xx, network errors).
    */
-  async repoExists(accessToken: string, repoFullName: string): Promise<boolean> {
+  async repoExists(
+    accessToken: string,
+    repoFullName: string,
+  ): Promise<boolean> {
     const response = await fetch(
       `https://api.github.com/repos/${repoFullName}`,
       {
@@ -257,7 +272,12 @@ export class GithubService {
     );
 
     if (response.status === 200) return true;
-    if (response.status === 404 || response.status === 403 || response.status === 401) return false;
+    if (
+      response.status === 404 ||
+      response.status === 403 ||
+      response.status === 401
+    )
+      return false;
 
     const body = await response.text();
     throw new BadGatewayException(
@@ -383,7 +403,7 @@ export class GithubService {
     if (!ref) {
       throw new BadGatewayException(
         `Could not resolve '${fromBranch}' branch on GitHub after retries. ` +
-        'The repository may not have initialised yet; please retry in a few seconds.',
+          'The repository may not have initialised yet; please retry in a few seconds.',
       );
     }
 
@@ -548,7 +568,9 @@ export class GithubService {
 
     const payload = (await response.json()) as GitHubPullRequestResponse;
     if (!payload.number || !payload.html_url) {
-      throw new BadGatewayException('GitHub pull request response was incomplete');
+      throw new BadGatewayException(
+        'GitHub pull request response was incomplete',
+      );
     }
 
     return { number: payload.number, htmlUrl: payload.html_url };
@@ -595,10 +617,16 @@ export class GithubService {
     const keyPayload = (await keyRes.json()) as { key_id: string; key: string };
 
     await sodium.ready;
-    const keyBytes = sodium.from_base64(keyPayload.key, sodium.base64_variants.ORIGINAL);
+    const keyBytes = sodium.from_base64(
+      keyPayload.key,
+      sodium.base64_variants.ORIGINAL,
+    );
     const secretBytes = sodium.from_string(secretValue);
     const encryptedBytes = sodium.crypto_box_seal(secretBytes, keyBytes);
-    const encryptedValue = sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
+    const encryptedValue = sodium.to_base64(
+      encryptedBytes,
+      sodium.base64_variants.ORIGINAL,
+    );
 
     const putRes = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`,
@@ -610,7 +638,10 @@ export class GithubService {
           'User-Agent': 'cicd-workflow-product',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ encrypted_value: encryptedValue, key_id: keyPayload.key_id }),
+        body: JSON.stringify({
+          encrypted_value: encryptedValue,
+          key_id: keyPayload.key_id,
+        }),
       },
     );
 
@@ -672,7 +703,9 @@ export class GithubService {
       },
     );
     if (!res.ok) {
-      this.logger.warn(`Branch protection on ${branch} failed (${String(res.status)}); continuing`);
+      this.logger.warn(
+        `Branch protection on ${branch} failed (${String(res.status)}); continuing`,
+      );
     }
   }
 
@@ -700,7 +733,9 @@ export class GithubService {
     return (await response.json()) as GitHubInstallationMetadataResponse;
   }
 
-  private async fetchInstallationRepositories(accessToken: string): Promise<string[]> {
+  private async fetchInstallationRepositories(
+    accessToken: string,
+  ): Promise<string[]> {
     const response = await fetch(
       'https://api.github.com/installation/repositories?per_page=100',
       {
@@ -719,7 +754,8 @@ export class GithubService {
       );
     }
 
-    const payload = (await response.json()) as GitHubInstallationRepositoriesResponse;
+    const payload =
+      (await response.json()) as GitHubInstallationRepositoriesResponse;
     return (payload.repositories ?? [])
       .map((repo) => repo.full_name)
       .filter((repoFullName): repoFullName is string => Boolean(repoFullName));

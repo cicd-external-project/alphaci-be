@@ -1,9 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import type { AppConfig } from '../../config/app.config';
 import { GithubService } from '../github/github.service';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
@@ -32,6 +35,7 @@ export class VercelCiSecretsService {
     private readonly githubService: GithubService,
     private readonly providerConnectionsRepository: ProviderConnectionsRepository,
     private readonly encryptionService: EnvTokenEncryptionService,
+    private readonly configService: ConfigService,
   ) {}
 
   async installForTarget(
@@ -44,30 +48,13 @@ export class VercelCiSecretsService {
       return { githubSecrets: this.vercelSecretNames(input.target.slot) };
     }
 
-    if (!input.providerConnectionId) {
-      throw new BadRequestException(
-        'providerConnectionId is required for BYO Vercel deployment secrets',
-      );
-    }
-
-    const connection =
-      await this.providerConnectionsRepository.findActiveProviderConnection(
-        input.providerConnectionId,
-        input.userId,
-      );
-    if (!connection || connection.provider !== 'vercel') {
-      throw new NotFoundException('Vercel provider connection not found');
-    }
-
     const [owner, repo] = this.parseRepoFullName(input.repoFullName);
     const secretNames = this.vercelSecretNames(input.target.slot);
     const vercelOrgId = this.requireProviderMetadataString(
       input.target.providerMetadata,
       'vercelOrgId',
     );
-    const vercelToken = this.encryptionService.decrypt(
-      connection.encryptedToken,
-    );
+    const vercelToken = await this.resolveVercelToken(input);
 
     await this.githubService.setActionsSecretStrict(
       input.githubAccessToken,
@@ -112,6 +99,39 @@ export class VercelCiSecretsService {
     }
 
     return [owner, repo];
+  }
+
+  private async resolveVercelToken(
+    input: InstallVercelCiSecretsInput,
+  ): Promise<string> {
+    if (input.target.ownershipMode === 'flowci_managed') {
+      const config = this.configService.getOrThrow<AppConfig>('app');
+      const token = config.envProvisioning.flowciManaged.vercelToken.trim();
+      if (!token) {
+        throw new InternalServerErrorException(
+          'FLOWCI_VERCEL_TOKEN is required for FlowCI-managed Vercel deployments',
+        );
+      }
+
+      return token;
+    }
+
+    if (!input.providerConnectionId) {
+      throw new BadRequestException(
+        'providerConnectionId is required for BYO Vercel deployment secrets',
+      );
+    }
+
+    const connection =
+      await this.providerConnectionsRepository.findActiveProviderConnection(
+        input.providerConnectionId,
+        input.userId,
+      );
+    if (!connection || connection.provider !== 'vercel') {
+      throw new NotFoundException('Vercel provider connection not found');
+    }
+
+    return this.encryptionService.decrypt(connection.encryptedToken);
   }
 
   private requireProviderMetadataString(

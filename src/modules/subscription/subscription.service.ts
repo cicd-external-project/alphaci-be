@@ -182,7 +182,9 @@ export class SubscriptionService {
 
     const metadataUserId = attributes?.metadata?.['userId'];
     if (typeof metadataUserId !== 'string' || metadataUserId !== user.id) {
-      throw new ForbiddenException('Checkout session does not belong to this user');
+      throw new ForbiddenException(
+        'Checkout session does not belong to this user',
+      );
     }
 
     const subscription = await this.activatePaidPlan(user.id);
@@ -217,6 +219,7 @@ export class SubscriptionService {
     user: SessionUser,
     _plan: SubscriptionPlan = 'pro',
   ): Promise<SubscriptionState> {
+    void _plan;
     this.assertMockEnabled();
 
     return this.activatePaidPlan(user.id, 'manual');

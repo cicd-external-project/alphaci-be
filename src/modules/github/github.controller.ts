@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Post,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
@@ -51,7 +44,8 @@ export class GithubController {
   async listInstallationAccounts(@Req() req: Request) {
     // SessionAuthGuard guarantees req.session.user is populated before this runs.
     const userId = req.session.user!.id;
-    const installations = await this.githubService.listInstallationAccounts(userId);
+    const installations =
+      await this.githubService.listInstallationAccounts(userId);
     const accounts = installations.map((inst) => ({
       installationId: inst.installationId,
       accountLogin: inst.accountLogin,
@@ -79,12 +73,18 @@ export class GithubController {
       },
     });
 
-    const scopes = res.headers.get('x-oauth-scopes') ?? res.headers.get('X-OAuth-Scopes');
+    const scopes =
+      res.headers.get('x-oauth-scopes') ?? res.headers.get('X-OAuth-Scopes');
     return {
       hasToken: true,
       scopes: scopes ? scopes.split(',').map((s) => s.trim()) : [],
       status: res.status,
-      hasRepoScope: scopes ? scopes.split(',').map((s) => s.trim()).some((s) => s === 'repo') : false,
+      hasRepoScope: scopes
+        ? scopes
+            .split(',')
+            .map((s) => s.trim())
+            .some((s) => s === 'repo')
+        : false,
     };
   }
 
@@ -106,19 +106,34 @@ export class GithubController {
   async createRepo(@Req() req: Request, @Body() body: CreateRepoDto) {
     const accessToken = req.session.githubAccessToken;
     if (!accessToken) {
-      return { error: 'GitHub access token not found. Re-authenticate via GitHub OAuth.' };
+      return {
+        error:
+          'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      };
     }
 
-    const { repoUrl, cloneUrl, ownerLogin, repoName } = await this.githubService.createRepo(accessToken, body);
+    const { repoUrl, cloneUrl, ownerLogin, repoName } =
+      await this.githubService.createRepo(accessToken, body);
 
     const branchesCreated: string[] = ['main'];
     for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(accessToken, ownerLogin, repoName, branch, 'main');
+      await this.githubService.createBranch(
+        accessToken,
+        ownerLogin,
+        repoName,
+        branch,
+        'main',
+      );
       branchesCreated.push(branch);
     }
 
     for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(accessToken, ownerLogin, repoName, branch);
+      await this.githubService.applyBranchProtection(
+        accessToken,
+        ownerLogin,
+        repoName,
+        branch,
+      );
     }
 
     return {

@@ -115,7 +115,10 @@ export const helmetConfigSwagger = {
  *   3. Wildcard (*) is never returned for credentialed requests.
  *   4. No origin → allowed (server-to-server / health probes).
  */
-export function corsOptions(allowedOriginsEnv?: string, allowedPatternsEnv?: string): CorsOptions {
+export function corsOptions(
+  allowedOriginsEnv?: string,
+  allowedPatternsEnv?: string,
+): CorsOptions {
   const whitelist = new Set(
     (allowedOriginsEnv ?? '')
       .split(',')

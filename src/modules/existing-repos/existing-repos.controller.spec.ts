@@ -49,9 +49,13 @@ describe('ExistingReposController', () => {
       controllers: [ExistingReposController],
       providers: [{ provide: ExistingReposService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
-      .overrideGuard(require('../../common/guards/subscription.guard.js').SubscriptionGuard)
+      .overrideGuard(
+        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -63,7 +67,11 @@ describe('ExistingReposController', () => {
 
     await controller.discover(makeRequest(), body);
 
-    expect(service.discover).toHaveBeenCalledWith('user-1', 'oauth-token', body);
+    expect(service.discover).toHaveBeenCalledWith(
+      'user-1',
+      'oauth-token',
+      body,
+    );
   });
 
   it('delegates setup PR creation with session user and OAuth token', async () => {
@@ -84,7 +92,9 @@ describe('ExistingReposController', () => {
       'oauth-token',
       body,
     );
-    expect(result).toMatchObject({ pullRequestUrl: 'https://github.com/tone/app/pull/42' });
+    expect(result).toMatchObject({
+      pullRequestUrl: 'https://github.com/tone/app/pull/42',
+    });
   });
 
   it('throws when no session user is available', async () => {

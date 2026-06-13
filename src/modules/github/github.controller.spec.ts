@@ -36,7 +36,9 @@ describe('GithubController', () => {
       controllers: [GithubController],
       providers: [{ provide: GithubService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 

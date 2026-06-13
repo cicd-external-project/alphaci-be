@@ -3,6 +3,8 @@ import type {
   EnvEnvironment,
   EnvProvider,
   EnvVarInput,
+  RenderEnvironmentName,
+  RenderServiceType,
 } from '../env-provisioning.types';
 
 export interface ProviderAccountSummary {
@@ -32,6 +34,13 @@ export interface CreateProviderTargetInput {
   buildCommand?: string;
   startCommand?: string;
   deploymentStrategy?: DeploymentStrategy;
+  renderServiceType?: RenderServiceType;
+  renderInstanceType?: string;
+  renderRegion?: string;
+  renderEnvironmentName?: RenderEnvironmentName;
+  dockerContext?: string;
+  dockerfilePath?: string;
+  imageUrl?: string;
   vercelOrgId?: string;
   vercelTeamId?: string;
   vercelTeamSlug?: string;

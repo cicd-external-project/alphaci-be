@@ -5,6 +5,7 @@ import type { DeploymentProvisioningResult } from '../projects/projects.service'
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import { EnvVarsService } from './env-vars.service';
+import { RenderCiSecretsService } from './render-ci-secrets.service';
 import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
 interface ProvisionForProjectInput {
@@ -25,6 +26,7 @@ export class ProjectDeploymentProvisioningService {
     private readonly deploymentTargetsService: DeploymentTargetsService,
     private readonly envVarsService: EnvVarsService,
     private readonly vercelCiSecretsService: VercelCiSecretsService,
+    private readonly renderCiSecretsService?: RenderCiSecretsService,
   ) {}
 
   async provisionForProject(
@@ -39,7 +41,11 @@ export class ProjectDeploymentProvisioningService {
     for (const requestedTarget of input.request.targets) {
       try {
         const targetRequest: CreateDeploymentTargetDto = {
-          action: 'create',
+          action:
+            requestedTarget.action ??
+            (requestedTarget.renderDeployMethod === 'existing_service'
+              ? 'register_existing'
+              : 'create'),
           slot: requestedTarget.slot,
           ownershipMode: requestedTarget.ownershipMode,
           provider: requestedTarget.provider,
@@ -50,6 +56,12 @@ export class ProjectDeploymentProvisioningService {
           ...(requestedTarget.projectName
             ? { projectName: requestedTarget.projectName }
             : {}),
+          ...(requestedTarget.providerProjectId
+            ? { providerProjectId: requestedTarget.providerProjectId }
+            : {}),
+          ...(requestedTarget.providerProjectName
+            ? { providerProjectName: requestedTarget.providerProjectName }
+            : {}),
           ...(requestedTarget.rootDirectory
             ? { rootDirectory: requestedTarget.rootDirectory }
             : {}),
@@ -58,6 +70,30 @@ export class ProjectDeploymentProvisioningService {
             : {}),
           ...(requestedTarget.startCommand
             ? { startCommand: requestedTarget.startCommand }
+            : {}),
+          ...(requestedTarget.renderDeployMethod
+            ? { renderDeployMethod: requestedTarget.renderDeployMethod }
+            : {}),
+          ...(requestedTarget.renderServiceType
+            ? { renderServiceType: requestedTarget.renderServiceType }
+            : {}),
+          ...(requestedTarget.renderInstanceType
+            ? { renderInstanceType: requestedTarget.renderInstanceType }
+            : {}),
+          ...(requestedTarget.renderRegion
+            ? { renderRegion: requestedTarget.renderRegion }
+            : {}),
+          ...(requestedTarget.renderEnvironmentName
+            ? { renderEnvironmentName: requestedTarget.renderEnvironmentName }
+            : {}),
+          ...(requestedTarget.dockerContext
+            ? { dockerContext: requestedTarget.dockerContext }
+            : {}),
+          ...(requestedTarget.dockerfilePath
+            ? { dockerfilePath: requestedTarget.dockerfilePath }
+            : {}),
+          ...(requestedTarget.imageUrl
+            ? { imageUrl: requestedTarget.imageUrl }
             : {}),
         };
 
@@ -95,6 +131,42 @@ export class ProjectDeploymentProvisioningService {
           );
         }
 
+        if (
+          target.provider === 'render' &&
+          ['render_image_pushed', 'render_existing_service'].includes(
+            target.deploymentStrategy,
+          )
+        ) {
+          if (!input.githubAccessToken) {
+            throw new Error(
+              'GitHub access token is required to install Render deployment secrets',
+            );
+          }
+          if (!this.renderCiSecretsService) {
+            throw new Error(
+              'Render deployment secret installer is not configured',
+            );
+          }
+
+          const secretResult =
+            await this.renderCiSecretsService.installForTarget({
+              githubAccessToken: input.githubAccessToken,
+              repoFullName: input.repoFullName,
+              userId: input.userId,
+              providerConnectionId:
+                requestedTarget.providerConnectionId ?? null,
+              target,
+            });
+          providerMetadata = {
+            ...providerMetadata,
+            githubSecrets: secretResult.githubSecrets,
+          };
+          await this.deploymentTargetsService.updateProviderMetadata(
+            target.id,
+            providerMetadata,
+          );
+        }
+
         const env: DeploymentProvisioningResult['targets'][number]['env'] = [];
         for (const envSet of requestedTarget.env ?? []) {
           const result = await this.envVarsService.provisionEnvVars(
@@ -124,6 +196,7 @@ export class ProjectDeploymentProvisioningService {
           providerProjectId: target.providerProjectId,
           providerProjectName: target.providerProjectName,
           providerMetadata,
+          ...this.renderResultMetadata(target),
           errorSummary: null,
           env,
         });
@@ -168,6 +241,25 @@ export class ProjectDeploymentProvisioningService {
     }
 
     return failedCount === targets.length ? 'failed' : 'partial';
+  }
+
+  private renderResultMetadata(target: {
+    renderServiceType?: unknown;
+    renderInstanceType?: unknown;
+    renderRegion?: unknown;
+    renderEnvironmentName?: unknown;
+    dockerContext?: unknown;
+    dockerfilePath?: unknown;
+    imageUrl?: unknown;
+  }): Record<string, string | null> {
+    const metadata: Record<string, string | null> = {};
+    for (const [key, value] of Object.entries(target)) {
+      if (typeof value === 'string' || value === null) {
+        metadata[key] = value;
+      }
+    }
+
+    return metadata;
   }
 
   private sanitizeError(error: unknown): string {

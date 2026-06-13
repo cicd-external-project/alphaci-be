@@ -14,9 +14,12 @@ import { EnvTokenEncryptionService } from './encryption.service';
 import type { EnvProvider } from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { RenderCostPolicyService } from './render-cost-policy.service';
 
 @Injectable()
 export class DeploymentTargetsService {
+  private readonly renderCostPolicy: RenderCostPolicyService;
+
   constructor(
     private readonly projectsRepository: ProjectsRepository,
     private readonly deploymentTargetsRepository: DeploymentTargetsRepository,
@@ -25,7 +28,11 @@ export class DeploymentTargetsService {
     private readonly clientRegistry: ProviderClientRegistry,
     private readonly configService: ConfigService,
     private readonly deploymentStrategyResolver: DeploymentStrategyResolver,
-  ) {}
+    renderCostPolicyService?: RenderCostPolicyService,
+  ) {
+    this.renderCostPolicy =
+      renderCostPolicyService ?? new RenderCostPolicyService(configService);
+  }
 
   async listDeploymentTargets(projectId: string, userId: string) {
     await this.getProjectOrThrow(projectId, userId);
@@ -53,12 +60,15 @@ export class DeploymentTargetsService {
     const deploymentStrategy = this.deploymentStrategyResolver.resolve({
       provider: dto.provider,
       ownershipMode: dto.ownershipMode,
+      action: dto.action,
+      renderDeployMethod: dto.renderDeployMethod,
     });
     const vercelScope = this.resolveVercelScope(
       dto.provider,
       dto.ownershipMode,
       providerAuth.connectionMetadata,
     );
+    const renderDefaults = this.resolveRenderDefaults(dto);
 
     const target =
       dto.action === 'create'
@@ -77,6 +87,25 @@ export class DeploymentTargetsService {
               ? { startCommand: dto.startCommand.trim() }
               : {}),
             deploymentStrategy,
+            ...(renderDefaults.renderServiceType
+              ? { renderServiceType: renderDefaults.renderServiceType }
+              : {}),
+            ...(renderDefaults.renderInstanceType
+              ? { renderInstanceType: renderDefaults.renderInstanceType }
+              : {}),
+            ...(renderDefaults.renderRegion
+              ? { renderRegion: renderDefaults.renderRegion }
+              : {}),
+            ...(renderDefaults.renderEnvironmentName
+              ? { renderEnvironmentName: renderDefaults.renderEnvironmentName }
+              : {}),
+            ...(renderDefaults.dockerContext
+              ? { dockerContext: renderDefaults.dockerContext }
+              : {}),
+            ...(renderDefaults.dockerfilePath
+              ? { dockerfilePath: renderDefaults.dockerfilePath }
+              : {}),
+            ...(dto.imageUrl?.trim() ? { imageUrl: dto.imageUrl.trim() } : {}),
             ...(vercelScope.vercelTeamId
               ? { vercelTeamId: vercelScope.vercelTeamId }
               : {}),
@@ -94,6 +123,7 @@ export class DeploymentTargetsService {
               'providerProjectName',
             ),
             provider: dto.provider,
+            metadata: this.registerExistingMetadata(dto, renderDefaults),
           };
 
     return this.deploymentTargetsRepository.createDeploymentTarget({
@@ -110,6 +140,13 @@ export class DeploymentTargetsService {
       rootDirectory: dto.rootDirectory?.trim() || null,
       buildCommand: dto.buildCommand?.trim() || null,
       startCommand: dto.startCommand?.trim() || null,
+      renderServiceType: renderDefaults.renderServiceType,
+      renderInstanceType: renderDefaults.renderInstanceType,
+      renderRegion: renderDefaults.renderRegion,
+      renderEnvironmentName: renderDefaults.renderEnvironmentName,
+      dockerContext: renderDefaults.dockerContext,
+      dockerfilePath: renderDefaults.dockerfilePath,
+      imageUrl: dto.imageUrl?.trim() || null,
       environmentMap: dto.environmentMap ?? {},
       deploymentStrategy,
       providerMetadata: target.metadata ?? {},
@@ -200,10 +237,15 @@ export class DeploymentTargetsService {
         config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
       const teamSlug =
         config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
+      if (!teamId) {
+        throw new BadRequestException(
+          'FLOWCI_VERCEL_TEAM_ID is required for FlowCI-managed Vercel deployment targets',
+        );
+      }
 
       return {
-        ...(teamId ? { vercelOrgId: teamId } : {}),
-        ...(teamId ? { vercelTeamId: teamId } : {}),
+        vercelOrgId: teamId,
+        vercelTeamId: teamId,
         ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
       };
     }
@@ -231,6 +273,84 @@ export class DeploymentTargetsService {
       vercelOrgId: orgId || teamId,
       ...(teamId ? { vercelTeamId: teamId } : {}),
       ...(teamSlug ? { vercelTeamSlug: teamSlug } : {}),
+    };
+  }
+
+  private resolveRenderDefaults(dto: CreateDeploymentTargetDto): {
+    renderServiceType: CreateDeploymentTargetDto['renderServiceType'] | null;
+    renderInstanceType: string | null;
+    renderRegion: string | null;
+    renderEnvironmentName:
+      | CreateDeploymentTargetDto['renderEnvironmentName']
+      | null;
+    dockerContext: string | null;
+    dockerfilePath: string | null;
+  } {
+    if (dto.provider !== 'render') {
+      return {
+        renderServiceType: null,
+        renderInstanceType: null,
+        renderRegion: null,
+        renderEnvironmentName: null,
+        dockerContext: null,
+        dockerfilePath: null,
+      };
+    }
+
+    const defaults = this.renderCostPolicy.resolveDefaults({
+      ownershipMode: dto.ownershipMode,
+      serviceType: dto.renderServiceType,
+      instanceType: dto.renderInstanceType,
+      region: dto.renderRegion,
+    });
+    const rootDirectory = dto.rootDirectory?.trim() || '.';
+    const dockerContext =
+      dto.dockerContext?.trim() ||
+      (rootDirectory === '.' ? '.' : rootDirectory);
+
+    return {
+      renderServiceType: defaults.serviceType,
+      renderInstanceType: defaults.instanceType,
+      renderRegion: defaults.region,
+      renderEnvironmentName:
+        dto.renderEnvironmentName ?? this.environmentFromBranch(dto.branchName),
+      dockerContext,
+      dockerfilePath: dto.dockerfilePath?.trim() || 'Dockerfile',
+    };
+  }
+
+  private environmentFromBranch(
+    branchName: string | undefined,
+  ): CreateDeploymentTargetDto['renderEnvironmentName'] {
+    const branch = branchName?.trim();
+    if (branch === 'main') {
+      return 'production';
+    }
+    if (branch === 'uat' || branch === 'production') {
+      return branch;
+    }
+
+    return 'test';
+  }
+
+  private registerExistingMetadata(
+    dto: CreateDeploymentTargetDto,
+    renderDefaults: ReturnType<
+      DeploymentTargetsService['resolveRenderDefaults']
+    >,
+  ): Record<string, unknown> {
+    if (dto.provider !== 'render') {
+      return {};
+    }
+
+    return {
+      deploymentStrategy: 'render_existing_service',
+      renderServiceType: renderDefaults.renderServiceType,
+      renderInstanceType: renderDefaults.renderInstanceType,
+      renderRegion: renderDefaults.renderRegion,
+      renderEnvironmentName: renderDefaults.renderEnvironmentName,
+      dockerContext: renderDefaults.dockerContext,
+      dockerfilePath: renderDefaults.dockerfilePath,
     };
   }
 

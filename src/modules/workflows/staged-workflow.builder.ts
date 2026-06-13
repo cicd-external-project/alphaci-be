@@ -392,6 +392,7 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
+    if: protectedDeployBranchExpression(),
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {

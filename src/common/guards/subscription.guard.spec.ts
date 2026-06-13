@@ -4,7 +4,10 @@ import type { TestingModule } from '@nestjs/testing';
 import { SubscriptionGuard } from './subscription.guard.js';
 import { SubscriptionService } from '../../modules/subscription/subscription.service.js';
 import type { ExecutionContext } from '@nestjs/common';
-import type { SessionUser, SubscriptionState } from '../interfaces/session-user.interface.js';
+import type {
+  SessionUser,
+  SubscriptionState,
+} from '../interfaces/session-user.interface.js';
 
 const fakeUser: SessionUser = {
   id: 'user-1',
@@ -12,13 +15,16 @@ const fakeUser: SessionUser = {
   onboardingCompleted: false,
 };
 
-const makeContext = (user: SessionUser | undefined) => ({
-  switchToHttp: () => ({
-    getRequest: () => ({ session: { user } }),
-  }),
-}) as unknown as ExecutionContext;
+const makeContext = (user: SessionUser | undefined) =>
+  ({
+    switchToHttp: () => ({
+      getRequest: () => ({ session: { user } }),
+    }),
+  }) as unknown as ExecutionContext;
 
-const makeSubscriptionService = (status: SubscriptionState['status'] = 'active') =>
+const makeSubscriptionService = (
+  status: SubscriptionState['status'] = 'active',
+) =>
   ({
     getForUser: jest.fn().mockResolvedValue({
       plan: status === 'active' ? 'pro' : 'free',
@@ -35,7 +41,10 @@ describe('SubscriptionGuard', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SubscriptionGuard,
-        { provide: SubscriptionService, useValue: makeSubscriptionService(status) },
+        {
+          provide: SubscriptionService,
+          useValue: makeSubscriptionService(status),
+        },
       ],
     }).compile();
     return module.get(SubscriptionGuard);

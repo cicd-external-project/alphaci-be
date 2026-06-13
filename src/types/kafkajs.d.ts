@@ -18,11 +18,13 @@ declare module 'kafkajs' {
       brokers: string[];
       logLevel?: logLevel;
       ssl?: boolean;
-      sasl?: {
-        mechanism: 'plain';
-        username: string;
-        password: string;
-      } | undefined;
+      sasl?:
+        | {
+            mechanism: 'plain';
+            username: string;
+            password: string;
+          }
+        | undefined;
     });
 
     producer(config?: { idempotent?: boolean }): Producer;

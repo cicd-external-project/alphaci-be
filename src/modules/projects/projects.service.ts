@@ -79,12 +79,22 @@ export interface DeploymentProvisioningResult {
       | 'provider_native'
       | 'vercel_git_connected'
       | 'vercel_ci_pushed'
+      | 'render_git_connected'
+      | 'render_image_pushed'
+      | 'render_existing_service'
       | null;
     status: 'created' | 'registered' | 'failed';
     deploymentTargetId: string | null;
     providerProjectId: string | null;
     providerProjectName: string | null;
     providerMetadata: Record<string, unknown>;
+    renderServiceType?: string | null;
+    renderInstanceType?: string | null;
+    renderRegion?: string | null;
+    renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
+    dockerContext?: string | null;
+    dockerfilePath?: string | null;
+    imageUrl?: string | null;
     errorSummary: string | null;
     env: Array<{
       environment: 'test' | 'uat' | 'production';
@@ -934,29 +944,69 @@ export class ProjectsService {
     }
 
     return request.targets
+      .filter((target) => slots.includes(target.slot))
       .filter(
         (target) =>
-          slots.includes(target.slot) &&
-          target.provider === 'vercel' &&
-          target.ownershipMode === 'byo',
+          target.provider === 'vercel' ||
+          (target.provider === 'render' &&
+            this.resolveRenderDeploymentStrategy(target) ===
+              'render_image_pushed'),
       )
       .map((target) => {
+        const rootDirectory = this.resolveWorkflowRootDirectory(
+          target,
+          fallbackRootDirectory,
+        );
+        if (target.provider === 'render') {
+          const descriptor: DeploymentWorkflowTarget = {
+            slot: target.slot,
+            provider: 'render',
+            deploymentStrategy: 'render_image_pushed',
+            secretNames: this.renderSecretNames(target.slot),
+            dockerContext: target.dockerContext?.trim() || rootDirectory || '.',
+            dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
+            imageName: this.renderImageName(target),
+            renderServiceType: target.renderServiceType ?? 'web_service',
+            renderInstanceType: target.renderInstanceType ?? 'free',
+          };
+          if (rootDirectory) {
+            descriptor.rootDirectory = rootDirectory;
+          }
+
+          return descriptor;
+        }
+
         const descriptor: DeploymentWorkflowTarget = {
           slot: target.slot,
           provider: 'vercel',
           deploymentStrategy: 'vercel_ci_pushed',
           secretNames: this.vercelSecretNames(target.slot),
         };
-        const rootDirectory = this.resolveWorkflowRootDirectory(
-          target,
-          fallbackRootDirectory,
-        );
         if (rootDirectory) {
           descriptor.rootDirectory = rootDirectory;
         }
 
         return descriptor;
       });
+  }
+
+  private resolveRenderDeploymentStrategy(
+    target: DeploymentProvisioningTargetDto,
+  ):
+    | 'render_image_pushed'
+    | 'render_git_connected'
+    | 'render_existing_service' {
+    if (target.renderDeployMethod === 'existing_service') {
+      return 'render_existing_service';
+    }
+    if (
+      target.ownershipMode === 'flowci_managed' ||
+      target.renderDeployMethod === 'byo_image'
+    ) {
+      return 'render_image_pushed';
+    }
+
+    return 'render_git_connected';
   }
 
   private resolveWorkflowRootDirectory(
@@ -973,13 +1023,33 @@ export class ProjectsService {
 
   private vercelSecretNames(
     slot: DeploymentProvisioningTargetDto['slot'],
-  ): DeploymentWorkflowTarget['secretNames'] {
+  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
     const prefix = `VERCEL_${slot.toUpperCase()}`;
     return {
       token: `${prefix}_TOKEN`,
       orgId: `${prefix}_ORG_ID`,
       projectId: `${prefix}_PROJECT_ID`,
     };
+  }
+
+  private renderSecretNames(
+    slot: DeploymentProvisioningTargetDto['slot'],
+  ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
+    const prefix = `RENDER_${slot.toUpperCase()}`;
+    return {
+      apiKey: `${prefix}_API_KEY`,
+      serviceId: `${prefix}_SERVICE_ID`,
+      ownerId: `${prefix}_OWNER_ID`,
+      registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
+    };
+  }
+
+  private renderImageName(target: DeploymentProvisioningTargetDto): string {
+    const raw = `flowci-${target.slot}-${target.projectName ?? target.slot}`;
+    return raw
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
   }
 
   private resolveSingleRepoDeploymentSlots(

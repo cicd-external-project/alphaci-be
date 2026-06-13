@@ -46,6 +46,16 @@ describe('DeploymentTargetsService', () => {
     );
     encryptionService.decrypt.mockReturnValue('vercel-token');
     clientRegistry.getClient.mockReturnValue(vercelClient);
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+    });
 
     service = new DeploymentTargetsService(
       projectsRepository as never,
@@ -84,5 +94,130 @@ describe('DeploymentTargetsService', () => {
     expect(
       deploymentTargetsRepository.createDeploymentTarget,
     ).not.toHaveBeenCalled();
+  });
+
+  it('creates FlowCI-managed Vercel targets as CI-pushed projects in the managed team', async () => {
+    vercelClient.createTarget.mockResolvedValueOnce({
+      id: 'prj_1',
+      name: 'demo-frontend',
+      provider: 'vercel',
+      metadata: {
+        deploymentStrategy: 'vercel_ci_pushed',
+        vercelOrgId: 'team_flowci',
+        vercelProjectId: 'prj_1',
+        vercelTeamId: 'team_flowci',
+        gitConnected: false,
+      },
+    });
+    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
+      id: 'target-1',
+    });
+
+    await service.createDeploymentTarget('project-1', 'user-1', {
+      action: 'create',
+      slot: 'frontend',
+      ownershipMode: 'flowci_managed',
+      provider: 'vercel',
+      projectName: 'demo-frontend',
+    });
+
+    expect(vercelClient.createTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'flowci-vercel-token',
+        deploymentStrategy: 'vercel_ci_pushed',
+        vercelOrgId: 'team_flowci',
+        vercelTeamId: 'team_flowci',
+        vercelTeamSlug: 'flowci-team',
+      }),
+    );
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownershipMode: 'flowci_managed',
+        provider: 'vercel',
+        deploymentStrategy: 'vercel_ci_pushed',
+        providerConnectionId: null,
+      }),
+    );
+  });
+
+  it('rejects FlowCI-managed Vercel targets when the managed team id is missing', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: null,
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'flowci_managed',
+        provider: 'vercel',
+        projectName: 'demo-frontend',
+      }),
+    ).rejects.toThrow('FLOWCI_VERCEL_TEAM_ID is required');
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('registers existing Render services without storing legacy deploy hook metadata', async () => {
+    providerConnectionsRepository.findActiveProviderConnection.mockResolvedValueOnce(
+      {
+        id: 'connection-1',
+        provider: 'render',
+        encryptedToken: 'encrypted',
+        metadata: {
+          ownerId: 'usr-render-owner',
+        },
+      },
+    );
+    encryptionService.decrypt.mockReturnValueOnce('render-token');
+    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
+      id: 'target-1',
+    });
+
+    await service.createDeploymentTarget('project-1', 'user-1', {
+      action: 'register_existing',
+      slot: 'backend',
+      ownershipMode: 'byo',
+      provider: 'render',
+      providerConnectionId: 'connection-1',
+      providerProjectId: 'srv-1',
+      providerProjectName: 'orders-api-test',
+      renderDeployMethod: 'existing_service',
+      environmentMap: {
+        deployHookUrl: 'https://api.render.com/deploy/legacy',
+      },
+    });
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'render',
+        providerConnectionId: 'connection-1',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        deploymentStrategy: 'render_existing_service',
+      }),
+    );
+    const [createInput] = deploymentTargetsRepository.createDeploymentTarget
+      .mock.calls[0] as [
+      {
+        providerMetadata: Record<string, unknown>;
+      },
+    ];
+    expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
   });
 });
