@@ -6,7 +6,11 @@ import { SubscriptionService } from '../../modules/subscription/subscription.ser
 import type { ExecutionContext } from '@nestjs/common';
 import type { SessionUser, SubscriptionState } from '../interfaces/session-user.interface.js';
 
-const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
+const fakeUser: SessionUser = {
+  id: 'user-1',
+  login: 'testuser',
+  onboardingCompleted: false,
+};
 
 const makeContext = (user: SessionUser | undefined) => ({
   switchToHttp: () => ({

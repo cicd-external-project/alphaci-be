@@ -100,6 +100,13 @@ export class AuthController {
   }
 
   @UseGuards(SessionAuthGuard)
+  @Post('onboarding/complete')
+  async completeOnboarding(@Req() req: Request) {
+    await this.authService.completeOnboarding(req);
+    return { ok: true, onboardingCompleted: true };
+  }
+
+  @UseGuards(SessionAuthGuard)
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     await this.authService.logout(req);

@@ -6,7 +6,11 @@ import { UsersRepository } from '../../modules/persistence/users.repository.js';
 import type { ExecutionContext } from '@nestjs/common';
 import type { SessionUser } from '../interfaces/session-user.interface.js';
 
-const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
+const fakeUser: SessionUser = {
+  id: 'user-1',
+  login: 'testuser',
+  onboardingCompleted: false,
+};
 
 const makeContext = (session: Record<string, unknown>) => ({
   switchToHttp: () => ({

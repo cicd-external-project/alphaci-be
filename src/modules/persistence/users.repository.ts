@@ -25,6 +25,7 @@ interface PersistedUserRow {
   display_name: string | null;
   email: string | null;
   avatar_url: string | null;
+  onboarding_completed_at: string | null;
 }
 
 @Injectable()
@@ -71,7 +72,7 @@ export class UsersRepository {
         is_dummy = false,
         last_login_at = NOW(),
         updated_at = NOW()
-      RETURNING id, login, display_name, email, avatar_url;
+      RETURNING id, login, display_name, email, avatar_url, onboarding_completed_at;
     `;
 
     const result = await this.databaseService.query<PersistedUserRow>(query, [
@@ -114,7 +115,7 @@ export class UsersRepository {
         is_dummy = false,
         last_login_at = NOW(),
         updated_at = NOW()
-      RETURNING id, login, display_name, email, avatar_url;
+      RETURNING id, login, display_name, email, avatar_url, onboarding_completed_at;
     `;
 
     const result = await this.databaseService.query<PersistedUserRow>(query, [
@@ -139,7 +140,7 @@ export class UsersRepository {
   async findById(userId: string): Promise<SessionUser | null> {
     const result = await this.databaseService.query<PersistedUserRow>(
       `
-        SELECT id, login, display_name, email, avatar_url
+        SELECT id, login, display_name, email, avatar_url, onboarding_completed_at
         FROM app_users
         WHERE id = $1
         LIMIT 1;
@@ -151,6 +152,16 @@ export class UsersRepository {
     return row ? this.toSessionUser(row) : null;
   }
 
+  async markOnboardingComplete(userId: string): Promise<void> {
+    await this.databaseService.query(
+      `UPDATE app_users
+         SET onboarding_completed_at = COALESCE(onboarding_completed_at, NOW()),
+             updated_at = NOW()
+       WHERE id = $1;`,
+      [userId],
+    );
+  }
+
   private toSessionUser(row: PersistedUserRow): SessionUser {
     return {
       id: row.id,
@@ -158,6 +169,7 @@ export class UsersRepository {
       name: row.display_name ?? row.login,
       ...(row.email != null && { email: row.email }),
       ...(row.avatar_url != null && { avatarUrl: row.avatar_url }),
+      onboardingCompleted: row.onboarding_completed_at != null,
     };
   }
 

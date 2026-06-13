@@ -16,6 +16,7 @@ const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
   email: 'test@example.com',
+  onboardingCompleted: false,
 };
 
 const fakeFreeSub: SubscriptionState = {

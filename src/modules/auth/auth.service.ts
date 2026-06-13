@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
@@ -142,6 +142,29 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  async completeOnboarding(request: Request): Promise<void> {
+    const user = await this.getSessionUser(request);
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    await this.usersRepository.markOnboardingComplete(user.id);
+    // Keep the live session object in sync so a subsequent /auth/me call
+    // (which may read from request.session.user without a DB round-trip)
+    // immediately reflects the completed state.
+    if (request.session.user) {
+      request.session.user.onboardingCompleted = true;
+    }
+    await new Promise<void>((resolve, reject) => {
+      request.session.save((err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   private async handleOAuthProviderCallback(
