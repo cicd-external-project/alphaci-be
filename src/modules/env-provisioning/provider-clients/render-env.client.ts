@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
+  DeleteProviderEnvInput,
   ProviderAccountSummary,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
@@ -156,6 +157,38 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       })),
       failed: [],
     };
+  }
+
+  async deleteEnvironmentVariable(
+    input: DeleteProviderEnvInput,
+  ): Promise<{ key: string; status: 'removed' }> {
+    const currentResponse = await fetch(
+      `${RENDER_API_URL}/services/${input.targetId}/env-vars`,
+      { headers: this.headers(input.token) },
+    );
+    await this.assertOk(currentResponse, 'Render env vars could not be loaded');
+    const current = (await currentResponse.json()) as Array<{
+      envVar?: { key?: string; value?: string };
+    }>;
+    const remaining = current
+      .map((item) => item.envVar)
+      .filter(
+        (item): item is { key: string; value?: string } =>
+          Boolean(item?.key && item.key !== input.key),
+      )
+      .map((item) => ({ key: item.key, value: item.value ?? '' }));
+
+    const response = await fetch(
+      `${RENDER_API_URL}/services/${input.targetId}/env-vars`,
+      {
+        method: 'PUT',
+        headers: this.headers(input.token),
+        body: JSON.stringify(remaining),
+      },
+    );
+    await this.assertOk(response, 'Render env vars could not be updated');
+
+    return { key: input.key, status: 'removed' };
   }
 
   private async getDefaultOwnerId(token: string): Promise<string> {

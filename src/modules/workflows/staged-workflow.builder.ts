@@ -55,12 +55,6 @@ const CI_VALIDATE_URL =
  */
 const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
 
-const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
-
-const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
-  PROTECTED_DEPLOY_BRANCHES,
-);
-
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
 
 /** Extra coverage demanded on uat/main on top of the baseline, capped. */
@@ -76,6 +70,7 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    * names must be unique per slot for the stage chains to stay independent.
    */
   workflowVariant?: 'backend' | 'frontend';
+  centralWorkflowRef?: string;
 }
 
 export function buildStagedWorkflowBundle(
@@ -92,6 +87,7 @@ export function buildStagedWorkflowBundle(
   );
   const deploymentProvider = dto.deploymentProvider;
   const deploymentTargets = dto.deploymentTargets ?? [];
+  const centralWorkflowRef = dto.centralWorkflowRef ?? 'v1';
   const requireProductionApproval =
     dto.enhancements?.includes('strictProductionApproval') ?? false;
   const stack = template.stack;
@@ -114,9 +110,20 @@ export function buildStagedWorkflowBundle(
 
   // Promotion PRs wait on every deploy job configured for the repo; skipped
   // deploys are acceptable (e.g. Vercel jobs skip on the test branch).
+  const renderImageTargets = deploymentTargets.filter(
+    (target) =>
+      target.provider === 'render' &&
+      target.deploymentStrategy === 'render_image_pushed',
+  );
   const deployJobIds = [
-    ...deploymentTargets.map((target) => `deploy-vercel-${target.slot}`),
-    ...(deploymentProvider === 'render' ? ['deploy-render'] : []),
+    ...deploymentTargets
+      .filter((target) => target.provider === 'vercel')
+      .map((target) => `deploy-vercel-${target.slot}`),
+    ...(renderImageTargets.length > 0
+      ? renderImageTargets.map((target) => `deploy-render-${target.slot}`)
+      : deploymentProvider === 'render'
+        ? ['deploy-render']
+        : []),
   ];
 
   const files: StagedWorkflowFile[] = [
@@ -173,7 +180,7 @@ export function buildStagedWorkflowBundle(
           ),
           [testJobId]: {
             needs: ['branch-policy'],
-            uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -192,7 +199,7 @@ export function buildStagedWorkflowBundle(
           },
           lint: {
             needs: ['branch-policy'],
-            uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -206,7 +213,7 @@ export function buildStagedWorkflowBundle(
           },
           security: {
             needs: ['validate-access'],
-            uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -222,7 +229,7 @@ export function buildStagedWorkflowBundle(
             // is advisory on test and blocking on uat/main (branch-policy
             // decides via sonar-gate-wait).
             if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
-            uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -274,22 +281,37 @@ export function buildStagedWorkflowBundle(
             serviceName,
             isBackend,
             requireProductionApproval,
+            centralWorkflowRef,
           ),
-          ...vercelDeployJobs(serviceName, servicePath, deploymentTargets),
-          ...(deploymentProvider === 'render' && {
-            'deploy-render': renderDeployJob(serviceName),
-          }),
+          ...vercelDeployJobs(
+            serviceName,
+            servicePath,
+            deploymentTargets,
+            centralWorkflowRef,
+          ),
+          ...(renderImageTargets.length > 0
+            ? renderDeployJobs(
+                serviceName,
+                servicePath,
+                renderImageTargets,
+                centralWorkflowRef,
+              )
+            : deploymentProvider === 'render'
+              ? { 'deploy-render': renderDeployJob(serviceName, centralWorkflowRef) }
+              : {}),
           'promote-to-uat': promotionJob(
             'test-to-uat',
             'test',
             serviceName,
             deployJobIds,
+            centralWorkflowRef,
           ),
           'promote-to-main': promotionJob(
             'uat-to-main',
             'uat',
             serviceName,
             deployJobIds,
+            centralWorkflowRef,
           ),
         },
       }),
@@ -395,25 +417,10 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   };
 }
 
-function protectedDeployBranchExpression(): string {
-  return [
-    '${{',
-    '(',
-    "github.event_name == 'workflow_dispatch' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
-    ') || (',
-    "github.event_name == 'workflow_run' &&",
-    "github.event.workflow_run.conclusion == 'success' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
-    ')',
-    '}}',
-  ].join(' ');
-}
-
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
-    if: protectedDeployBranchExpression(),
+    if: `\${{ (${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' }}`,
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {
@@ -454,11 +461,12 @@ function productionGateJob(
   serviceName: string,
   isBackend: boolean,
   requireApproval: boolean,
+  centralWorkflowRef: string,
 ) {
   return {
     needs: ['build'],
     if: `\${{ (${BRANCH_EXPR}) == 'main' }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/production-gate.yml@v1`,
+    uses: `${CENTRAL_WORKFLOW_REF}/production-gate.yml@${centralWorkflowRef}`,
     with: {
       'system-dir': serviceName,
       'app-type': isBackend ? 'api' : 'web',
@@ -477,32 +485,35 @@ function vercelDeployJobs(
   serviceName: string,
   servicePath: string,
   targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
 ) {
   return Object.fromEntries(
-    targets.map((target) => {
-      const secretNames = target.secretNames ?? {};
-      return [
-        `deploy-vercel-${target.slot}`,
-        {
-          needs: ['build', 'production-gate'],
-          if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-          uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
-          with: {
-            'system-name':
-              target.slot === 'standalone' ? serviceName : target.slot,
-            'working-directory': target.rootDirectory ?? servicePath,
-            'checkout-ref':
-              '${{ github.event.workflow_run.head_sha || github.sha }}',
-            environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
+    targets
+      .filter((target) => target.provider === 'vercel')
+      .map((target) => {
+        const secretNames = target.secretNames ?? {};
+        return [
+          `deploy-vercel-${target.slot}`,
+          {
+            needs: ['build', 'production-gate'],
+            if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${centralWorkflowRef}`,
+            with: {
+              'system-name':
+                target.slot === 'standalone' ? serviceName : target.slot,
+              'working-directory': target.rootDirectory ?? servicePath,
+              'checkout-ref': HEAD_SHA_EXPR,
+              'source-branch': `\${{ ${BRANCH_EXPR} }}`,
+              environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
+            },
+            secrets: {
+              VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
+              VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
+              VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
+            },
           },
-          secrets: {
-            VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
-            VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
-            VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
-          },
-        },
-      ];
-    }),
+        ];
+      }),
   );
 }
 
@@ -511,11 +522,11 @@ function vercelDeployJobs(
  * uat → uat, main → production); the production environment is reachable
  * only after the production gate passes.
  */
-function renderDeployJob(serviceName: string) {
+function renderDeployJob(serviceName: string, centralWorkflowRef: string) {
   return {
     needs: ['build', 'production-gate'],
     if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
+    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
     with: {
       'system-name': serviceName,
       environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || (${BRANCH_EXPR}) }}`,
@@ -543,6 +554,7 @@ function promotionJob(
   sourceBranch: 'test' | 'uat',
   serviceName: string,
   deployJobIds: string[],
+  centralWorkflowRef: string,
 ) {
   const conditions = [
     '!cancelled()',
@@ -561,7 +573,7 @@ function promotionJob(
     },
     needs: ['build', ...deployJobIds],
     if: `\${{ ${conditions.join(' && ')} }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@v1`,
+    uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@${centralWorkflowRef}`,
     with: {
       'pipeline-kind': 'single',
       direction,
@@ -573,6 +585,52 @@ function promotionJob(
         "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
     },
   };
+}
+
+function renderDeployJobs(
+  serviceName: string,
+  servicePath: string,
+  targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
+) {
+  return Object.fromEntries(
+    targets
+      .filter(
+        (target) =>
+          target.provider === 'render' &&
+          target.deploymentStrategy === 'render_image_pushed',
+      )
+      .map((target) => {
+        const secretNames = target.secretNames ?? {};
+        const secretPrefix = `RENDER_${target.slot.toUpperCase()}`;
+        return [
+          `deploy-render-${target.slot}`,
+          {
+            needs: ['build', 'production-gate'],
+            if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
+            with: {
+              'system-name':
+                target.slot === 'standalone' ? serviceName : target.slot,
+              environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || (${BRANCH_EXPR}) }}`,
+              branch: `\${{ ${BRANCH_EXPR} }}`,
+              'working-directory': target.rootDirectory ?? servicePath,
+              'docker-context':
+                target.dockerContext ?? target.rootDirectory ?? servicePath,
+              'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
+              'image-name': target.imageName ?? `flowci-${target.slot}`,
+              'checkout-ref': HEAD_SHA_EXPR,
+            },
+            secrets: {
+              RENDER_API_KEY: `\${{ secrets.${secretNames.apiKey ?? `${secretPrefix}_API_KEY`} }}`,
+              RENDER_SERVICE_ID: `\${{ secrets.${secretNames.serviceId ?? `${secretPrefix}_SERVICE_ID`} }}`,
+              RENDER_OWNER_ID: `\${{ secrets.${secretNames.ownerId ?? `${secretPrefix}_OWNER_ID`} }}`,
+              RENDER_REGISTRY_CREDENTIAL_ID: `\${{ secrets.${secretNames.registryCredentialId ?? `${secretPrefix}_REGISTRY_CREDENTIAL_ID`} }}`,
+            },
+          },
+        ];
+      }),
+  );
 }
 
 function dumpWorkflow(workflow: Record<string, unknown>): string {

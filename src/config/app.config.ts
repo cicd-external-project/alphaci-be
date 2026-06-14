@@ -52,6 +52,50 @@ export interface AppConfig {
       vercelTeamSlug: string | null;
     };
   };
+  projectSyncSnapshots: {
+    enabled: boolean;
+    liveGithubEnabled: boolean;
+    liveProvidersEnabled: boolean;
+  };
+  workflowSettingsPreview: {
+    enabled: boolean;
+  };
+  workflowUpdatePr: {
+    enabled: boolean;
+  };
+  projectTargetManagement: {
+    enabled: boolean;
+  };
+  ciRunTracking: {
+    enabled: boolean;
+    liveGithubEnabled: boolean;
+  };
+  deploymentHistory: {
+    enabled: boolean;
+    liveProvidersEnabled: boolean;
+  };
+  driftDetection: {
+    enabled: boolean;
+  };
+  driftRepair: {
+    enabled: boolean;
+    liveRepairEnabled: boolean;
+  };
+  driftLiveChecks: {
+    enabled: boolean;
+  };
+  usageQuotas: {
+    enabled: boolean;
+  };
+  workspaces: {
+    enabled: boolean;
+  };
+  auditEvents: {
+    enabled: boolean;
+  };
+  notifications: {
+    enabled: boolean;
+  };
   supabase: {
     dbUrl: string | undefined;
   };
@@ -156,6 +200,52 @@ export const appConfig = registerAs('app', (): AppConfig => {
         vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
         vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
       },
+    },
+    projectSyncSnapshots: {
+      enabled: env['PROJECT_SYNC_SNAPSHOTS_ENABLED'] === 'true',
+      liveGithubEnabled: env['PROJECT_SYNC_LIVE_GITHUB_ENABLED'] === 'true',
+      liveProvidersEnabled:
+        env['PROJECT_SYNC_LIVE_PROVIDERS_ENABLED'] === 'true',
+    },
+    workflowSettingsPreview: {
+      enabled: env['WORKFLOW_SETTINGS_PREVIEW_ENABLED'] === 'true',
+    },
+    workflowUpdatePr: {
+      enabled: env['WORKFLOW_UPDATE_PR_ENABLED'] === 'true',
+    },
+    projectTargetManagement: {
+      enabled: env['PROJECT_TARGET_MANAGEMENT_ENABLED'] === 'true',
+    },
+    ciRunTracking: {
+      enabled: env['CI_RUN_TRACKING_ENABLED'] === 'true',
+      liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] === 'true',
+    },
+    deploymentHistory: {
+      enabled: env['DEPLOYMENT_HISTORY_ENABLED'] === 'true',
+      liveProvidersEnabled:
+        env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] === 'true',
+    },
+    driftDetection: {
+      enabled: env['DRIFT_DETECTION_ENABLED'] === 'true',
+    },
+    driftRepair: {
+      enabled: env['DRIFT_REPAIR_ENABLED'] === 'true',
+      liveRepairEnabled: env['DRIFT_LIVE_REPAIR_ENABLED'] === 'true',
+    },
+    driftLiveChecks: {
+      enabled: env['DRIFT_LIVE_PROVIDER_CHECKS_ENABLED'] === 'true',
+    },
+    usageQuotas: {
+      enabled: env['USAGE_QUOTAS_ENABLED'] === 'true',
+    },
+    workspaces: {
+      enabled: env['WORKSPACES_ENABLED'] === 'true',
+    },
+    auditEvents: {
+      enabled: env['AUDIT_EVENTS_ENABLED'] === 'true',
+    },
+    notifications: {
+      enabled: env['NOTIFICATIONS_ENABLED'] === 'true',
     },
     supabase: {
       dbUrl: env['SUPABASE_DB_URL'],
