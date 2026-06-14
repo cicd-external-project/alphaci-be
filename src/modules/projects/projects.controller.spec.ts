@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
@@ -127,6 +127,8 @@ const makeProjectsService = () =>
       enabled: true,
       items: [],
     }),
+    disconnectProject: jest.fn().mockResolvedValue(undefined),
+    syncProjects: jest.fn().mockResolvedValue({ checked: 1 }),
   }) as unknown as ProjectsService;
 
 const makeProjectCiRunsService = () =>
@@ -545,5 +547,191 @@ describe('ProjectsController', () => {
       enabled: true,
       items: [],
     });
+  });
+
+  it('throws when creating a project without a GitHub login in session', async () => {
+    await expect(
+      controller.createProject(
+        makeRequest({ id: 'user-1', login: '' }, 'gh-token'),
+        {
+          repoName: 'orders-api',
+          visibility: 'private',
+          projectTypeId: 'nestjs-api',
+          serviceName: 'orders-api',
+        },
+      ),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('throws when setting up a project without a GitHub OAuth token', async () => {
+    await expect(
+      controller.setupProject(makeRequest(fakeUser, undefined), {
+        repoFullName: 'testuser/orders-api',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+      }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('falls back to the default list limit when limit is invalid', async () => {
+    await controller.listProjects(makeRequest(), 'not-a-number');
+
+    expect(service.listProjects).toHaveBeenCalledWith('user-1', 25);
+  });
+
+  it.each([
+    ['overview', () => controller.getProjectOverview(makeRequest(), '')],
+    ['snapshot sync', () => controller.syncProjectSnapshot(makeRequest(), '')],
+    [
+      'workflow settings',
+      () => controller.getWorkflowSettings(makeRequest(), ''),
+    ],
+    [
+      'workflow preview',
+      () => controller.previewWorkflowSettings(makeRequest(), '', {}),
+    ],
+    [
+      'workflow pull request',
+      () => controller.createWorkflowUpdatePullRequest(makeRequest(), '', {}),
+    ],
+    ['ci runs', () => controller.listCiRuns(makeRequest(), '')],
+    ['deployments', () => controller.listDeployments(makeRequest(), '')],
+    ['drift findings', () => controller.listDriftFindings(makeRequest(), '')],
+    ['drift detection', () => controller.runDriftDetection(makeRequest(), '')],
+    [
+      'audit events',
+      () => controller.listProjectAuditEvents(makeRequest(), ''),
+    ],
+    ['disconnect', () => controller.disconnectProject(makeRequest(), '')],
+  ])(
+    'throws when %s is requested without a project id',
+    async (_label, act) => {
+      await expect(act()).rejects.toThrow(NotFoundException);
+    },
+  );
+
+  it.each([
+    [
+      'workflow settings',
+      () => controller.getWorkflowSettings(makeUnauthRequest(), 'project-1'),
+    ],
+    [
+      'workflow preview',
+      () =>
+        controller.previewWorkflowSettings(
+          makeUnauthRequest(),
+          'project-1',
+          {},
+        ),
+    ],
+    [
+      'workflow pull request',
+      () =>
+        controller.createWorkflowUpdatePullRequest(
+          makeUnauthRequest(),
+          'project-1',
+          {},
+        ),
+    ],
+    ['ci runs', () => controller.listCiRuns(makeUnauthRequest(), 'project-1')],
+    [
+      'ci run detail',
+      () =>
+        controller.getCiRun(
+          makeUnauthRequest(),
+          'project-1',
+          'local-project-1-quality',
+        ),
+    ],
+    [
+      'ci rerun',
+      () =>
+        controller.rerunCiRun(
+          makeUnauthRequest(),
+          'project-1',
+          'local-project-1-quality',
+        ),
+    ],
+    [
+      'deployments',
+      () => controller.listDeployments(makeUnauthRequest(), 'project-1'),
+    ],
+    [
+      'drift findings',
+      () => controller.listDriftFindings(makeUnauthRequest(), 'project-1'),
+    ],
+    [
+      'drift detection',
+      () => controller.runDriftDetection(makeUnauthRequest(), 'project-1'),
+    ],
+    [
+      'drift repair',
+      () =>
+        controller.repairDriftFinding(
+          makeUnauthRequest(),
+          'project-1',
+          'finding-1',
+          {},
+        ),
+    ],
+    [
+      'audit events',
+      () => controller.listProjectAuditEvents(makeUnauthRequest(), 'project-1'),
+    ],
+    [
+      'disconnect',
+      () => controller.disconnectProject(makeUnauthRequest(), 'project-1'),
+    ],
+    ['project sync', () => controller.syncProjects(makeUnauthRequest())],
+  ])(
+    'throws when %s is requested without authentication',
+    async (_label, act) => {
+      await expect(act()).rejects.toThrow(UnauthorizedException);
+    },
+  );
+
+  it('uses the default drift repair action when none is provided', async () => {
+    await controller.repairDriftFinding(
+      makeRequest(fakeUser, undefined),
+      'project-1',
+      'finding-1',
+      {},
+    );
+
+    expect(driftRepairService.repair).toHaveBeenCalledWith(
+      'project-1',
+      'finding-1',
+      'user-1',
+      'mark_ignored',
+      null,
+    );
+  });
+
+  it('disconnects project tracking and returns an ok contract', async () => {
+    await expect(
+      controller.disconnectProject(makeRequest(), 'project-1'),
+    ).resolves.toEqual({ ok: true });
+    expect(service.disconnectProject).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+    );
+  });
+
+  it('throws when syncing projects without a GitHub OAuth token', async () => {
+    await expect(
+      controller.syncProjects(makeRequest(fakeUser, undefined)),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('syncs projects with the current user and GitHub OAuth token', async () => {
+    (service as jest.Mocked<ProjectsService>).syncProjects = jest
+      .fn()
+      .mockResolvedValue({ checked: 1 });
+
+    await expect(
+      controller.syncProjects(makeRequest(fakeUser, 'gh-token')),
+    ).resolves.toEqual({ checked: 1 });
+    expect(service.syncProjects).toHaveBeenCalledWith('user-1', 'gh-token');
   });
 });

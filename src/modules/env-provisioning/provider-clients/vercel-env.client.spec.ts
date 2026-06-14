@@ -69,6 +69,66 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('validates Vercel user access with fallback account metadata', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          user: {
+            uid: 'user_1',
+            username: 'tone',
+          },
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().validateConnection('vercel'),
+    ).resolves.toEqual({
+      id: 'user_1',
+      name: 'tone',
+      metadata: {
+        accountType: 'user',
+        orgId: 'user_1',
+      },
+    });
+  });
+
+  it('uses fallback Vercel account metadata when the user payload is sparse', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(
+      new VercelEnvClient().validateConnection('vercel'),
+    ).resolves.toEqual({
+      id: 'vercel-account',
+      name: 'Vercel account',
+      metadata: {
+        accountType: 'user',
+        orgId: 'vercel-account',
+      },
+    });
+  });
+
+  it('lists Vercel projects and filters incomplete rows', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          projects: [{ id: 'prj_1', name: 'orders-web' }, { id: 'prj_2' }],
+        }),
+    });
+
+    await expect(new VercelEnvClient().listTargets('vercel')).resolves.toEqual([
+      {
+        id: 'prj_1',
+        name: 'orders-web',
+        provider: 'vercel',
+      },
+    ]);
+  });
+
   it('deletes Vercel env vars by looking up the provider env id', async () => {
     global.fetch = jest
       .fn()
@@ -108,6 +168,23 @@ describe('VercelEnvClient', () => {
       'https://api.vercel.com/v9/projects/prj-1/env/env_1',
       expect.objectContaining({ method: 'DELETE' }),
     );
+  });
+
+  it('treats missing Vercel env vars as already removed', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ envs: [] }),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteEnvironmentVariable({
+        token: 'vercel',
+        targetId: 'prj-1',
+        environment: 'test',
+        key: 'DATABASE_URL',
+      }),
+    ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('creates Vercel projects from repo metadata', async () => {
@@ -278,6 +355,17 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('throws when Vercel team validation returns no id', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ slug: 'flowci' }),
+    });
+
+    await expect(
+      new VercelEnvClient().validateTeamAccess('vercel-token', 'team_123'),
+    ).rejects.toThrow('Vercel team validation returned an invalid response');
+  });
+
   it('normalizes root directories before creating Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
@@ -306,6 +394,74 @@ describe('VercelEnvClient', () => {
         rootDirectory: 'frontend',
       }),
     );
+  });
+
+  it.each(['.', './', '/absolute', '../outside', 'apps/../api'])(
+    'omits unsafe root directory %s',
+    async (rootDirectory) => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id: 'prj_1',
+            name: 'web-app-test',
+          }),
+      });
+
+      await new VercelEnvClient().createTarget({
+        token: 'vercel',
+        repoFullName: 'owner/web-app',
+        projectName: 'web-app-test',
+        branchName: 'test',
+        rootDirectory,
+      });
+
+      const [, init] = (fetch as jest.Mock).mock.calls[0] as [
+        string,
+        { body: string },
+      ];
+      expect(JSON.parse(init.body)).not.toHaveProperty('rootDirectory');
+    },
+  );
+
+  it('uses explicit Vercel team slug scope for project creation', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+        }),
+    });
+
+    await new VercelEnvClient().createTarget({
+      token: 'vercel',
+      repoFullName: 'owner/web-app',
+      projectName: 'web-app-test',
+      branchName: 'test',
+      vercelTeamSlug: 'explicit-team',
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v11/projects?slug=explicit-team',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('throws when Vercel project creation response is invalid', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ id: 'prj_1' }),
+    });
+
+    await expect(
+      new VercelEnvClient().createTarget({
+        token: 'vercel',
+        repoFullName: 'owner/web-app',
+        projectName: 'web-app-test',
+        branchName: 'test',
+      }),
+    ).rejects.toThrow('Vercel project creation returned an invalid response');
   });
 
   it('scopes project creation to the configured Vercel team slug when team id is absent', async () => {

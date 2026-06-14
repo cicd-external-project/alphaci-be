@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
 import type { CiService } from '../ci/ci.service.js';
@@ -834,10 +834,7 @@ jobs:
         ],
       }),
     };
-    const AuditProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const auditService = new AuditProjectsService(
+    const auditService = new ProjectsService(
       makeCatalogService(),
       githubService,
       projectsRepository,
@@ -853,7 +850,7 @@ jobs:
       undefined,
       undefined,
       auditEventsService,
-    ) as ProjectsService;
+    );
 
     await expect(
       auditService.listProjectAuditEvents('project-1', 'user-1'),
@@ -1285,10 +1282,7 @@ jobs:
     const auditEventsService = {
       record: jest.fn().mockResolvedValue(undefined),
     };
-    const PrProjectsService = ProjectsService as unknown as new (
-      ...args: unknown[]
-    ) => ProjectsService;
-    const prService = new PrProjectsService(
+    const prService = new ProjectsService(
       makeCatalogService(),
       githubWrites,
       projectsRepository,
@@ -1336,11 +1330,10 @@ jobs:
       'main',
     );
     expect(githubWrites.putFileContent).toHaveBeenCalledTimes(3);
-    const putFileContentCalls = githubWrites.putFileContent.mock
-      .calls as Array<[string, string, string, string, string, string, string]>;
-    expect(
-      putFileContentCalls.map((call) => call[3]),
-    ).toEqual([
+    const putFileContentCalls = githubWrites.putFileContent.mock.calls as Array<
+      [string, string, string, string, string, string, string]
+    >;
+    expect(putFileContentCalls.map((call) => call[3])).toEqual([
       '.github/workflows/00-flowci-access.yml',
       '.github/workflows/10-flowci-quality.yml',
       '.github/workflows/20-flowci-package.yml',
@@ -1444,7 +1437,7 @@ jobs:
       }),
       overviewRepos.workflowSettingsRepository,
       overviewRepos.workflowUpdateRequestsRepository,
-    ) as ProjectsService;
+    );
 
     const result = await prService.createWorkflowUpdatePullRequest(
       'project-1',
@@ -1567,5 +1560,171 @@ jobs:
     await expect(
       overviewService.getProjectOverview('project-1', 'user-2'),
     ).rejects.toThrow('Project not found');
+  });
+
+  it('disconnects an owned project through the repository', async () => {
+    const projectsRepository = {
+      deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+    };
+    const disconnectService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository as never,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    await expect(
+      disconnectService.disconnectProject('project-1', 'user-1'),
+    ).resolves.toBeUndefined();
+    expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+    );
+  });
+
+  it('throws not found when disconnecting a project outside the user scope', async () => {
+    const disconnectService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      { deleteByIdAndUser: jest.fn().mockResolvedValue(false) } as never,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    await expect(
+      disconnectService.disconnectProject('project-1', 'user-2'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns an empty sync summary when the user has no projects', async () => {
+    const syncService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      { listByUser: jest.fn().mockResolvedValue([]) } as never,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    await expect(
+      syncService.syncProjects('user-1', 'gh-token'),
+    ).resolves.toEqual({
+      orphaned: 0,
+      reachable: 0,
+      total: 0,
+    });
+  });
+
+  it('marks unreachable projects orphaned and reachable projects active during sync', async () => {
+    const syncGithubService = {
+      ...makeGithubService(),
+      repoExists: jest
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(new Error('transient')),
+    } as unknown as GithubService;
+    const projectsRepository = {
+      listByUser: jest.fn().mockResolvedValue([
+        { id: 'project-1', repo_full_name: 'tone/orders-api' },
+        { id: 'project-2', repo_full_name: 'tone/deleted-api' },
+        { id: 'project-3', repo_full_name: 'tone/flaky-api' },
+      ]),
+      markOrphaned: jest.fn().mockResolvedValue(1),
+      markReachable: jest.fn().mockResolvedValue(1),
+    };
+    const syncService = new ProjectsService(
+      makeCatalogService(),
+      syncGithubService,
+      projectsRepository as never,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    await expect(
+      syncService.syncProjects('user-1', 'gh-token'),
+    ).resolves.toEqual({
+      orphaned: 1,
+      reachable: 1,
+      total: 3,
+    });
+    expect(projectsRepository.markReachable).toHaveBeenCalledWith(
+      ['project-1'],
+      'user-1',
+    );
+    expect(projectsRepository.markOrphaned).toHaveBeenCalledWith(
+      ['project-2'],
+      'user-1',
+    );
+  });
+
+  it('builds workflow YAML with generated defaults and enhancement flags', async () => {
+    const workflowService = service as unknown as {
+      buildWorkflowYaml: (
+        templateId: string,
+        serviceName: string,
+        servicePath?: string,
+        nodeVersion?: string,
+        coverageThreshold?: number,
+        customOutputFileName?: string,
+        enhancements?: Array<
+          | 'strictProductionApproval'
+          | 'enableUatApproval'
+          | 'disablePlaywright'
+          | 'disableK6'
+        >,
+      ) => Promise<{ generatedYaml: string; outputFileName: string }>;
+    };
+
+    mockedReadFile.mockResolvedValueOnce(`
+name: CI
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        type: string
+jobs:
+  pipeline:
+    with: {}
+`);
+
+    const result = await workflowService.buildWorkflowYaml(
+      'be-nestjs',
+      'Orders API',
+      'apps/api',
+      '24',
+      90,
+      undefined,
+      [
+        'strictProductionApproval',
+        'enableUatApproval',
+        'disablePlaywright',
+        'disableK6',
+      ],
+    );
+
+    expect(result.outputFileName).toBe('orders-api-be-nestjs.yml');
+    expect(result.generatedYaml).toContain('Orders API - Backend API');
+    expect(result.generatedYaml).toContain('default: apps/api');
+    expect(result.generatedYaml).toContain("default: '24'");
+    expect(result.generatedYaml).toContain('default: 90');
+    expect(result.generatedYaml).toContain('run-playwright: false');
+    expect(result.generatedYaml).toContain('run-k6: false');
+    expect(result.generatedYaml).toContain('require-uat-approval: true');
+    expect(result.generatedYaml).toContain('require-production-approval: true');
+  });
+
+  it('throws when workflow YAML template cannot be parsed as an object', async () => {
+    const workflowService = service as unknown as {
+      buildWorkflowYaml: (
+        templateId: string,
+        serviceName: string,
+      ) => Promise<{ generatedYaml: string; outputFileName: string }>;
+    };
+    mockedReadFile.mockResolvedValueOnce('- invalid');
+
+    await expect(
+      workflowService.buildWorkflowYaml('be-nestjs', 'Orders API'),
+    ).rejects.toThrow('Workflow template could not be parsed');
   });
 });

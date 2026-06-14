@@ -142,4 +142,116 @@ jobs:
       pullRequestUrl: 'https://github.com/tone/app/pull/42',
     });
   });
+
+  it.each([
+    [{ dependencies: { '@nestjs/core': '11.0.0' } }, 'nestjs'],
+    [{ dependencies: { react: '19.0.0' } }, 'react'],
+    [{ dependencies: { express: '5.0.0' } }, 'nodejs'],
+    [{ dependencies: { fastify: '5.0.0' } }, 'nodejs'],
+    [{ dependencies: {} }, null],
+  ])(
+    'detects project type from package dependencies',
+    async (pkg, expected) => {
+      (githubService.getFileContent as jest.Mock).mockResolvedValueOnce(
+        JSON.stringify(pkg),
+      );
+
+      await expect(
+        service.discover('user-1', null, {
+          repoFullName: 'tone/app',
+        }),
+      ).resolves.toMatchObject({
+        baseBranch: 'main',
+        detectedProjectTypeId: expected,
+      });
+    },
+  );
+
+  it('falls back to the OAuth token when no app installation token exists', async () => {
+    (
+      githubService.getInstallationAccessTokenForUser as jest.Mock
+    ).mockResolvedValueOnce(null);
+
+    await service.discover('user-1', 'oauth-token', {
+      repoFullName: 'tone/app',
+    });
+
+    expect(githubService.getFileContent).toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'app',
+      'package.json',
+      'main',
+    );
+  });
+
+  it('rejects discovery when no GitHub token source is available', async () => {
+    (
+      githubService.getInstallationAccessTokenForUser as jest.Mock
+    ).mockResolvedValueOnce(null);
+
+    await expect(
+      service.discover('user-1', null, {
+        repoFullName: 'tone/app',
+      }),
+    ).rejects.toThrow('No usable GitHub token found');
+  });
+
+  it('rejects malformed repo full names', async () => {
+    await expect(
+      service.discover('user-1', null, {
+        repoFullName: 'tone',
+      }),
+    ).rejects.toThrow('Invalid repoFullName');
+  });
+
+  it('uses fallback template and sanitized output names for setup PRs', async () => {
+    const result = await service.setupPullRequest('user-1', null, {
+      repoFullName: 'tone/app',
+      projectTypeId: 'unknown',
+      serviceName: 'Orders API',
+      nodeVersion: '24',
+      coverageThreshold: 90,
+    });
+
+    expect(result).toMatchObject({
+      branchName: 'flowci/orders-api-ci',
+      workflowPath: '.github/workflows/orders-api-unknown-standard.yml',
+    });
+    expect(githubService.putFileContent).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'app',
+      '.github/workflows/orders-api-unknown-standard.yml',
+      expect.stringContaining("default: '24'"),
+      'flowci/orders-api-ci',
+      'ci: add FlowCI Studio workflow',
+    );
+  });
+
+  it('throws when the selected workflow template does not exist', async () => {
+    const catalogService = makeCatalogService();
+    (catalogService.getTemplateById as jest.Mock).mockResolvedValueOnce(null);
+    service = new ExistingReposService(githubService, catalogService);
+
+    await expect(
+      service.setupPullRequest('user-1', null, {
+        repoFullName: 'tone/app',
+        projectTypeId: 'nextjs',
+        serviceName: 'app',
+      }),
+    ).rejects.toThrow("Template 'nextjs-service-pipeline' not found");
+  });
+
+  it('throws when workflow template YAML is not an object', async () => {
+    mockedReadFile.mockResolvedValueOnce('- invalid');
+
+    await expect(
+      service.setupPullRequest('user-1', null, {
+        repoFullName: 'tone/app',
+        projectTypeId: 'nextjs',
+        serviceName: 'app',
+      }),
+    ).rejects.toThrow('Workflow template could not be parsed');
+  });
 });
