@@ -54,6 +54,15 @@ const appConfig: AppConfig = {
       vercelTeamSlug: null,
     },
   },
+  projectSyncSnapshots: {
+    enabled: false,
+  },
+  workflowSettingsPreview: {
+    enabled: false,
+  },
+  workflowUpdatePr: {
+    enabled: false,
+  },
   subscription: {
     gateEnabled: true,
     mockEnabled: true,
@@ -225,6 +234,29 @@ describe('GithubService', () => {
   });
 
   describe('listRepos', () => {
+    it('returns a mapped repository by owner and name', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeRepo({ default_branch: 'master' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getRepo('gh-token', 'user', 'my-repo'),
+      ).resolves.toMatchObject({
+        fullName: 'user/my-repo',
+        defaultBranch: 'master',
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/user/my-repo',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer gh-token',
+          }),
+        }),
+      );
+    });
+
     it('returns mapped repos on success', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,

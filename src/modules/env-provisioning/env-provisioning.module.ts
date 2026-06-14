@@ -7,6 +7,7 @@ import { GithubModule } from '../github/github.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { ProjectsRepository } from '../projects/projects.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
+import { UsageModule } from '../usage/usage.module';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -33,6 +34,7 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     GithubModule,
     PersistenceModule,
     SubscriptionModule,
+    UsageModule,
   ],
   controllers: [
     ProviderConnectionsController,
@@ -60,6 +62,10 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     SessionAuthGuard,
     SubscriptionGuard,
   ],
-  exports: [ProjectDeploymentProvisioningService],
+  exports: [
+    ProjectDeploymentProvisioningService,
+    DeploymentTargetsRepository,
+    EnvVarsRepository,
+  ],
 })
 export class EnvProvisioningModule {}

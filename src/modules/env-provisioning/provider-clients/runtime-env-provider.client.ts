@@ -53,6 +53,13 @@ export interface UpsertProviderEnvInput {
   vars: EnvVarInput[];
 }
 
+export interface DeleteProviderEnvInput {
+  token: string;
+  targetId: string;
+  environment: EnvEnvironment;
+  key: string;
+}
+
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
@@ -67,4 +74,7 @@ export interface RuntimeEnvProviderClient {
   upsertEnvironmentVariables(
     input: UpsertProviderEnvInput,
   ): Promise<ProviderProvisionResult>;
+  deleteEnvironmentVariable(
+    input: DeleteProviderEnvInput,
+  ): Promise<{ key: string; status: 'removed' }>;
 }

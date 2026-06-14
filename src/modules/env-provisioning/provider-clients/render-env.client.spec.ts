@@ -67,6 +67,41 @@ describe('RenderEnvClient', () => {
     );
   });
 
+  it('deletes Render env vars by replacing the set without the key', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            { envVar: { key: 'EXISTING', value: 'keep' } },
+            { envVar: { key: 'DATABASE_URL', value: 'remove' } },
+          ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([]),
+      });
+
+    const client = new RenderEnvClient();
+    await expect(
+      client.deleteEnvironmentVariable({
+        token: 'rnd',
+        targetId: 'srv-1',
+        environment: 'test',
+        key: 'DATABASE_URL',
+      }),
+    ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
+
+    expect(fetch).toHaveBeenLastCalledWith(
+      'https://api.render.com/v1/services/srv-1/env-vars',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify([{ key: 'EXISTING', value: 'keep' }]),
+      }),
+    );
+  });
+
   it('creates Render web services from repo metadata', async () => {
     global.fetch = jest
       .fn()

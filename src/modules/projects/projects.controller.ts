@@ -17,11 +17,22 @@ import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
+import { ProjectCiRunsService } from './project-ci-runs.service';
+import { ProjectDeploymentsService } from './project-deployments.service';
+import { ProjectDriftRepairService } from './project-drift-repair.service';
+import type { ProjectDriftRepairAction } from './project-drift.types';
+import { ProjectDriftService } from './project-drift.service';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly projectCiRunsService: ProjectCiRunsService,
+    private readonly projectDeploymentsService: ProjectDeploymentsService,
+    private readonly projectDriftService: ProjectDriftService,
+    private readonly projectDriftRepairService: ProjectDriftRepairService,
+  ) {}
 
   /**
    * POST /api/v1/projects
@@ -92,6 +103,248 @@ export class ProjectsController {
     const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
 
     return this.projectsService.listProjects(userId, safeLimit);
+  }
+
+  /**
+   * GET /api/v1/projects/:id/overview
+   * Returns the read-only project control center state from stored FlowCI data.
+   */
+  @Get(':id/overview')
+  @UseGuards(SessionAuthGuard)
+  async getProjectOverview(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.getProjectOverview(id, userId);
+  }
+
+  /**
+   * POST /api/v1/projects/:id/sync
+   * Writes a local dashboard snapshot from FlowCI's stored project state.
+   * This endpoint intentionally does not require a GitHub OAuth token.
+   */
+  @Post(':id/sync')
+  @UseGuards(SessionAuthGuard)
+  async syncProjectSnapshot(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.syncProjectSnapshot(id, userId);
+  }
+
+  /**
+   * GET /api/v1/projects/:id/workflow-settings
+   * Returns normalized workflow settings for local preview.
+   */
+  @Get(':id/workflow-settings')
+  @UseGuards(SessionAuthGuard)
+  async getWorkflowSettings(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.getWorkflowSettings(id, userId);
+  }
+
+  /**
+   * POST /api/v1/projects/:id/workflow-settings/preview
+   * Generates local workflow YAML preview files without creating branches,
+   * commits, or pull requests.
+   */
+  @Post(':id/workflow-settings/preview')
+  @UseGuards(SessionAuthGuard)
+  async previewWorkflowSettings(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.previewWorkflowSettings(id, userId, body);
+  }
+
+  /**
+   * POST /api/v1/projects/:id/workflow-settings/pr
+   * Creates a GitHub pull request containing the generated staged workflow
+   * files. Direct apply is intentionally not supported.
+   */
+  @Post(':id/workflow-settings/pr')
+  @UseGuards(SessionAuthGuard)
+  async createWorkflowUpdatePullRequest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.createWorkflowUpdatePullRequest(
+      id,
+      userId,
+      req.session.githubAccessToken ?? null,
+      body,
+    );
+  }
+
+  @Get(':id/ci-runs')
+  @UseGuards(SessionAuthGuard)
+  async listCiRuns(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectCiRunsService.listRuns(id, userId);
+  }
+
+  @Get(':id/ci-runs/:runId')
+  @UseGuards(SessionAuthGuard)
+  async getCiRun(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('runId') runId: string,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    return this.projectCiRunsService.getRun(id, runId, userId);
+  }
+
+  @Post(':id/ci-runs/:runId/rerun')
+  @UseGuards(SessionAuthGuard)
+  async rerunCiRun(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('runId') runId: string,
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    return this.projectCiRunsService.rerun(id, runId, userId);
+  }
+
+  @Get(':id/deployments')
+  @UseGuards(SessionAuthGuard)
+  async listDeployments(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectDeploymentsService.listDeployments(id, userId);
+  }
+
+  @Get(':id/drift')
+  @UseGuards(SessionAuthGuard)
+  async listDriftFindings(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectDriftService.listFindings(id, userId);
+  }
+
+  @Post(':id/drift/run')
+  @UseGuards(SessionAuthGuard)
+  async runDriftDetection(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectDriftService.runDetection(id, userId);
+  }
+
+  @Post(':id/drift/:findingId/repair')
+  @UseGuards(SessionAuthGuard)
+  async repairDriftFinding(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('findingId') findingId: string,
+    @Body() body: { action?: ProjectDriftRepairAction },
+  ) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id || !findingId) {
+      throw new NotFoundException('Project ID and finding ID are required');
+    }
+
+    return this.projectDriftRepairService.repair(
+      id,
+      findingId,
+      userId,
+      body.action ?? 'mark_ignored',
+      req.session.githubAccessToken ?? null,
+    );
+  }
+
+  @Get(':id/audit')
+  @UseGuards(SessionAuthGuard)
+  async listProjectAuditEvents(@Req() req: Request, @Param('id') id: string) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    if (!id) {
+      throw new NotFoundException('Project ID is required');
+    }
+
+    return this.projectsService.listProjectAuditEvents(id, userId);
   }
 
   /**

@@ -2,19 +2,29 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
 import { ProjectsRepository } from '../projects/projects.repository';
-import { DeploymentTargetsRepository } from './deployment-targets.repository';
+import {
+  DeploymentTargetsRepository,
+  type UpdateDeploymentTargetMetadataInput,
+} from './deployment-targets.repository';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
-import type { EnvProvider } from './env-provisioning.types';
+import type {
+  DeploymentTargetSummary,
+  EnvProvider,
+  EnvTargetSlot,
+  RenderEnvironmentName,
+} from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { RenderCostPolicyService } from './render-cost-policy.service';
+import { UsageQuotaService } from '../usage/usage-quota.service';
 
 @Injectable()
 export class DeploymentTargetsService {
@@ -29,6 +39,8 @@ export class DeploymentTargetsService {
     private readonly configService: ConfigService,
     private readonly deploymentStrategyResolver: DeploymentStrategyResolver,
     renderCostPolicyService?: RenderCostPolicyService,
+    @Optional()
+    private readonly usageQuotaService?: UsageQuotaService,
   ) {
     this.renderCostPolicy =
       renderCostPolicyService ?? new RenderCostPolicyService(configService);
@@ -45,6 +57,19 @@ export class DeploymentTargetsService {
     dto: CreateDeploymentTargetDto,
   ) {
     const project = await this.getProjectOrThrow(projectId, userId);
+    await this.usageQuotaService?.assertWithinLimit(userId, 'deployment_targets');
+    if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
+      await this.usageQuotaService?.assertWithinLimit(
+        userId,
+        'managed_render_services',
+      );
+    }
+    if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'vercel') {
+      await this.usageQuotaService?.assertWithinLimit(
+        userId,
+        'managed_vercel_projects',
+      );
+    }
     const tokenInput: {
       ownershipMode: string;
       providerConnectionId?: string;
@@ -165,6 +190,132 @@ export class DeploymentTargetsService {
     );
   }
 
+  async updateDeploymentTargetMetadata(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    input: UpdateDeploymentTargetMetadataInput,
+  ) {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+
+    await this.getProjectOrThrow(projectId, userId);
+    const target =
+      await this.deploymentTargetsRepository.updateDeploymentTargetMetadataForUser(
+        projectId,
+        targetId,
+        userId,
+        this.normalizeMetadataUpdate(input),
+      );
+    if (!target) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    return target;
+  }
+
+  async syncDeploymentTarget(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<{
+    mode: 'local_metadata';
+    status: DeploymentTargetSummary['status'];
+    findings: Array<{ code: string; severity: 'warning'; message: string }>;
+    target: DeploymentTargetSummary;
+  }> {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+
+    const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
+    const findings: Array<{
+      code: string;
+      severity: 'warning';
+      message: string;
+    }> = [];
+
+    if (!target.providerProjectId?.trim()) {
+      findings.push({
+        code: 'provider_project_id_missing',
+        severity: 'warning',
+        message: 'Provider project ID is not tracked for this target.',
+      });
+    }
+    if (!target.branchName?.trim()) {
+      findings.push({
+        code: 'target_branch_missing',
+        severity: 'warning',
+        message: 'Branch metadata is not tracked for this target.',
+      });
+    }
+
+    return {
+      mode: 'local_metadata',
+      status: findings.length > 0 ? 'missing' : target.status,
+      findings,
+      target,
+    };
+  }
+
+  async detachDeploymentTarget(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<{ detached: true }> {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+
+    await this.getProjectOrThrow(projectId, userId);
+    const deleted =
+      await this.deploymentTargetsRepository.deleteDeploymentTargetForUser(
+        projectId,
+        targetId,
+        userId,
+      );
+    if (!deleted) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    return { detached: true };
+  }
+
+  async getDeploymentTargetActions(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ) {
+    if (!this.projectTargetManagementEnabled()) {
+      throw new BadRequestException('Project target management is disabled');
+    }
+
+    const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
+
+    return {
+      targetId: target.id,
+      provider: target.provider,
+      actions: {
+        sync: {
+          enabled: true,
+          mode: 'local_metadata' as const,
+        },
+        detach: {
+          enabled: true,
+        },
+        reinstallDeploymentSecrets: {
+          enabled: false,
+          reason: 'Provider activation required',
+        },
+        openProviderDashboard: {
+          enabled: this.providerDashboardUrl(target) !== null,
+          url: this.providerDashboardUrl(target),
+        },
+      },
+    };
+  }
+
   private async getProjectOrThrow(projectId: string, userId: string) {
     const project = await this.projectsRepository.findByIdAndUser(
       projectId,
@@ -175,6 +326,100 @@ export class DeploymentTargetsService {
     }
 
     return project;
+  }
+
+  private async getOwnedTargetOrThrow(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<DeploymentTargetSummary> {
+    await this.getProjectOrThrow(projectId, userId);
+    const target =
+      await this.deploymentTargetsRepository.findDeploymentTargetForUser(
+        targetId,
+        userId,
+      );
+    if (!target || target.projectId !== projectId) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    return target;
+  }
+
+  private projectTargetManagementEnabled(): boolean {
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    return config.projectTargetManagement?.enabled ?? false;
+  }
+
+  private normalizeMetadataUpdate(
+    input: UpdateDeploymentTargetMetadataInput,
+  ): UpdateDeploymentTargetMetadataInput {
+    const normalized: UpdateDeploymentTargetMetadataInput = {};
+    if (input.slot !== undefined) {
+      normalized.slot = this.requireTargetSlot(input.slot);
+    }
+    if (input.providerProjectName !== undefined) {
+      normalized.providerProjectName = this.requireString(
+        input.providerProjectName,
+        'providerProjectName',
+      );
+    }
+    if (input.branchName !== undefined) {
+      normalized.branchName = this.requireString(input.branchName, 'branchName');
+    }
+    if (input.rootDirectory !== undefined) {
+      normalized.rootDirectory = input.rootDirectory?.trim() || null;
+    }
+    if (input.buildCommand !== undefined) {
+      normalized.buildCommand = input.buildCommand?.trim() || null;
+    }
+    if (input.startCommand !== undefined) {
+      normalized.startCommand = input.startCommand?.trim() || null;
+    }
+    if (input.renderEnvironmentName !== undefined) {
+      normalized.renderEnvironmentName =
+        input.renderEnvironmentName === null
+          ? null
+          : this.requireRenderEnvironment(input.renderEnvironmentName);
+    }
+
+    return normalized;
+  }
+
+  private requireTargetSlot(value: unknown): EnvTargetSlot {
+    if (value === 'backend' || value === 'frontend' || value === 'standalone') {
+      return value;
+    }
+
+    throw new BadRequestException('slot must be backend, frontend, or standalone');
+  }
+
+  private requireRenderEnvironment(value: unknown): RenderEnvironmentName {
+    if (value === 'test' || value === 'uat' || value === 'production') {
+      return value;
+    }
+
+    throw new BadRequestException(
+      'renderEnvironmentName must be test, uat, or production',
+    );
+  }
+
+  private providerDashboardUrl(target: DeploymentTargetSummary): string | null {
+    if (target.provider === 'vercel') {
+      const teamSlug =
+        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+          ? target.providerMetadata['vercelTeamSlug'].trim()
+          : '';
+      return teamSlug
+        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}`
+        : `https://vercel.com/dashboard/project/${target.providerProjectId}`;
+    }
+
+    if (target.provider === 'render') {
+      return `https://dashboard.render.com/web/${target.providerProjectId}`;
+    }
+
+    return null;
   }
 
   private async resolveProviderToken(

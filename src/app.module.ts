@@ -25,6 +25,9 @@ import { CiModule } from './modules/ci/ci.module.js';
 import { ExistingReposModule } from './modules/existing-repos/existing-repos.module.js';
 import { CapabilitiesModule } from './modules/capabilities/capabilities.module.js';
 import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioning.module.js';
+import { UsageModule } from './modules/usage/usage.module.js';
+import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -53,6 +56,9 @@ import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioni
     ExistingReposModule,
     CapabilitiesModule,
     EnvProvisioningModule,
+    UsageModule,
+    WorkspacesModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

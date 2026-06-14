@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
+  DeleteProviderEnvInput,
   ProviderAccountSummary,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
@@ -171,6 +172,39 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
       })),
       failed: [],
     };
+  }
+
+  async deleteEnvironmentVariable(
+    input: DeleteProviderEnvInput,
+  ): Promise<{ key: string; status: 'removed' }> {
+    const target = VERCEL_TARGET_BY_ENV[input.environment];
+    const listResponse = await fetch(
+      this.withScope(
+        `${VERCEL_API_URL}/v9/projects/${input.targetId}/env?key=${encodeURIComponent(input.key)}&target=${target}`,
+      ),
+      {
+        headers: this.headers(input.token),
+      },
+    );
+    await this.assertOk(listResponse, 'Vercel env vars could not be loaded');
+    const payload = (await listResponse.json()) as {
+      envs?: Array<{ id?: string; key?: string; target?: string[] }>;
+    };
+    const envId = (payload.envs ?? []).find((env) => env.key === input.key)?.id;
+    if (!envId) {
+      return { key: input.key, status: 'removed' };
+    }
+
+    const deleteResponse = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}/env/${envId}`),
+      {
+        method: 'DELETE',
+        headers: this.headers(input.token),
+      },
+    );
+    await this.assertOk(deleteResponse, 'Vercel env var could not be deleted');
+
+    return { key: input.key, status: 'removed' };
   }
 
   private withScope(url: string): string {

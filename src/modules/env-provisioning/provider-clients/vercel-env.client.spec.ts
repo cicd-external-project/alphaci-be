@@ -69,6 +69,47 @@ describe('VercelEnvClient', () => {
     );
   });
 
+  it('deletes Vercel env vars by looking up the provider env id', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            envs: [{ id: 'env_1', key: 'DATABASE_URL' }],
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+    const client = new VercelEnvClient();
+    await expect(
+      client.deleteEnvironmentVariable({
+        token: 'vercel',
+        targetId: 'prj-1',
+        environment: 'production',
+        key: 'DATABASE_URL',
+      }),
+    ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      'https://api.vercel.com/v9/projects/prj-1/env?key=DATABASE_URL&target=production',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel',
+        }) as unknown,
+      }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.vercel.com/v9/projects/prj-1/env/env_1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
   it('creates Vercel projects from repo metadata', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,

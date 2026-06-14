@@ -17,6 +17,22 @@ export interface CiValidationContextRow {
   subscription_status: 'inactive' | 'active' | 'canceled' | null;
 }
 
+interface ProjectTokenStatusRow {
+  status: 'active' | 'revoked';
+  token_prefix: string;
+  created_at: string;
+  updated_at: string;
+  revoked_at: string | null;
+}
+
+export interface ProjectTokenStatus {
+  status: 'active' | 'revoked';
+  tokenPrefix: string;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt: string | null;
+}
+
 @Injectable()
 export class CiTokensRepository {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -88,5 +104,37 @@ export class CiTokensRepository {
       `,
       [projectId],
     );
+  }
+
+  async findProjectTokenStatus(
+    projectId: string,
+  ): Promise<ProjectTokenStatus | null> {
+    const result = await this.databaseService.query<ProjectTokenStatusRow>(
+      `
+        SELECT
+          status,
+          token_prefix,
+          created_at,
+          updated_at,
+          revoked_at
+        FROM ci.project_ci_tokens
+        WHERE project_id = $1
+        LIMIT 1;
+      `,
+      [projectId],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      status: row.status,
+      tokenPrefix: row.token_prefix,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      revokedAt: row.revoked_at,
+    };
   }
 }

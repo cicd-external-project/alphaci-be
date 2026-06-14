@@ -49,6 +49,7 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    * names must be unique per slot for the stage chains to stay independent.
    */
   workflowVariant?: 'backend' | 'frontend';
+  centralWorkflowRef?: string;
 }
 
 export function buildStagedWorkflowBundle(
@@ -60,6 +61,7 @@ export function buildStagedWorkflowBundle(
   const nodeVersion = dto.nodeVersion ?? '24';
   const coverageThreshold = dto.coverageThreshold ?? 80;
   const deploymentTargets = dto.deploymentTargets ?? [];
+  const centralWorkflowRef = dto.centralWorkflowRef ?? 'v1';
   const stack = template.stack;
   const isBackend = stack === 'nestjs' || stack === 'nodejs';
   const testWorkflow = isBackend ? 'backend-tests.yml' : 'frontend-tests.yml';
@@ -127,7 +129,7 @@ export function buildStagedWorkflowBundle(
           },
           [testJobId]: {
             needs: ['validate-access'],
-            uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/${testWorkflow}@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -146,7 +148,7 @@ export function buildStagedWorkflowBundle(
           },
           lint: {
             needs: ['validate-access'],
-            uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/lint-check.yml@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -158,7 +160,7 @@ export function buildStagedWorkflowBundle(
           },
           security: {
             needs: ['validate-access'],
-            uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${centralWorkflowRef}`,
             with: {
               'working-directory': servicePath,
               'system-name': serviceName,
@@ -198,8 +200,18 @@ export function buildStagedWorkflowBundle(
             ...validationJob('package'),
           },
           build: buildJob(servicePath, nodeVersion),
-          ...vercelDeployJobs(serviceName, servicePath, deploymentTargets),
-          ...renderDeployJobs(serviceName, servicePath, deploymentTargets),
+          ...vercelDeployJobs(
+            serviceName,
+            servicePath,
+            deploymentTargets,
+            centralWorkflowRef,
+          ),
+          ...renderDeployJobs(
+            serviceName,
+            servicePath,
+            deploymentTargets,
+            centralWorkflowRef,
+          ),
         },
       }),
     },
@@ -292,6 +304,7 @@ function vercelDeployJobs(
   serviceName: string,
   servicePath: string,
   targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
 ) {
   return Object.fromEntries(
     targets
@@ -302,7 +315,7 @@ function vercelDeployJobs(
           `deploy-vercel-${target.slot}`,
           {
             needs: ['build'],
-            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${centralWorkflowRef}`,
             if: protectedDeployBranchExpression(),
             with: {
               'system-name':
@@ -330,6 +343,7 @@ function renderDeployJobs(
   serviceName: string,
   servicePath: string,
   targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
 ) {
   return Object.fromEntries(
     targets
@@ -345,7 +359,7 @@ function renderDeployJobs(
           `deploy-render-${target.slot}`,
           {
             needs: ['build'],
-            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@v1`,
+            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
             if: protectedDeployBranchExpression(),
             with: {
               'system-name':
