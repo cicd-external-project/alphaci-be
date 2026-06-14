@@ -213,4 +213,16 @@ describe('appConfig factory', () => {
     expect(config.auditEvents.enabled).toBe(true);
     expect(config.notifications.enabled).toBe(true);
   });
+
+  it('defaults archivedAccountRetentionDays to 30', () => {
+    delete process.env['ARCHIVED_ACCOUNT_RETENTION_DAYS'];
+    const config = appConfig();
+    expect(config.archivedAccountRetentionDays).toBe(30);
+  });
+
+  it('reads ARCHIVED_ACCOUNT_RETENTION_DAYS from env', () => {
+    process.env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] = '60';
+    const config = appConfig();
+    expect(config.archivedAccountRetentionDays).toBe(60);
+  });
 });

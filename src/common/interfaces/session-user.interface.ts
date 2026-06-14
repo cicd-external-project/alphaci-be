@@ -8,6 +8,7 @@ export interface SessionUser {
   name?: string;
   avatarUrl?: string;
   email?: string;
+  onboardingCompleted: boolean;
 }
 
 export interface SubscriptionState {

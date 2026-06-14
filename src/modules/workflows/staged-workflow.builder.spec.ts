@@ -26,8 +26,10 @@ interface ParsedWorkflow {
     string,
     | {
         if?: string;
+        needs?: string[];
+        uses?: string;
         with?: Record<string, unknown>;
-        secrets?: Record<string, unknown>;
+        secrets?: Record<string, string> | string;
       }
     | undefined
   >;
@@ -125,79 +127,178 @@ describe('buildStagedWorkflowBundle', () => {
     expect(frontend.workflowFiles[1]!.yaml).toContain('frontend-tests.yml@v1');
   });
 
-  it('only allows Vercel deployment jobs from protected branches', () => {
+  it('resolves per-branch governance through the branch-policy job', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      coverageThreshold: 80,
+    });
+
+    const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
+    const policy = bundle.workflowFiles[1]!.yaml;
+
+    // strict profile (uat/main) bumps coverage by 10; baseline stays at 80
+    expect(policy).toContain('COVERAGE_THRESHOLD=90');
+    expect(policy).toContain('COVERAGE_THRESHOLD=80');
+    // branch resolution must use the originating branch, not ref_name alone
+    expect(policy).toContain(
+      'github.event.workflow_run.head_branch || github.ref_name',
+    );
+
+    expect(quality.jobs['backend-tests']?.with?.['coverage-threshold']).toBe(
+      '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
+    );
+    expect(quality.jobs['lint']?.with?.['fail-on-warning']).toBe(
+      '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
+    );
+  });
+
+  it('caps the strict coverage threshold at 95', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      coverageThreshold: 92,
+    });
+
+    expect(bundle.workflowFiles[1]!.yaml).toContain('COVERAGE_THRESHOLD=95');
+  });
+
+  it('adds a secret-gated SonarCloud job that consumes the coverage artifact', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
+    const sonar = quality.jobs['sonar'];
+
+    expect(sonar?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/sonarcloud-scan.yml@v1',
+    );
+    expect(sonar?.if).toBe(
+      "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
+    );
+    expect(sonar?.needs).toEqual(['branch-policy', 'backend-tests']);
+    expect(sonar?.with?.['coverage-artifact-name']).toBe('orders-api-coverage');
+    expect(sonar?.secrets).toEqual({
+      SONAR_TOKEN: '${{ secrets.SONAR_TOKEN }}',
+      SONAR_PROJECT_KEY: '${{ secrets.SONAR_PROJECT_KEY }}',
+      SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
+    });
+    // sonar needs lcov in the coverage artifact
+    expect(quality.jobs['backend-tests']?.with?.['test-command']).toContain(
+      '--coverageReporters=lcov',
+    );
+  });
+
+  it('gates main behind the production-gate job in the package stage', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      enhancements: ['strictProductionApproval'],
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const gate = pkg.jobs['production-gate'];
+
+    expect(gate?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/production-gate.yml@v1',
+    );
+    expect(gate?.if).toBe(
+      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' }}",
+    );
+    expect(gate?.with?.['app-type']).toBe('api');
+    expect(gate?.with?.['require-approval']).toBe(true);
+  });
+
+  it('deploys Vercel previews on test and uat, production on gated main', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
       templateId: 'fe-nextjs',
       serviceName: 'orders-web',
       deploymentTargets: [
         {
-          slot: 'frontend',
+          slot: 'standalone',
           provider: 'vercel',
           deploymentStrategy: 'vercel_ci_pushed',
           secretNames: {
-            token: 'VERCEL_FRONTEND_TOKEN',
-            orgId: 'VERCEL_FRONTEND_ORG_ID',
-            projectId: 'VERCEL_FRONTEND_PROJECT_ID',
+            token: 'VERCEL_TOKEN_STANDALONE',
+            orgId: 'VERCEL_ORG_ID_STANDALONE',
+            projectId: 'VERCEL_PROJECT_ID_STANDALONE',
           },
         },
       ],
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const deploy = pkg.jobs['deploy-vercel-standalone'];
 
-    expect(pkg.jobs['deploy-vercel-frontend']?.if).toContain(
-      'github.event.workflow_run.head_branch',
-    );
-    expect(pkg.jobs['deploy-vercel-frontend']?.if).toContain(
-      '["test","uat","main"]',
-    );
-    expect(pkg.jobs['deploy-vercel-frontend']?.with?.['source-branch']).toBe(
-      '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+    expect(deploy?.needs).toEqual(['build', 'production-gate']);
+    // all three branches deploy; main additionally requires the production gate
+    expect(deploy?.if).toContain("== 'test'");
+    expect(deploy?.if).toContain("== 'uat'");
+    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
+    expect(deploy?.with?.['environment']).toBe(
+      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
     );
   });
 
-  it('only allows Render deployment jobs from protected branches', () => {
-    const bundle = buildStagedWorkflowBundle(makeTemplate('nestjs'), {
+  it('maps render deploys to per-branch environments with main gated', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
-      servicePath: 'backend',
-      deploymentTargets: [
-        {
-          slot: 'backend',
-          provider: 'render',
-          deploymentStrategy: 'render_image_pushed',
-          rootDirectory: 'backend',
-          dockerContext: 'backend',
-          dockerfilePath: 'backend/Dockerfile',
-          imageName: 'flowci-orders-api-backend',
-          secretNames: {
-            apiKey: 'RENDER_BACKEND_API_KEY',
-            serviceId: 'RENDER_BACKEND_SERVICE_ID',
-          },
-        },
-      ],
+      deploymentProvider: 'render',
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const deploy = pkg.jobs['deploy-render'];
 
-    expect(pkg.jobs['deploy-render-backend']?.if).toContain(
-      'github.event.workflow_run.head_branch',
+    expect(deploy?.needs).toEqual(['build', 'production-gate']);
+    expect(deploy?.if).toContain("== 'test'");
+    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
+    expect(deploy?.with?.['environment']).toBe(
+      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || (github.event.workflow_run.head_branch || github.ref_name) }}",
     );
-    expect(pkg.jobs['deploy-render-backend']?.if).toContain(
-      '["test","uat","main"]',
-    );
-    expect(pkg.jobs['deploy-render-backend']?.with?.['docker-context']).toBe(
-      'backend',
-    );
-    expect(pkg.jobs['deploy-render-backend']?.with?.['dockerfile-path']).toBe(
-      'backend/Dockerfile',
-    );
-    expect(pkg.jobs['deploy-render-backend']?.secrets).toEqual({
-      RENDER_API_KEY: '${{ secrets.RENDER_BACKEND_API_KEY }}',
-      RENDER_SERVICE_ID: '${{ secrets.RENDER_BACKEND_SERVICE_ID }}',
-      RENDER_OWNER_ID: '${{ secrets.RENDER_BACKEND_OWNER_ID }}',
-      RENDER_REGISTRY_CREDENTIAL_ID:
-        '${{ secrets.RENDER_BACKEND_REGISTRY_CREDENTIAL_ID }}',
+  });
+
+  it('creates promotion PR jobs for test→uat and uat→main', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
     });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const toUat = pkg.jobs['promote-to-uat'];
+    const toMain = pkg.jobs['promote-to-main'];
+
+    expect(toUat?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/promotion.yml@v1',
+    );
+    expect(toUat?.needs).toEqual(['build']);
+    expect(toUat?.if).toContain("== 'test'");
+    expect(toUat?.with?.['direction']).toBe('test-to-uat');
+    expect(toUat?.with?.['system1-name']).toBe('orders-api');
+    expect(toUat?.secrets).toEqual({
+      PR_TOKEN:
+        "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+    });
+
+    expect(toMain?.if).toContain("== 'uat'");
+    expect(toMain?.with?.['direction']).toBe('uat-to-main');
+  });
+
+  it('makes promotion wait on deploy jobs, tolerating skips', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      deploymentProvider: 'render',
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const toUat = pkg.jobs['promote-to-uat'];
+
+    expect(toUat?.needs).toEqual(['build', 'deploy-render']);
+    expect(toUat?.if).toContain(
+      "(needs.deploy-render.result == 'success' || needs.deploy-render.result == 'skipped')",
+    );
   });
 });
