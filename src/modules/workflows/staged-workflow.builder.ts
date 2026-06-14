@@ -31,8 +31,11 @@ export interface StagedWorkflowBundle {
 const CENTRAL_WORKFLOW_REF =
   'cicd-external-project/cicd-workflow/.github/workflows';
 
-const CI_VALIDATE_URL =
-  'https://flowci-be-test.onrender.com/api/v1/ci/validate';
+const PLATFORM_BASE_URL = 'https://flowci-be-test.onrender.com';
+
+const CI_VALIDATE_URL = `${PLATFORM_BASE_URL}/api/v1/ci/validate`;
+
+export const CI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 
 /**
  * Branch promotion model enforced by the generated pipelines:
@@ -102,8 +105,8 @@ export function buildStagedWorkflowBundle(
   // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
   // command must produce both reporters.
   const testCommand = isBackend
-    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov'
-    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov';
+    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json'
+    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json';
   const lintCommand = 'npm run lint';
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
@@ -135,9 +138,11 @@ export function buildStagedWorkflowBundle(
         permissions: { contents: 'read' },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': validationJob('access'),
+          'report-results': reportingJob('access', ['validate-access']),
         },
       }),
     },
@@ -161,6 +166,7 @@ export function buildStagedWorkflowBundle(
         },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -240,6 +246,14 @@ export function buildStagedWorkflowBundle(
               SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
             },
           },
+          'report-results': reportingJob('quality', [
+            'validate-access',
+            'branch-policy',
+            testJobId,
+            'lint',
+            'security',
+            'sonar',
+          ]),
         },
       }),
     },
@@ -263,6 +277,7 @@ export function buildStagedWorkflowBundle(
         },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -291,6 +306,10 @@ export function buildStagedWorkflowBundle(
             serviceName,
             deployJobIds,
           ),
+          'report-results': reportingJob('package', [
+            'validate-access',
+            'build',
+          ]),
         },
       }),
     },
@@ -572,6 +591,96 @@ function promotionJob(
       PR_TOKEN:
         "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
     },
+  };
+}
+
+/**
+ * Best-effort reporting step that POSTs structured pipeline results to the
+ * FlowCI platform after each stage. Runs with `if: always()` so it fires on
+ * success, failure, and cancellation. The curl uses `--max-time 5` and falls
+ * back to a warning annotation on any error so the pipeline never fails due to
+ * a reporting outage.
+ *
+ * The quality stage populates `results.coverage` and `results.tests` from the
+ * Jest JSON summary and coverage-summary.json produced by the test step. All
+ * other stages send an empty `results: {}`.
+ */
+function reportingJob(stage: WorkflowStage, needs: string[]) {
+  const isQuality = stage === 'quality';
+
+  const scriptLines = [
+    '# Map job.status → conclusion',
+    'STATUS="${{ job.status }}"',
+    'case "$STATUS" in',
+    '  success)   CONCLUSION="success" ;;',
+    '  cancelled) CONCLUSION="cancelled" ;;',
+    '  *)         CONCLUSION="failure" ;;',
+    'esac',
+    '',
+    '# Build results sub-object (quality stage only)',
+    'RESULTS="{}"',
+    ...(isQuality
+      ? [
+          '',
+          '# Parse jest JSON summary',
+          'TESTS_JSON=""',
+          'if [ -f test-results.json ]; then',
+          '  PASSED=$(node -e "const d=require(\'./test-results.json\');console.log(d.numPassedTests??0)" 2>/dev/null || echo 0)',
+          '  FAILED=$(node -e "const d=require(\'./test-results.json\');console.log(d.numFailedTests??0)" 2>/dev/null || echo 0)',
+          '  TOTAL=$(node -e "const d=require(\'./test-results.json\');console.log(d.numTotalTests??0)" 2>/dev/null || echo 0)',
+          '  TESTS_JSON=\'"tests":{"passed":\'$PASSED\',"failed":\'$FAILED\',"total":\'$TOTAL\'}\'',
+          'fi',
+          '',
+          '# Parse coverage summary',
+          'COV_JSON=""',
+          'if [ -f coverage/coverage-summary.json ]; then',
+          '  PCT=$(node -e "const d=require(\'./coverage/coverage-summary.json\');console.log(d.total?.lines?.pct??0)" 2>/dev/null || echo 0)',
+          '  COV_JSON=\'"coverage":{"pct":\'$PCT\',"threshold":80}\'',
+          'fi',
+          '',
+          '# Assemble results object from whichever sub-objects we have',
+          'PARTS=""',
+          '[ -n "$TESTS_JSON" ] && PARTS="$TESTS_JSON"',
+          '[ -n "$COV_JSON"   ] && PARTS="${PARTS:+$PARTS,}$COV_JSON"',
+          'RESULTS="{$PARTS}"',
+        ]
+      : []),
+    '',
+    '# Build and POST the payload',
+    'PAYLOAD=$(cat <<__JSON__',
+    '{',
+    '  "repoFullName": "${{ github.repository }}",',
+    '  "branch": "${{ github.ref_name }}",',
+    '  "commitSha": "${{ github.sha }}",',
+    '  "runId": ${{ github.run_id }},',
+    `  "stage": "${stage}",`,
+    '  "conclusion": "\'$CONCLUSION\'",',
+    '  "results": \'$RESULTS\'',
+    '}',
+    '__JSON__',
+    ')',
+    'curl -sf --max-time 5 \\',
+    '  -X POST "$CI_REPORT_URL" \\',
+    '  -H "Authorization: Bearer $CI_TOKEN" \\',
+    '  -H "Content-Type: application/json" \\',
+    '  -d "$PAYLOAD" \\',
+    '  || echo "::warning::Failed to report pipeline results to FlowCI"',
+  ];
+
+  return {
+    if: '${{ always() }}',
+    needs,
+    runs_on: 'ubuntu-latest',
+    env: {
+      CI_TOKEN: '${{ secrets.CI_TOKEN }}',
+      CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+    },
+    steps: [
+      {
+        name: 'Report stage results to FlowCI',
+        run: scriptLines.join('\n'),
+      },
+    ],
   };
 }
 
