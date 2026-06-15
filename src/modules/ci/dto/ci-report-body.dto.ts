@@ -10,6 +10,56 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+// ─── Nested detail DTOs ───────────────────────────────────────────────────────
+
+export class CiReportTestFailureDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  message?: string;
+}
+
+export class CiReportLintIssueDto {
+  @IsOptional()
+  @IsString()
+  rule?: string;
+
+  @IsOptional()
+  @IsString()
+  file?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  line?: number;
+
+  @IsOptional()
+  @IsString()
+  message?: string;
+}
+
+export class CiReportSecurityItemDto {
+  @IsOptional()
+  @IsString()
+  package?: string;
+
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  severity?: string;
+}
+
+// ─── Top-level result section DTOs ───────────────────────────────────────────
+
 export class CiReportTestResultsDto {
   @IsInt()
   @Min(0)
@@ -22,6 +72,11 @@ export class CiReportTestResultsDto {
   @IsInt()
   @Min(0)
   total!: number;
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportTestFailureDto)
+  failures?: CiReportTestFailureDto[];
 }
 
 export class CiReportCoverageDto {
@@ -42,6 +97,11 @@ export class CiReportLintDto {
   @IsInt()
   @Min(0)
   warnings!: number;
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportLintIssueDto)
+  issues?: CiReportLintIssueDto[];
 }
 
 export class CiReportSecurityDto {
@@ -52,6 +112,11 @@ export class CiReportSecurityDto {
   @IsInt()
   @Min(0)
   critical!: number;
+
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CiReportSecurityItemDto)
+  items?: CiReportSecurityItemDto[];
 }
 
 export class CiReportResultsDto {
@@ -100,4 +165,9 @@ export class CiReportBodyDto {
   @ValidateNested()
   @Type(() => CiReportResultsDto)
   results!: CiReportResultsDto;
+
+  /** Raw log output captured during the stage. Capped at 50 000 chars on ingest. */
+  @IsOptional()
+  @IsString()
+  rawLogs?: string;
 }
