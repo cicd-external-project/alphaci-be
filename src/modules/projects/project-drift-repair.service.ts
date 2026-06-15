@@ -7,8 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
+import { AuditEventsService } from '../audit/audit-events.service';
 import { CiService } from '../ci/ci.service';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import type {
   ProjectDriftFinding,
   ProjectDriftRepairAction,
@@ -30,6 +32,10 @@ export class ProjectDriftRepairService {
     private readonly projectsService?: ProjectsService,
     @Optional()
     private readonly configService?: ConfigService,
+    @Optional()
+    private readonly auditEventsService?: AuditEventsService,
+    @Optional()
+    private readonly notificationEventsService?: NotificationEventsService,
   ) {}
 
   async repair(
@@ -72,6 +78,14 @@ export class ProjectDriftRepairService {
 
     if (action === 'mark_ignored') {
       await this.findingsRepository.markStatus(findingId, 'ignored');
+      await this.recordRepairEvent({
+        userId,
+        projectId,
+        eventCode: 'drift_repair_completed',
+        title: 'Drift finding ignored',
+        body: finding.message,
+        metadata: { findingId, action, findingCode: finding.code },
+      });
       return this.completed(findingId, action, 'Finding marked ignored');
     }
 
@@ -79,6 +93,19 @@ export class ProjectDriftRepairService {
       this.assertCode(finding, ['ci_token_missing', 'ci_token_revoked'], action);
       const result = await this.ciService.issueProjectToken(projectId);
       await this.findingsRepository.markStatus(findingId, 'resolved');
+      await this.recordRepairEvent({
+        userId,
+        projectId,
+        eventCode: 'ci_token_rotated',
+        title: 'CI token rotated',
+        body: 'A project CI token was rotated in FlowCI.',
+        metadata: {
+          findingId,
+          action,
+          findingCode: finding.code,
+          tokenPrefix: result.tokenPrefix,
+        },
+      });
       return this.completed(findingId, action, 'CI token rotated in FlowCI', {
         tokenPrefix: result.tokenPrefix,
       });
@@ -103,6 +130,19 @@ export class ProjectDriftRepairService {
         throw new NotFoundException('Deployment target not found');
       }
       await this.findingsRepository.markStatus(findingId, 'resolved');
+      await this.recordRepairEvent({
+        userId,
+        projectId,
+        eventCode: 'drift_repair_completed',
+        title: 'Drift repair completed',
+        body: 'Deployment target detached from FlowCI.',
+        metadata: {
+          findingId,
+          action,
+          findingCode: finding.code,
+          targetId: finding.targetId,
+        },
+      });
       return this.completed(
         findingId,
         action,
@@ -122,6 +162,14 @@ export class ProjectDriftRepairService {
         userId,
         {},
       );
+      await this.recordRepairEvent({
+        userId,
+        projectId,
+        eventCode: 'drift_repair_completed',
+        title: 'Drift repair completed',
+        body: 'Workflow preview regenerated.',
+        metadata: { findingId, action, findingCode: finding.code },
+      });
       return this.completed(
         findingId,
         action,
@@ -154,6 +202,20 @@ export class ProjectDriftRepairService {
           {},
         );
       await this.findingsRepository.markStatus(findingId, 'resolved');
+      await this.recordRepairEvent({
+        userId,
+        projectId,
+        eventCode: 'drift_repair_completed',
+        title: 'Drift repair completed',
+        body: 'Workflow update PR created from a drift finding.',
+        metadata: {
+          findingId,
+          action,
+          findingCode: finding.code,
+          pullRequestNumber: pullRequest?.pullRequestNumber ?? null,
+          pullRequestUrl: pullRequest?.pullRequestUrl ?? null,
+        },
+      });
       return this.completed(findingId, action, 'Workflow update PR created', {
         pullRequestUrl: pullRequest?.pullRequestUrl ?? null,
         pullRequestNumber: pullRequest?.pullRequestNumber ?? null,
@@ -192,6 +254,30 @@ export class ProjectDriftRepairService {
         `Repair action ${action} does not support finding ${finding.code}`,
       );
     }
+  }
+
+  private async recordRepairEvent(input: {
+    userId: string;
+    projectId: string;
+    eventCode: string;
+    title: string;
+    body: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    await this.auditEventsService?.recordProjectEvent({
+      actorUserId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      message: input.title,
+      metadata: input.metadata,
+    });
+    await this.notificationEventsService?.record({
+      userId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      title: input.title,
+      body: input.body,
+    });
   }
 
   private completed(

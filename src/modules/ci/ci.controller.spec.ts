@@ -175,8 +175,28 @@ describe('CiController', () => {
       repoFullName: 'owner/repo',
     });
 
-    expect(reportsService.getRuns).toHaveBeenCalledWith('user-1', 'owner/repo');
+    expect(reportsService.getRuns).toHaveBeenCalledWith(
+      'user-1',
+      'owner/repo',
+      undefined,
+      undefined,
+    );
     expect(result).toEqual(runsPayload);
+  });
+
+  it('passes pagination options through when listing runs', async () => {
+    await controller.getRuns(makeRequest('user-1'), {
+      repoFullName: 'owner/repo',
+      limit: 25,
+      offset: 50,
+    });
+
+    expect(reportsService.getRuns).toHaveBeenCalledWith(
+      'user-1',
+      'owner/repo',
+      25,
+      50,
+    );
   });
 
   it('throws UnauthorizedException when no session user present', async () => {

@@ -80,4 +80,158 @@ describe('WorkspacesRepository', () => {
       'Workspace insert did not return a row',
     );
   });
+
+  it('lists workspace members with user profile fields', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'member-1',
+          workspace_id: 'workspace-1',
+          user_id: 'user-1',
+          role: 'owner',
+          created_at: new Date('2026-06-15T00:00:00.000Z'),
+          login: 'tone',
+          display_name: 'Tone',
+          email: 'tone@example.test',
+          avatar_url: null,
+        },
+      ],
+    });
+
+    await expect(repository.listMembers('workspace-1')).resolves.toEqual([
+      {
+        id: 'member-1',
+        workspaceId: 'workspace-1',
+        userId: 'user-1',
+        role: 'owner',
+        login: 'tone',
+        name: 'Tone',
+        email: 'tone@example.test',
+        avatarUrl: null,
+        createdAt: '2026-06-15T00:00:00.000Z',
+      },
+    ]);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('JOIN identity.app_users'),
+      ['workspace-1'],
+    );
+  });
+
+  it('finds direct workspace membership', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          workspace_id: 'workspace-1',
+          user_id: 'user-1',
+          role: 'developer',
+        },
+      ],
+    });
+
+    await expect(
+      repository.findMembership('workspace-1', 'user-1'),
+    ).resolves.toEqual({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      role: 'developer',
+    });
+  });
+
+  it('finds workspace membership through a project', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          workspace_id: 'workspace-1',
+          user_id: 'user-1',
+          role: 'viewer',
+        },
+      ],
+    });
+
+    await expect(
+      repository.findProjectMembership('project-1', 'user-1'),
+    ).resolves.toEqual({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      role: 'viewer',
+    });
+    expect(query.mock.calls[0][0]).toContain('projects.provisioned_projects');
+    expect(query.mock.calls[0][0]).toContain('orgs.workspace_members');
+  });
+
+  it('adds a registered user by login', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 'user-2' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'member-2',
+            workspace_id: 'workspace-1',
+            user_id: 'user-2',
+            role: 'developer',
+            created_at: new Date('2026-06-15T00:00:00.000Z'),
+            login: 'dev',
+            display_name: 'Dev User',
+            email: null,
+            avatar_url: null,
+          },
+        ],
+      });
+
+    await expect(
+      repository.addMemberByLoginOrEmail('workspace-1', 'dev', 'developer'),
+    ).resolves.toMatchObject({
+      workspaceId: 'workspace-1',
+      userId: 'user-2',
+      role: 'developer',
+      login: 'dev',
+    });
+    expect(query.mock.calls[0][0]).toContain('lower(login)');
+    expect(query.mock.calls[1][0]).toContain('ON CONFLICT');
+  });
+
+  it('returns null when member lookup by login has no match', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      repository.addMemberByLoginOrEmail('workspace-1', 'missing', 'viewer'),
+    ).resolves.toBeNull();
+  });
+
+  it('updates a member role and returns the member summary', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ user_id: 'user-2' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'member-2',
+            workspace_id: 'workspace-1',
+            user_id: 'user-2',
+            role: 'admin',
+            created_at: '2026-06-15T00:00:00.000Z',
+            login: 'dev',
+            display_name: null,
+            email: null,
+            avatar_url: null,
+          },
+        ],
+      });
+
+    await expect(
+      repository.updateMemberRole('workspace-1', 'member-2', 'admin'),
+    ).resolves.toMatchObject({
+      id: 'member-2',
+      role: 'admin',
+      name: 'dev',
+    });
+  });
+
+  it('removes a member by membership id', async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 'member-2' }] });
+
+    await expect(
+      repository.removeMember('workspace-1', 'member-2'),
+    ).resolves.toEqual({ id: 'member-2' });
+  });
 });

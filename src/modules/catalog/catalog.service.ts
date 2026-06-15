@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join, isAbsolute, resolve } from 'node:path';
 
@@ -394,12 +394,7 @@ export class CatalogService {
     );
     if (!option?.starterPath) return null;
 
-    const configuredPath = this.config.templates.repoPath;
-    const anchoredRepoPath = isAbsolute(configuredPath)
-      ? configuredPath
-      : resolve(__dirname, configuredPath);
-
-    return join(anchoredRepoPath, option.starterPath);
+    return join(this.resolveTemplateRepoPath(), option.starterPath);
   }
 
   private async getTemplates(): Promise<WorkflowTemplate[]> {
@@ -616,9 +611,16 @@ export class CatalogService {
 
   private resolveTemplateRepoPath(): string {
     const configuredPath = this.config.templates.repoPath;
-    return isAbsolute(configuredPath)
-      ? configuredPath
-      : resolve(__dirname, configuredPath);
+    if (isAbsolute(configuredPath)) {
+      return configuredPath;
+    }
+
+    const cwdCandidate = resolve(process.cwd(), configuredPath);
+    if (existsSync(cwdCandidate)) {
+      return cwdCandidate;
+    }
+
+    return resolve(__dirname, configuredPath);
   }
 
   private templateIdForStack(

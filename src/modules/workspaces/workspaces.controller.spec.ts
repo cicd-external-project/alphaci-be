@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 
 import { WorkspacesController } from './workspaces.controller';
 import { WorkspacesService } from './workspaces.service';
@@ -22,6 +22,38 @@ describe('WorkspacesController', () => {
             role: 'owner',
           },
         ],
+      }),
+      listMembers: jest.fn().mockResolvedValue([
+        {
+          id: 'member-1',
+          workspaceId: 'workspace-1',
+          userId: 'user-1',
+          role: 'owner',
+          login: 'tone',
+          name: 'Tone',
+          email: null,
+          avatarUrl: null,
+          createdAt: '2026-06-15T00:00:00.000Z',
+        },
+      ]),
+      addMember: jest.fn().mockResolvedValue({
+        id: 'member-2',
+        workspaceId: 'workspace-1',
+        userId: 'user-2',
+        role: 'developer',
+        login: 'dev',
+        name: 'Dev User',
+        email: null,
+        avatarUrl: null,
+        createdAt: '2026-06-15T00:00:00.000Z',
+      }),
+      updateMemberRole: jest.fn().mockResolvedValue({
+        id: 'member-2',
+        role: 'admin',
+      }),
+      removeMember: jest.fn().mockResolvedValue({
+        id: 'member-2',
+        removed: true,
       }),
     }) as unknown as jest.Mocked<WorkspacesService>;
 
@@ -65,5 +97,95 @@ describe('WorkspacesController', () => {
       } as never),
     ).toEqual({ enabled: false, items: [] });
     expect(service.getMyWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it('lists members for the current workspace', async () => {
+    const service = makeService();
+    const controller = new WorkspacesController(makeConfigService(), service);
+
+    await expect(
+      controller.listMembers(
+        { session: { user: { id: 'user-1', login: 'tone' } } } as never,
+        'workspace-1',
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: 'member-1', role: 'owner' }),
+    ]);
+    expect(service.listMembers).toHaveBeenCalledWith('workspace-1', 'user-1');
+  });
+
+  it('adds a workspace member by login or email', async () => {
+    const service = makeService();
+    const controller = new WorkspacesController(makeConfigService(), service);
+
+    await expect(
+      controller.addMember(
+        { session: { userId: 'user-1' } } as never,
+        'workspace-1',
+        {
+          loginOrEmail: 'dev',
+          role: 'developer',
+        },
+      ),
+    ).resolves.toMatchObject({ id: 'member-2', role: 'developer' });
+    expect(service.addMember).toHaveBeenCalledWith('workspace-1', 'user-1', {
+      loginOrEmail: 'dev',
+      role: 'developer',
+    });
+  });
+
+  it('updates a workspace member role', async () => {
+    const service = makeService();
+    const controller = new WorkspacesController(makeConfigService(), service);
+
+    await expect(
+      controller.updateMemberRole(
+        { session: { userId: 'user-1' } } as never,
+        'workspace-1',
+        'member-2',
+        { role: 'admin' },
+      ),
+    ).resolves.toMatchObject({ id: 'member-2', role: 'admin' });
+    expect(service.updateMemberRole).toHaveBeenCalledWith(
+      'workspace-1',
+      'user-1',
+      'member-2',
+      'admin',
+    );
+  });
+
+  it('passes last-owner demotion errors through the controller', async () => {
+    const service = makeService();
+    service.updateMemberRole.mockRejectedValueOnce(
+      new BadRequestException('Workspace must keep at least one owner'),
+    );
+    const controller = new WorkspacesController(makeConfigService(), service);
+
+    await expect(
+      controller.updateMemberRole(
+        { session: { userId: 'user-1' } } as never,
+        'workspace-1',
+        'member-owner',
+        { role: 'admin' },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('removes a workspace member', async () => {
+    const service = makeService();
+    const controller = new WorkspacesController(makeConfigService(), service);
+
+    await expect(
+      controller.removeMember(
+        { session: { userId: 'user-1' } } as never,
+        'workspace-1',
+        'member-2',
+      ),
+    ).resolves.toEqual({ id: 'member-2', removed: true });
+    expect(service.removeMember).toHaveBeenCalledWith(
+      'workspace-1',
+      'user-1',
+      'member-2',
+    );
   });
 });

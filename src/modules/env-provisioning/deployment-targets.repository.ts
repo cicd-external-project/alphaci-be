@@ -210,7 +210,16 @@ export class DeploymentTargetsRepository {
         WHERE project.id = target.project_id
           AND target.project_id = $1
           AND target.id = $2
-          AND project.user_id = $3
+          AND (
+            project.user_id = $3
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = project.workspace_id
+                AND member.user_id = $3
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
         RETURNING target.*;
       `,
       [
@@ -250,7 +259,16 @@ export class DeploymentTargetsRepository {
         WHERE project.id = target.project_id
           AND target.project_id = $1
           AND target.id = $2
-          AND project.user_id = $3
+          AND (
+            project.user_id = $3
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = project.workspace_id
+                AND member.user_id = $3
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
         RETURNING target.id;
       `,
       [projectId, targetId, userId],
@@ -269,7 +287,16 @@ export class DeploymentTargetsRepository {
         FROM env_provisioning.project_deployment_targets t
         JOIN projects.provisioned_projects p ON p.id = t.project_id
         WHERE t.id = $1
-          AND p.user_id = $2
+          AND (
+            p.user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = p.workspace_id
+                AND member.user_id = $2
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
         LIMIT 1;
       `,
       [targetId, userId],

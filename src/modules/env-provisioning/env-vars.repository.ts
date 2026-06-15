@@ -72,7 +72,16 @@ export class EnvVarsRepository {
         JOIN projects.provisioned_projects AS project
           ON project.id = metadata.project_id
         WHERE metadata.project_id = $1
-          AND project.user_id = $2
+          AND (
+            project.user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = project.workspace_id
+                AND member.user_id = $2
+                AND member.role IN ('owner', 'admin', 'developer', 'viewer')
+            )
+          )
           AND metadata.removed_at IS NULL
         ORDER BY metadata.deployment_target_id, metadata.environment, metadata.key;
       `,
@@ -172,7 +181,16 @@ export class EnvVarsRepository {
         JOIN projects.provisioned_projects AS project
           ON project.id = metadata.project_id
         WHERE metadata.id = $1
-          AND project.user_id = $2
+          AND (
+            project.user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = project.workspace_id
+                AND member.user_id = $2
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
           AND metadata.removed_at IS NULL
         LIMIT 1;
       `,
@@ -197,7 +215,16 @@ export class EnvVarsRepository {
         FROM projects.provisioned_projects AS project
         WHERE project.id = metadata.project_id
           AND metadata.id = $1
-          AND project.user_id = $2
+          AND (
+            project.user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = project.workspace_id
+                AND member.user_id = $2
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
         RETURNING metadata.*;
       `,
       [metadataId, userId, errorSummary],

@@ -270,7 +270,17 @@ describe('ProjectsController', () => {
   it('passes the requested project list limit to the service', async () => {
     await controller.listProjects(makeRequest(), '25');
 
-    expect(service.listProjects).toHaveBeenCalledWith('user-1', 25);
+    expect(service.listProjects).toHaveBeenCalledWith('user-1', 25, null);
+  });
+
+  it('passes the selected workspace id to the project list service', async () => {
+    await controller.listProjects(makeRequest(), '25', 'workspace-1');
+
+    expect(service.listProjects).toHaveBeenCalledWith(
+      'user-1',
+      25,
+      'workspace-1',
+    );
   });
 
   it('throws when listing projects without a session user', async () => {
@@ -577,7 +587,7 @@ describe('ProjectsController', () => {
   it('falls back to the default list limit when limit is invalid', async () => {
     await controller.listProjects(makeRequest(), 'not-a-number');
 
-    expect(service.listProjects).toHaveBeenCalledWith('user-1', 25);
+    expect(service.listProjects).toHaveBeenCalledWith('user-1', 25, null);
   });
 
   it.each([

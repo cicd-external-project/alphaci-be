@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 
 import { EnvTokenEncryptionService } from './encryption.service';
@@ -9,6 +11,7 @@ import type { CreateProviderConnectionDto } from './dto/create-provider-connecti
 import type { EnvProvider } from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { WorkspacesService } from '../workspaces/workspaces.service';
 
 const PROVIDERS: EnvProvider[] = ['render', 'vercel'];
 type ProviderTeamSummary = { id: string; slug?: string; name?: string };
@@ -19,12 +22,15 @@ export class ProviderConnectionsService {
     private readonly repository: ProviderConnectionsRepository,
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly clientRegistry: ProviderClientRegistry,
+    @Optional()
+    private readonly workspacesService?: WorkspacesService,
   ) {}
 
   async createProviderConnection(
     userId: string,
     dto: CreateProviderConnectionDto,
   ) {
+    await this.assertCanManageProviderConnections(userId);
     if (!PROVIDERS.includes(dto.provider)) {
       throw new BadRequestException('Unsupported provider');
     }
@@ -56,12 +62,29 @@ export class ProviderConnectionsService {
   }
 
   async revokeProviderConnection(id: string, userId: string) {
+    await this.assertCanManageProviderConnections(userId);
     const revoked = await this.repository.revokeProviderConnection(id, userId);
     if (!revoked) {
       throw new NotFoundException('Provider connection not found');
     }
 
     return { revoked: true };
+  }
+
+  private async assertCanManageProviderConnections(userId: string): Promise<void> {
+    if (!this.workspacesService) {
+      return;
+    }
+
+    const workspaces = await this.workspacesService.getMyWorkspaces(userId);
+    const canManage = workspaces.items.some(
+      (workspace) => workspace.role === 'owner' || workspace.role === 'admin',
+    );
+    if (!canManage) {
+      throw new ForbiddenException(
+        'Provider connection management requires owner or admin workspace access',
+      );
+    }
   }
 
   private buildConnectionMetadata(

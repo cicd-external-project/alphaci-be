@@ -7,7 +7,10 @@ import { EnvVarsRepository } from './env-vars.repository';
 import { EnvVarsService } from './env-vars.service';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { AuditEventsService } from '../audit/audit-events.service';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import { UsageQuotaService } from '../usage/usage-quota.service';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
 describe('EnvVarsService', () => {
   async function createService(overrides: {
@@ -15,6 +18,9 @@ describe('EnvVarsService', () => {
     deploymentTarget?: Record<string, unknown> | null;
     providerClient?: Partial<Record<string, jest.Mock>>;
     usageQuotaService?: Partial<Record<string, jest.Mock>>;
+    workspaceAccessService?: Partial<Record<string, jest.Mock>>;
+    auditEventsService?: Partial<Record<string, jest.Mock>>;
+    notificationEventsService?: Partial<Record<string, jest.Mock>>;
   } = {}) {
     const envVarsRepository = {
       listEnvMetadata: jest.fn(),
@@ -91,14 +97,42 @@ describe('EnvVarsService', () => {
             ...overrides.usageQuotaService,
           },
         },
+        {
+          provide: WorkspaceAccessService,
+          useValue: {
+            assertProjectRole: jest.fn().mockResolvedValue({
+              workspaceId: 'workspace-1',
+              userId: 'user-1',
+              role: 'developer',
+            }),
+            ...overrides.workspaceAccessService,
+          },
+        },
+        {
+          provide: AuditEventsService,
+          useValue: {
+            recordProjectEvent: jest.fn(),
+            ...overrides.auditEventsService,
+          },
+        },
+        {
+          provide: NotificationEventsService,
+          useValue: {
+            record: jest.fn(),
+            ...overrides.notificationEventsService,
+          },
+        },
       ],
     }).compile();
 
     return {
+      auditEventsService: module.get(AuditEventsService),
       deploymentTargetsRepository,
       envVarsRepository,
+      notificationEventsService: module.get(NotificationEventsService),
       providerClient,
       usageQuotaService: module.get(UsageQuotaService),
+      workspaceAccessService: module.get(WorkspaceAccessService),
       service: module.get(EnvVarsService),
     };
   }
@@ -137,7 +171,13 @@ describe('EnvVarsService', () => {
   });
 
   it('stores metadata only after provider env provisioning', async () => {
-    const { envVarsRepository, service } = await createService();
+    const {
+      auditEventsService,
+      envVarsRepository,
+      notificationEventsService,
+      service,
+      workspaceAccessService,
+    } = await createService();
 
     await service.provisionEnvVars('project-1', 'user-1', {
       deploymentTargetId: 'target-1',
@@ -158,6 +198,25 @@ describe('EnvVarsService', () => {
     expect(
       JSON.stringify(envVarsRepository.upsertEnvMetadataBatch.mock.calls),
     ).not.toContain('postgres://secret');
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    );
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'env_vars_provisioned',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'env_vars_provisioned',
+      }),
+    );
   });
 
   it('charges env key quota only for new keys', async () => {
@@ -225,7 +284,13 @@ describe('EnvVarsService', () => {
   });
 
   it('deletes Vercel env metadata and provider key', async () => {
-    const { envVarsRepository, providerClient, service } = await createService({
+    const {
+      auditEventsService,
+      envVarsRepository,
+      providerClient,
+      service,
+      workspaceAccessService,
+    } = await createService({
       deploymentTarget: {
         provider: 'vercel',
         providerProjectId: 'prj_1',
@@ -265,6 +330,18 @@ describe('EnvVarsService', () => {
       'meta-1',
       'user-1',
       null,
+    );
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    );
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'env_var_removed',
+      }),
     );
   });
 

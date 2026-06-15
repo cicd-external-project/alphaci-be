@@ -27,6 +27,7 @@ export interface ProvisionedProjectRow {
   project_type_id: string | null;
   workflow_recipe_id: string | null;
   project_options: Record<string, unknown> | null;
+  workspace_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,7 @@ export interface CreateProvisionedProjectInput {
   workflowRecipeId?: string | null;
   projectOptions?: Record<string, unknown> | null;
   workflowSha256?: string | null;
+  workspaceId?: string | null;
 }
 
 @Injectable()
@@ -83,14 +85,15 @@ export class ProjectsRepository {
         project_type_id,
         workflow_recipe_id,
         workflow_template_id,
-        project_options
+        project_options,
+        workspace_id
       )
       VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15,
         $16, $17, $18, $19, $20,
-        $21, $22, $23
+        $21, $22, $23, $24
       )
       RETURNING
         id,
@@ -109,6 +112,7 @@ export class ProjectsRepository {
         project_type_id,
         workflow_recipe_id,
         project_options,
+        workspace_id,
         created_at,
         updated_at;
     `;
@@ -147,6 +151,7 @@ export class ProjectsRepository {
         data.workflowRecipeId ?? null,
         data.templateId,
         JSON.stringify(projectOptions),
+        data.workspaceId ?? null,
       ],
     );
 
@@ -161,10 +166,16 @@ export class ProjectsRepository {
   async listByUser(
     userId: string,
     limit = 50,
+    workspaceId?: string | null,
   ): Promise<ProvisionedProjectRow[]> {
     const safeLimit = Number.isFinite(limit)
       ? Math.max(1, Math.min(100, Math.trunc(limit)))
       : 25;
+
+    const workspaceFilter = workspaceId ? 'AND workspace_id = $3' : '';
+    const values = workspaceId
+      ? [userId, safeLimit, workspaceId]
+      : [userId, safeLimit];
 
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
@@ -185,14 +196,24 @@ export class ProjectsRepository {
           project_type_id,
           workflow_recipe_id,
           project_options,
+          workspace_id,
           created_at,
           updated_at
         FROM projects.provisioned_projects
-        WHERE user_id = $1
+        WHERE (
+          user_id = $1
+          OR EXISTS (
+            SELECT 1
+            FROM orgs.workspace_members AS member
+            WHERE member.workspace_id = projects.provisioned_projects.workspace_id
+              AND member.user_id = $1
+          )
+        )
+        ${workspaceFilter}
         ORDER BY created_at DESC
         LIMIT $2;
       `,
-      [userId, safeLimit],
+      values,
     );
 
     return result.rows;
@@ -221,11 +242,20 @@ export class ProjectsRepository {
           project_type_id,
           workflow_recipe_id,
           project_options,
+          workspace_id,
           created_at,
           updated_at
         FROM projects.provisioned_projects
         WHERE id = $1
-          AND user_id = $2
+          AND (
+            user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
+                AND member.user_id = $2
+            )
+          )
         LIMIT 1;
       `,
       [id, userId],
@@ -266,7 +296,17 @@ export class ProjectsRepository {
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM projects.provisioned_projects
-        WHERE id = $1 AND user_id = $2
+        WHERE id = $1
+          AND (
+            user_id = $2
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
+                AND member.user_id = $2
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
         RETURNING id;
       `,
       [id, userId],
@@ -288,7 +328,16 @@ export class ProjectsRepository {
       `
         UPDATE projects.provisioned_projects
         SET status = 'orphaned', updated_at = NOW()
-        WHERE user_id = $1
+        WHERE (
+            user_id = $1
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
+                AND member.user_id = $1
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
           AND status <> 'orphaned';
       `,
@@ -310,7 +359,16 @@ export class ProjectsRepository {
       `
         UPDATE projects.provisioned_projects
         SET status = 'provisioned', updated_at = NOW()
-        WHERE user_id = $1
+        WHERE (
+            user_id = $1
+            OR EXISTS (
+              SELECT 1
+              FROM orgs.workspace_members AS member
+              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
+                AND member.user_id = $1
+                AND member.role IN ('owner', 'admin', 'developer')
+            )
+          )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
           AND status = 'orphaned';
       `,

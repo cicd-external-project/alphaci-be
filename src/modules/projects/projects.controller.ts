@@ -93,7 +93,11 @@ export class ProjectsController {
    */
   @Get()
   @UseGuards(SessionAuthGuard)
-  async listProjects(@Req() req: Request, @Query('limit') limit?: string) {
+  async listProjects(
+    @Req() req: Request,
+    @Query('limit') limit?: string,
+    @Query('workspaceId') workspaceId?: string,
+  ) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -102,7 +106,11 @@ export class ProjectsController {
     const parsedLimit = Number.parseInt(limit ?? '25', 10);
     const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
 
-    return this.projectsService.listProjects(userId, safeLimit);
+    return this.projectsService.listProjects(
+      userId,
+      safeLimit,
+      workspaceId?.trim() || null,
+    );
   }
 
   /**

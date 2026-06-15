@@ -84,4 +84,110 @@ describe('NotificationsRepository', () => {
       NotFoundException,
     );
   });
+
+  it('creates a notification for a user', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'notification-1',
+          title: 'Quota reached',
+          body: 'Project quota reached.',
+          event_code: 'quota_reached',
+          read_at: null,
+          created_at: new Date('2026-06-15T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    await expect(
+      repository.createForUser({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'quota_reached',
+        title: 'Quota reached',
+        body: 'Project quota reached.',
+      }),
+    ).resolves.toMatchObject({
+      id: 'notification-1',
+      eventCode: 'quota_reached',
+      readAt: null,
+    });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO notifications.notifications'),
+      [
+        'user-1',
+        'project-1',
+        'quota_reached',
+        'Quota reached',
+        'Project quota reached.',
+      ],
+    );
+  });
+
+  it('reads notification preferences, creating defaults first', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            user_id: 'user-1',
+            in_app_enabled: true,
+            email_enabled: false,
+            updated_at: new Date('2026-06-15T00:00:00.000Z'),
+          },
+        ],
+      });
+
+    await expect(repository.getPreferences('user-1')).resolves.toEqual({
+      userId: 'user-1',
+      inAppEnabled: true,
+      emailEnabled: false,
+      updatedAt: '2026-06-15T00:00:00.000Z',
+    });
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('INSERT INTO notifications.notification_preferences'),
+      ['user-1'],
+    );
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('FROM notifications.notification_preferences'),
+      ['user-1'],
+    );
+  });
+
+  it('updates notification preferences with existing values as defaults', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            user_id: 'user-1',
+            in_app_enabled: true,
+            email_enabled: false,
+            updated_at: '2026-06-15T00:00:00.000Z',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            user_id: 'user-1',
+            in_app_enabled: false,
+            email_enabled: false,
+            updated_at: '2026-06-15T00:01:00.000Z',
+          },
+        ],
+      });
+
+    await expect(
+      repository.updatePreferences('user-1', { inAppEnabled: false }),
+    ).resolves.toMatchObject({
+      userId: 'user-1',
+      inAppEnabled: false,
+      emailEnabled: false,
+    });
+    expect(query.mock.calls[2]?.[0]).toContain('ON CONFLICT (user_id)');
+    expect(query.mock.calls[2]?.[1]).toEqual(['user-1', false, false]);
+  });
 });

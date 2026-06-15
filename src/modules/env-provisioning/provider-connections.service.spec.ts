@@ -16,6 +16,9 @@ describe('ProviderConnectionsService', () => {
   const clientRegistry = {
     getClient: jest.fn(),
   };
+  const workspacesService = {
+    getMyWorkspaces: jest.fn(),
+  };
 
   let service: ProviderConnectionsService;
 
@@ -32,6 +35,17 @@ describe('ProviderConnectionsService', () => {
       slug: 'flowci',
     });
     clientRegistry.getClient.mockReturnValue(vercelClient);
+    workspacesService.getMyWorkspaces.mockResolvedValue({
+      enabled: true,
+      items: [
+        {
+          id: 'workspace-1',
+          name: 'Personal workspace',
+          kind: 'personal',
+          role: 'owner',
+        },
+      ],
+    });
     repository.createProviderConnection.mockResolvedValue({
       id: 'connection-1',
       provider: 'vercel',
@@ -53,6 +67,7 @@ describe('ProviderConnectionsService', () => {
       repository as never,
       encryptionService as never,
       clientRegistry as never,
+      workspacesService as never,
     );
   });
 
@@ -95,5 +110,43 @@ describe('ProviderConnectionsService', () => {
     ).rejects.toThrow('Vercel team access validation failed');
 
     expect(repository.createProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects provider mutations for users without owner or admin workspace access', async () => {
+    workspacesService.getMyWorkspaces.mockResolvedValueOnce({
+      enabled: true,
+      items: [
+        {
+          id: 'workspace-1',
+          name: 'Team workspace',
+          kind: 'team',
+          role: 'viewer',
+        },
+      ],
+    });
+
+    await expect(
+      service.createProviderConnection('user-1', {
+        provider: 'vercel',
+        label: 'Team Vercel',
+        token: 'vercel-token-cdef',
+      }),
+    ).rejects.toThrow('Provider connection management requires owner or admin workspace access');
+
+    expect(repository.createProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it('checks workspace role before revoking provider connections', async () => {
+    repository.revokeProviderConnection.mockResolvedValueOnce(true);
+
+    await expect(
+      service.revokeProviderConnection('connection-1', 'user-1'),
+    ).resolves.toEqual({ revoked: true });
+
+    expect(workspacesService.getMyWorkspaces).toHaveBeenCalledWith('user-1');
+    expect(repository.revokeProviderConnection).toHaveBeenCalledWith(
+      'connection-1',
+      'user-1',
+    );
   });
 });

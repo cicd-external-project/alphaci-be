@@ -1,10 +1,15 @@
 import { readFile } from 'node:fs/promises';
 
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
 import type { CiService } from '../ci/ci.service.js';
 import type { GithubService } from '../github/github.service.js';
+import type { WorkspacesService } from '../workspaces/workspaces.service.js';
 import type { ProjectsRepository } from './projects.repository.js';
 import { ProjectsService } from './projects.service.js';
 
@@ -64,6 +69,7 @@ const makeProjectsRepository = () =>
     create: jest.fn().mockResolvedValue({
       id: 'project-1',
     }),
+    listByUser: jest.fn().mockResolvedValue([]),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>
@@ -72,6 +78,21 @@ const makeCiService = () =>
       token: 'flowci-token',
     }),
   }) as unknown as CiService;
+
+const makeWorkspacesService = () =>
+  ({
+    getMyWorkspaces: jest.fn().mockResolvedValue({
+      enabled: true,
+      items: [
+        {
+          id: 'workspace-1',
+          name: 'Personal workspace',
+          kind: 'personal',
+          role: 'owner',
+        },
+      ],
+    }),
+  }) as unknown as WorkspacesService;
 
 const makeOverviewReadRepositories = () => ({
   ciTokensRepository: {
@@ -304,6 +325,199 @@ jobs:
     );
   });
 
+  it('records audit and notification events after project creation', async () => {
+    const auditEventsService = {
+      recordProjectEvent: jest.fn(),
+    };
+    const notificationEventsService = {
+      record: jest.fn(),
+    };
+    const eventService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      makeProjectsRepository(),
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeProjectFeatureConfig(),
+      undefined,
+      undefined,
+      undefined,
+      auditEventsService as never,
+      makeWorkspacesService(),
+      notificationEventsService as never,
+    );
+    jest
+      .spyOn(
+        eventService as unknown as {
+          pushWorkflowFile: (
+            accessToken: string,
+            owner: string,
+            repo: string,
+            filePath: string,
+            content: string,
+          ) => Promise<{ commitSha: string; commitUrl: string | null }>;
+        },
+        'pushWorkflowFile',
+      )
+      .mockResolvedValue({
+        commitSha: 'commit-sha',
+        commitUrl: 'https://github.com/tone/orders-api/commit/commit-sha',
+      });
+
+    await eventService.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      servicePath: '.',
+      nodeVersion: '24',
+      coverageThreshold: 80,
+    });
+
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'project_created',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'project_created',
+      }),
+    );
+  });
+
+  it('records audit and notification events when project quota blocks creation', async () => {
+    const usageQuotaService = {
+      assertWithinLimit: jest
+        .fn()
+        .mockRejectedValue(
+          new BadRequestException({
+            message: 'Usage quota exceeded',
+            limitCode: 'projects',
+          }),
+        ),
+    };
+    const auditEventsService = {
+      recordProjectEvent: jest.fn(),
+    };
+    const notificationEventsService = {
+      record: jest.fn(),
+    };
+    const quotaService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      makeProjectsRepository(),
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeProjectFeatureConfig(),
+      undefined,
+      undefined,
+      usageQuotaService as never,
+      auditEventsService as never,
+      makeWorkspacesService(),
+      notificationEventsService as never,
+    );
+
+    await expect(
+      quotaService.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        servicePath: '.',
+        nodeVersion: '24',
+        coverageThreshold: 80,
+      }),
+    ).rejects.toThrow('Usage quota exceeded');
+
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: null,
+        eventCode: 'quota_blocked',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: null,
+        eventCode: 'quota_blocked',
+      }),
+    );
+  });
+
+  it('attaches created projects to the default workspace when available', async () => {
+    const projectsRepository = makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const workspacesService =
+      makeWorkspacesService() as jest.Mocked<WorkspacesService>;
+    const workspaceService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workspacesService,
+    );
+
+    jest
+      .spyOn(
+        workspaceService as unknown as {
+          pushWorkflowFile: (
+            accessToken: string,
+            owner: string,
+            repo: string,
+            filePath: string,
+            content: string,
+          ) => Promise<{ commitSha: string; commitUrl: string | null }>;
+        },
+        'pushWorkflowFile',
+      )
+      .mockResolvedValue({
+        commitSha: 'commit-sha',
+        commitUrl: 'https://github.com/tone/orders-api/commit/commit-sha',
+      });
+
+    await workspaceService.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(workspacesService.getMyWorkspaces).toHaveBeenCalledWith('user-1');
+    expect(projectsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'workspace-1' }),
+    );
+  });
+
   it('falls back to the OAuth token when no installation token is available', async () => {
     githubServiceMock.getInstallationAccessTokenForUser.mockResolvedValueOnce(
       null,
@@ -337,6 +551,25 @@ jobs:
         serviceName: 'orders-api',
       }),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('passes selected workspace id into project listing', async () => {
+    const projectsRepository = makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const listService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    await listService.listProjects('user-1', 25, 'workspace-1');
+
+    expect(projectsRepository.listByUser).toHaveBeenCalledWith(
+      'user-1',
+      25,
+      'workspace-1',
+    );
   });
 
   it('generates BYO Vercel deploy jobs for frontend single-repo creation', async () => {
@@ -942,6 +1175,12 @@ jobs:
       ...makeGithubService(),
       repoExists: jest.fn(),
     };
+    const auditEventsService = {
+      recordProjectEvent: jest.fn(),
+    };
+    const notificationEventsService = {
+      record: jest.fn(),
+    };
     const OverviewProjectsService = ProjectsService as unknown as new (
       ...args: unknown[]
     ) => ProjectsService;
@@ -957,6 +1196,12 @@ jobs:
       overviewRepos.workflowHistoryRepository,
       overviewRepos.dashboardSnapshotsRepository,
       makeProjectFeatureConfig({ syncSnapshots: true }),
+      undefined,
+      undefined,
+      undefined,
+      auditEventsService,
+      makeWorkspacesService(),
+      notificationEventsService,
     ) as ProjectsService & {
       syncProjectSnapshot: (
         projectId: string,
@@ -996,6 +1241,20 @@ jobs:
     expect(result.overview.syncSnapshot.latest).toMatchObject({
       id: 'snapshot-warning',
     });
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'project_snapshot_synced',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'project_snapshot_synced',
+      }),
+    );
   });
 
   it('maps existing project options into workflow settings when no settings row exists', async () => {
@@ -1280,6 +1539,9 @@ jobs:
       createPullRequest: jest.Mock;
     };
     const auditEventsService = {
+      recordProjectEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    const notificationEventsService = {
       record: jest.fn().mockResolvedValue(undefined),
     };
     const prService = new ProjectsService(
@@ -1301,6 +1563,8 @@ jobs:
       overviewRepos.workflowUpdateRequestsRepository,
       undefined,
       auditEventsService,
+      undefined,
+      notificationEventsService,
     ) as ProjectsService & {
       createWorkflowUpdatePullRequest: (
         projectId: string,
@@ -1362,7 +1626,7 @@ jobs:
         pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
       }),
     );
-    expect(auditEventsService.record).toHaveBeenCalledWith({
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith({
       actorUserId: 'user-1',
       projectId: 'project-1',
       eventCode: 'workflow_pr_created',
@@ -1373,6 +1637,13 @@ jobs:
         branchName: result.branchName,
         baseBranch: 'main',
       }),
+    });
+    expect(notificationEventsService.record).toHaveBeenCalledWith({
+      userId: 'user-1',
+      projectId: 'project-1',
+      eventCode: 'workflow_pr_created',
+      title: 'Workflow update PR created',
+      body: expect.stringContaining('Workflow update PR #42'),
     });
     expect(result).toMatchObject({
       pullRequestNumber: 42,
@@ -1598,12 +1869,30 @@ jobs:
   });
 
   it('returns an empty sync summary when the user has no projects', async () => {
+    const auditEventsService = {
+      recordProjectEvent: jest.fn(),
+    };
+    const notificationEventsService = {
+      record: jest.fn(),
+    };
     const syncService = new ProjectsService(
       makeCatalogService(),
       githubService,
       { listByUser: jest.fn().mockResolvedValue([]) } as never,
       makeCiService(),
       projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      auditEventsService as never,
+      undefined,
+      notificationEventsService as never,
     );
 
     await expect(
@@ -1613,6 +1902,21 @@ jobs:
       reachable: 0,
       total: 0,
     });
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: null,
+        eventCode: 'project_sync_completed',
+        metadata: { orphaned: 0, reachable: 0, total: 0 },
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: null,
+        eventCode: 'project_sync_completed',
+      }),
+    );
   });
 
   it('marks unreachable projects orphaned and reachable projects active during sync', async () => {
@@ -1633,12 +1937,30 @@ jobs:
       markOrphaned: jest.fn().mockResolvedValue(1),
       markReachable: jest.fn().mockResolvedValue(1),
     };
+    const auditEventsService = {
+      recordProjectEvent: jest.fn(),
+    };
+    const notificationEventsService = {
+      record: jest.fn(),
+    };
     const syncService = new ProjectsService(
       makeCatalogService(),
       syncGithubService,
       projectsRepository as never,
       makeCiService(),
       projectDeploymentProvisioningService as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      auditEventsService as never,
+      undefined,
+      notificationEventsService as never,
     );
 
     await expect(
@@ -1655,6 +1977,21 @@ jobs:
     expect(projectsRepository.markOrphaned).toHaveBeenCalledWith(
       ['project-2'],
       'user-1',
+    );
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: null,
+        eventCode: 'project_sync_completed',
+        metadata: { orphaned: 1, reachable: 1, total: 3 },
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: null,
+        eventCode: 'project_sync_completed',
+      }),
     );
   });
 

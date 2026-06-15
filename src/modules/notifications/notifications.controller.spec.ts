@@ -27,6 +27,18 @@ describe('NotificationsController', () => {
         unreadCount: 1,
       }),
       markRead: jest.fn().mockResolvedValue({ id: 'notification-1', read: true }),
+      getPreferences: jest.fn().mockResolvedValue({
+        userId: 'user-1',
+        inAppEnabled: true,
+        emailEnabled: false,
+        updatedAt: '2026-06-15T00:00:00.000Z',
+      }),
+      updatePreferences: jest.fn().mockResolvedValue({
+        userId: 'user-1',
+        inAppEnabled: false,
+        emailEnabled: false,
+        updatedAt: '2026-06-15T00:01:00.000Z',
+      }),
     }) as unknown as jest.Mocked<NotificationsService>;
 
   it('returns persisted notifications for the current user', async () => {
@@ -99,5 +111,36 @@ describe('NotificationsController', () => {
       ),
     ).toThrow(BadRequestException);
     expect(service.markRead).not.toHaveBeenCalled();
+  });
+
+  it('returns notification preferences for the current user', async () => {
+    const service = makeService();
+    const controller = new NotificationsController(makeConfigService(), service);
+
+    await expect(
+      controller.getPreferences({ session: { userId: 'user-1' } } as never),
+    ).resolves.toMatchObject({
+      userId: 'user-1',
+      inAppEnabled: true,
+    });
+    expect(service.getPreferences).toHaveBeenCalledWith('user-1');
+  });
+
+  it('updates notification preferences for the current user', async () => {
+    const service = makeService();
+    const controller = new NotificationsController(makeConfigService(), service);
+
+    await expect(
+      controller.updatePreferences(
+        { session: { userId: 'user-1' } } as never,
+        { inAppEnabled: false },
+      ),
+    ).resolves.toMatchObject({
+      userId: 'user-1',
+      inAppEnabled: false,
+    });
+    expect(service.updatePreferences).toHaveBeenCalledWith('user-1', {
+      inAppEnabled: false,
+    });
   });
 });

@@ -57,6 +57,23 @@ describe('AuditEventsService', () => {
     });
   });
 
+  it('does not throw when project event recording fails', async () => {
+    repository.create.mockRejectedValueOnce(new Error('database down'));
+    const service = new AuditEventsService(
+      repository as never,
+      configService as never,
+    );
+
+    await expect(
+      service.recordProjectEvent({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'workflow_pr_created',
+        message: 'Workflow update PR created',
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it('returns disabled audit list when audit is disabled', async () => {
     configService.getOrThrow.mockReturnValueOnce({
       auditEvents: { enabled: false },

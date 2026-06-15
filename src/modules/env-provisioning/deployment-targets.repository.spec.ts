@@ -157,6 +157,9 @@ describe('DeploymentTargetsRepository', () => {
       ),
       expect.arrayContaining(['project-1', 'target-1', 'user-1']),
     );
+    const queryText = String(query.mock.calls[0]?.[0] ?? '');
+    expect(queryText).toContain('orgs.workspace_members');
+    expect(queryText).toContain("member.role IN ('owner', 'admin', 'developer')");
   });
 
   it('returns null when metadata update does not match a user target', async () => {
@@ -182,6 +185,9 @@ describe('DeploymentTargetsRepository', () => {
         'user-1',
       ),
     ).resolves.toBe(true);
+    const queryText = String(query.mock.calls[0]?.[0] ?? '');
+    expect(queryText).toContain('orgs.workspace_members');
+    expect(queryText).toContain("member.role IN ('owner', 'admin', 'developer')");
   });
 
   it('finds a deployment target for the owning user', async () => {
@@ -193,6 +199,9 @@ describe('DeploymentTargetsRepository', () => {
       id: 'target-1',
       providerProjectName: 'orders-api-test',
     });
+    const queryText = String(query.mock.calls[0]?.[0] ?? '');
+    expect(queryText).toContain('orgs.workspace_members');
+    expect(queryText).toContain("member.role IN ('owner', 'admin', 'developer')");
   });
 
   it('returns null when a target is not visible to the user', async () => {

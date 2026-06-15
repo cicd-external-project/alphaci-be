@@ -7,6 +7,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
+import { AuditEventsService } from '../audit/audit-events.service';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import type { ProvisionEnvVarsDto } from './dto/provision-env-vars.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
@@ -20,6 +22,8 @@ import type {
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { UsageQuotaService } from '../usage/usage-quota.service';
+import type { UsageLimitCode } from '../usage/usage.types';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
 const ENVIRONMENTS: EnvEnvironment[] = ['test', 'uat', 'production'];
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;
@@ -50,6 +54,12 @@ export class EnvVarsService {
     private readonly configService: ConfigService,
     @Optional()
     private readonly usageQuotaService?: UsageQuotaService,
+    @Optional()
+    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Optional()
+    private readonly auditEventsService?: AuditEventsService,
+    @Optional()
+    private readonly notificationEventsService?: NotificationEventsService,
   ) {}
 
   async listEnvMetadata(projectId: string, userId: string) {
@@ -106,6 +116,7 @@ export class EnvVarsService {
       throw new BadRequestException('Invalid environment');
     }
     this.validateVars(dto.vars);
+    await this.assertProjectMutationAccess(projectId, userId);
 
     const target = await this.getOwnedTargetOrThrow(
       projectId,
@@ -121,8 +132,9 @@ export class EnvVarsService {
     );
     const newKeyCount = dto.vars.length - existingKeyCount;
     if (newKeyCount > 0) {
-      await this.usageQuotaService?.assertWithinLimit(
+      await this.assertWithinQuota(
         userId,
+        projectId,
         'env_keys',
         newKeyCount,
       );
@@ -158,6 +170,20 @@ export class EnvVarsService {
       ],
     });
 
+    await this.recordEnvEvent({
+      userId,
+      projectId,
+      eventCode: 'env_vars_provisioned',
+      title: 'Environment variables provisioned',
+      body: `${dto.vars.length} environment variable key${dto.vars.length === 1 ? '' : 's'} sent to ${target.provider}.`,
+      metadata: {
+        deploymentTargetId: target.id,
+        environment: dto.environment,
+        keyCount: dto.vars.length,
+        provisionedCount: result.provisioned.length,
+        failedCount: result.failed.length,
+      },
+    });
     return result;
   }
 
@@ -166,6 +192,7 @@ export class EnvVarsService {
     metadataId: string,
     userId: string,
   ): Promise<{ removed: true; key: string }> {
+    await this.assertProjectMutationAccess(projectId, userId);
     const metadata = await this.envVarsRepository.findEnvMetadataForUser(
       metadataId,
       userId,
@@ -196,7 +223,83 @@ export class EnvVarsService {
       throw new NotFoundException('Environment variable metadata not found');
     }
 
+    await this.recordEnvEvent({
+      userId,
+      projectId,
+      eventCode: 'env_var_removed',
+      title: 'Environment variable removed',
+      body: `${metadata.key} was removed from ${target.provider}.`,
+      metadata: {
+        metadataId,
+        deploymentTargetId: target.id,
+        environment: metadata.environment,
+        key: metadata.key,
+      },
+    });
     return { removed: true, key: metadata.key };
+  }
+
+  private async assertProjectMutationAccess(
+    projectId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
+      'owner',
+      'admin',
+      'developer',
+    ]);
+  }
+
+  private async assertWithinQuota(
+    userId: string,
+    projectId: string,
+    limitCode: UsageLimitCode,
+    increment: number,
+  ): Promise<void> {
+    try {
+      await this.usageQuotaService?.assertWithinLimit(
+        userId,
+        limitCode,
+        increment,
+      );
+    } catch (error) {
+      await this.recordEnvEvent({
+        userId,
+        projectId,
+        eventCode: 'quota_blocked',
+        title: 'Quota blocked action',
+        body: `Quota ${limitCode} blocked this action.`,
+        metadata: {
+          limitCode,
+          increment,
+        },
+      });
+      throw error;
+    }
+  }
+
+  private async recordEnvEvent(input: {
+    userId: string;
+    projectId: string;
+    eventCode: string;
+    title: string;
+    body: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    await this.auditEventsService?.recordProjectEvent({
+      actorUserId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      message: input.title,
+      metadata: input.metadata,
+    });
+    await this.notificationEventsService?.record({
+      userId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      title: input.title,
+      body: input.body,
+    });
   }
 
   private async getOwnedTargetOrThrow(

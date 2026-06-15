@@ -30,6 +30,18 @@ describe('DeploymentTargetsService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const usageQuotaService = {
+    assertWithinLimit: jest.fn(),
+  };
+  const workspaceAccessService = {
+    assertProjectRole: jest.fn(),
+  };
+  const auditEventsService = {
+    recordProjectEvent: jest.fn(),
+  };
+  const notificationEventsService = {
+    record: jest.fn(),
+  };
 
   let service: DeploymentTargetsService;
 
@@ -49,6 +61,12 @@ describe('DeploymentTargetsService', () => {
     );
     encryptionService.decrypt.mockReturnValue('vercel-token');
     clientRegistry.getClient.mockReturnValue(vercelClient);
+    usageQuotaService.assertWithinLimit.mockResolvedValue(undefined);
+    workspaceAccessService.assertProjectRole.mockResolvedValue({
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      role: 'developer',
+    });
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
         flowciManaged: {
@@ -71,6 +89,11 @@ describe('DeploymentTargetsService', () => {
       clientRegistry as never,
       configService as never,
       new DeploymentStrategyResolver(),
+      undefined,
+      usageQuotaService as never,
+      workspaceAccessService as never,
+      auditEventsService as never,
+      notificationEventsService as never,
     );
   });
 
@@ -144,6 +167,25 @@ describe('DeploymentTargetsService', () => {
         provider: 'vercel',
         deploymentStrategy: 'vercel_ci_pushed',
         providerConnectionId: null,
+      }),
+    );
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    );
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_created',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_created',
       }),
     );
   });
@@ -276,6 +318,18 @@ describe('DeploymentTargetsService', () => {
         renderEnvironmentName: 'uat',
       }),
     );
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    );
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_updated',
+      }),
+    );
   });
 
   it('rejects metadata updates for another user target', async () => {
@@ -303,6 +357,13 @@ describe('DeploymentTargetsService', () => {
     expect(
       deploymentTargetsRepository.deleteDeploymentTargetForUser,
     ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_detached',
+      }),
+    );
   });
 
   it('reports provider-write actions disabled until live provider activation', async () => {
@@ -359,5 +420,12 @@ describe('DeploymentTargetsService', () => {
     });
 
     expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_synced',
+      }),
+    );
   });
 });

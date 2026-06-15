@@ -96,6 +96,7 @@ describe('ProjectsRepository', () => {
         'backend-api-ci',
         'be-nestjs',
         JSON.stringify({ lint: true }),
+        null,
       ]),
     );
     const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
@@ -148,6 +149,18 @@ describe('ProjectsRepository', () => {
     expect(result).toEqual([fakeRow]);
   });
 
+  it('lists project rows through workspace membership and selected workspace', async () => {
+    await repo.listByUser('user-2', 10, 'workspace-1');
+
+    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(query).toContain('orgs.workspace_members');
+    expect(query).toContain('workspace_id = $3');
+    expect(values).toEqual(['user-2', 10, 'workspace-1']);
+  });
+
   it('clamps list limit to 100', async () => {
     await repo.listByUser('user-1', 999);
 
@@ -168,5 +181,13 @@ describe('ProjectsRepository', () => {
       ['project-1', 'user-1'],
     );
     expect(result).toEqual(fakeRow);
+  });
+
+  it('finds a project by id through workspace membership', async () => {
+    await repo.findByIdAndUser('project-1', 'user-2');
+
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [string, unknown[]];
+    expect(query).toContain('orgs.workspace_members');
+    expect(query).toContain('member.workspace_id');
   });
 });

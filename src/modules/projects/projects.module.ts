@@ -9,8 +9,10 @@ import { GithubModule } from '../github/github.module';
 import { CiModule } from '../ci/ci.module';
 import { EnvProvisioningModule } from '../env-provisioning/env-provisioning.module';
 import { PersistenceModule } from '../persistence/persistence.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { ProjectsController } from './projects.controller';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
@@ -36,6 +38,8 @@ import { ProjectsService } from './projects.service';
     SubscriptionModule, // SubscriptionService (needed by SubscriptionGuard)
     UsageModule,
     AuditModule,
+    WorkspacesModule,
+    NotificationsModule,
   ],
   controllers: [ProjectsController],
   providers: [

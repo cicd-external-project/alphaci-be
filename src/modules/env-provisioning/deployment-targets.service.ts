@@ -7,6 +7,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
+import { AuditEventsService } from '../audit/audit-events.service';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import { ProjectsRepository } from '../projects/projects.repository';
 import {
   DeploymentTargetsRepository,
@@ -25,6 +27,8 @@ import { ProviderClientRegistry } from './provider-clients/provider-client.regis
 import { ProviderConnectionsRepository } from './provider-connections.repository';
 import { RenderCostPolicyService } from './render-cost-policy.service';
 import { UsageQuotaService } from '../usage/usage-quota.service';
+import type { UsageLimitCode } from '../usage/usage.types';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
 @Injectable()
 export class DeploymentTargetsService {
@@ -41,6 +45,12 @@ export class DeploymentTargetsService {
     renderCostPolicyService?: RenderCostPolicyService,
     @Optional()
     private readonly usageQuotaService?: UsageQuotaService,
+    @Optional()
+    private readonly workspaceAccessService?: WorkspaceAccessService,
+    @Optional()
+    private readonly auditEventsService?: AuditEventsService,
+    @Optional()
+    private readonly notificationEventsService?: NotificationEventsService,
   ) {
     this.renderCostPolicy =
       renderCostPolicyService ?? new RenderCostPolicyService(configService);
@@ -56,17 +66,20 @@ export class DeploymentTargetsService {
     userId: string,
     dto: CreateDeploymentTargetDto,
   ) {
+    await this.assertProjectMutationAccess(projectId, userId);
     const project = await this.getProjectOrThrow(projectId, userId);
-    await this.usageQuotaService?.assertWithinLimit(userId, 'deployment_targets');
+    await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
-      await this.usageQuotaService?.assertWithinLimit(
+      await this.assertWithinQuota(
         userId,
+        projectId,
         'managed_render_services',
       );
     }
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'vercel') {
-      await this.usageQuotaService?.assertWithinLimit(
+      await this.assertWithinQuota(
         userId,
+        projectId,
         'managed_vercel_projects',
       );
     }
@@ -151,7 +164,7 @@ export class DeploymentTargetsService {
             metadata: this.registerExistingMetadata(dto, renderDefaults),
           };
 
-    return this.deploymentTargetsRepository.createDeploymentTarget({
+    const created = await this.deploymentTargetsRepository.createDeploymentTarget({
       projectId,
       slot: dto.slot,
       ownershipMode: dto.ownershipMode,
@@ -176,6 +189,19 @@ export class DeploymentTargetsService {
       deploymentStrategy,
       providerMetadata: target.metadata ?? {},
     });
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_created',
+      title: 'Deployment target created',
+      body: `${created.providerProjectName} was attached to this project.`,
+      metadata: {
+        targetId: created.id,
+        provider: created.provider,
+        slot: created.slot,
+      },
+    });
+    return created;
   }
 
   updateProviderMetadata(
@@ -200,6 +226,7 @@ export class DeploymentTargetsService {
       throw new BadRequestException('Project target management is disabled');
     }
 
+    await this.assertProjectMutationAccess(projectId, userId);
     await this.getProjectOrThrow(projectId, userId);
     const target =
       await this.deploymentTargetsRepository.updateDeploymentTargetMetadataForUser(
@@ -212,6 +239,18 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Deployment target not found');
     }
 
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_updated',
+      title: 'Deployment target updated',
+      body: `${target.providerProjectName} metadata was updated.`,
+      metadata: {
+        targetId: target.id,
+        provider: target.provider,
+        slot: target.slot,
+      },
+    });
     return target;
   }
 
@@ -229,6 +268,7 @@ export class DeploymentTargetsService {
       throw new BadRequestException('Project target management is disabled');
     }
 
+    await this.assertProjectMutationAccess(projectId, userId);
     const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
     const findings: Array<{
       code: string;
@@ -251,12 +291,26 @@ export class DeploymentTargetsService {
       });
     }
 
-    return {
-      mode: 'local_metadata',
+    const response = {
+      mode: 'local_metadata' as const,
       status: findings.length > 0 ? 'missing' : target.status,
       findings,
       target,
     };
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_synced',
+      title: 'Deployment target synced',
+      body: `${target.providerProjectName} metadata was checked.`,
+      metadata: {
+        targetId: target.id,
+        provider: target.provider,
+        status: response.status,
+        findingCount: findings.length,
+      },
+    });
+    return response;
   }
 
   async detachDeploymentTarget(
@@ -268,6 +322,7 @@ export class DeploymentTargetsService {
       throw new BadRequestException('Project target management is disabled');
     }
 
+    await this.assertProjectMutationAccess(projectId, userId);
     await this.getProjectOrThrow(projectId, userId);
     const deleted =
       await this.deploymentTargetsRepository.deleteDeploymentTargetForUser(
@@ -279,6 +334,14 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Deployment target not found');
     }
 
+    await this.recordTargetEvent({
+      userId,
+      projectId,
+      eventCode: 'deployment_target_detached',
+      title: 'Deployment target detached',
+      body: 'Deployment target metadata was removed from FlowCI.',
+      metadata: { targetId },
+    });
     return { detached: true };
   }
 
@@ -326,6 +389,61 @@ export class DeploymentTargetsService {
     }
 
     return project;
+  }
+
+  private async assertProjectMutationAccess(
+    projectId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
+      'owner',
+      'admin',
+      'developer',
+    ]);
+  }
+
+  private async assertWithinQuota(
+    userId: string,
+    projectId: string,
+    limitCode: UsageLimitCode,
+  ): Promise<void> {
+    try {
+      await this.usageQuotaService?.assertWithinLimit(userId, limitCode);
+    } catch (error) {
+      await this.recordTargetEvent({
+        userId,
+        projectId,
+        eventCode: 'quota_blocked',
+        title: 'Quota blocked action',
+        body: `Quota ${limitCode} blocked this action.`,
+        metadata: { limitCode },
+      });
+      throw error;
+    }
+  }
+
+  private async recordTargetEvent(input: {
+    userId: string;
+    projectId: string;
+    eventCode: string;
+    title: string;
+    body: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    await this.auditEventsService?.recordProjectEvent({
+      actorUserId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      message: input.title,
+      metadata: input.metadata,
+    });
+    await this.notificationEventsService?.record({
+      userId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      title: input.title,
+      body: input.body,
+    });
   }
 
   private async getOwnedTargetOrThrow(

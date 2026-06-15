@@ -64,6 +64,9 @@ import type {
   DeploymentWorkflowTarget,
 } from '../workflows/dto/generate-workflow.dto';
 import { UsageQuotaService } from '../usage/usage-quota.service';
+import type { UsageLimitCode } from '../usage/usage.types';
+import { WorkspacesService } from '../workspaces/workspaces.service';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import {
   buildProjectScaffold,
   defaultIncludeDocker,
@@ -338,6 +341,10 @@ export class ProjectsService {
     private readonly usageQuotaService?: UsageQuotaService,
     @Optional()
     private readonly auditEventsService?: AuditEventsService,
+    @Optional()
+    private readonly workspacesService?: WorkspacesService,
+    @Optional()
+    private readonly notificationEventsService?: NotificationEventsService,
   ) {}
 
   // ─── POST /projects ────────────────────────────────────────────────────────
@@ -348,7 +355,7 @@ export class ProjectsService {
     accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
-    await this.usageQuotaService?.assertWithinLimit(userId, 'projects');
+    await this.assertWithinQuota(userId, 'projects', 1, null);
     const provisioningToken = await this.resolveProvisioningToken(
       userId,
       accessToken,
@@ -460,6 +467,7 @@ export class ProjectsService {
     // 7. Persist
     const row = await this.projectsRepository.create({
       userId,
+      workspaceId: await this.resolveDefaultWorkspaceId(userId),
       repoFullName,
       templateId,
       serviceName: dto.serviceName,
@@ -502,6 +510,19 @@ export class ProjectsService {
         githubAccessToken: provisioningToken,
         request: dto.deploymentProvisioning,
       });
+
+    await this.recordProductEvent({
+      userId,
+      projectId: row.id,
+      eventCode: 'project_created',
+      title: 'Project created',
+      body: `${repoFullName} is now tracked by FlowCI.`,
+      metadata: {
+        repoFullName,
+        repoShape,
+        projectTypeId: dto.projectTypeId,
+      },
+    });
 
     return {
       id: row.id,
@@ -672,6 +693,7 @@ export class ProjectsService {
     // 9. Save backend DB row
     const backendRow = await this.projectsRepository.create({
       userId,
+      workspaceId: await this.resolveDefaultWorkspaceId(userId),
       repoFullName,
       templateId: backendTemplateId,
       serviceName: backend.serviceName,
@@ -724,6 +746,7 @@ export class ProjectsService {
       try {
         const frontendRow = await this.projectsRepository.create({
           userId,
+          workspaceId: await this.resolveDefaultWorkspaceId(userId),
           repoFullName,
           templateId: frontendTemplateId,
           serviceName: frontend.serviceName,
@@ -759,6 +782,19 @@ export class ProjectsService {
         );
       }
     }
+
+    await this.recordProductEvent({
+      userId,
+      projectId: backendRow.id,
+      eventCode: 'project_created',
+      title: 'Project created',
+      body: `${repoFullName} is now tracked by FlowCI.`,
+      metadata: {
+        repoFullName,
+        repoShape: 'microservices',
+        projectTypeId: backend.projectTypeId,
+      },
+    });
 
     return {
       id: backendRow.id,
@@ -825,6 +861,7 @@ export class ProjectsService {
     // 4. Persist
     const row = await this.projectsRepository.create({
       userId,
+      workspaceId: await this.resolveDefaultWorkspaceId(userId),
       repoFullName: dto.repoFullName,
       templateId: dto.templateId,
       serviceName: dto.serviceName,
@@ -862,6 +899,19 @@ export class ProjectsService {
         request: dto.deploymentProvisioning,
       });
 
+    await this.recordProductEvent({
+      userId,
+      projectId: row.id,
+      eventCode: 'project_created',
+      title: 'Project created',
+      body: `${dto.repoFullName} is now tracked by FlowCI.`,
+      metadata: {
+        repoFullName: dto.repoFullName,
+        repoShape: 'existing',
+        templateId: dto.templateId,
+      },
+    });
+
     return {
       id: row.id,
       repoFullName: dto.repoFullName,
@@ -879,8 +929,13 @@ export class ProjectsService {
   async listProjects(
     userId: string,
     limit = 25,
+    workspaceId?: string | null,
   ): Promise<ProvisionedProjectsResponse> {
-    const rows = await this.projectsRepository.listByUser(userId, limit);
+    const rows = await this.projectsRepository.listByUser(
+      userId,
+      limit,
+      workspaceId,
+    );
     return {
       items: rows.map((row) => this.toProvisionedProject(row)),
     };
@@ -1017,6 +1072,19 @@ export class ProjectsService {
       createdBy: userId,
     });
 
+    await this.recordProductEvent({
+      userId,
+      projectId,
+      eventCode: 'project_snapshot_synced',
+      title: 'Project snapshot synced',
+      body: `Project snapshot completed with ${findings.length} finding${findings.length === 1 ? '' : 's'}.`,
+      metadata: {
+        snapshotId: snapshot.id,
+        status: snapshot.status,
+        findingCount: findings.length,
+      },
+    });
+
     return {
       snapshot,
       overview: {
@@ -1144,7 +1212,7 @@ export class ProjectsService {
         'Workflow update pull requests are disabled',
       );
     }
-    await this.usageQuotaService?.assertWithinLimit(userId, 'workflow_prs');
+    await this.assertWithinQuota(userId, 'workflow_prs', 1, projectId);
 
     const { row, project } = await this.loadOwnedProjectForWorkflowSettings(
       projectId,
@@ -1226,7 +1294,7 @@ export class ProjectsService {
         workflowFiles,
       })) ?? null;
 
-    await this.auditEventsService?.record({
+    await this.auditEventsService?.recordProjectEvent({
       actorUserId: userId,
       projectId,
       eventCode: 'workflow_pr_created',
@@ -1237,6 +1305,14 @@ export class ProjectsService {
         branchName,
         baseBranch,
       },
+    });
+
+    await this.notificationEventsService?.record({
+      userId,
+      projectId,
+      eventCode: 'workflow_pr_created',
+      title: 'Workflow update PR created',
+      body: `Workflow update PR #${pullRequest.number} was created for ${project.repoFullName}.`,
     });
 
     return {
@@ -1278,6 +1354,14 @@ export class ProjectsService {
   ): Promise<SyncProjectsResponse> {
     const rows = await this.projectsRepository.listByUser(userId, 100);
     if (rows.length === 0) {
+      await this.recordProductEvent({
+        userId,
+        projectId: null,
+        eventCode: 'project_sync_completed',
+        title: 'Project sync completed',
+        body: 'Project repository sync found no tracked projects.',
+        metadata: { orphaned: 0, reachable: 0, total: 0 },
+      });
       return { orphaned: 0, reachable: 0, total: 0 };
     }
 
@@ -1316,6 +1400,19 @@ export class ProjectsService {
       this.projectsRepository.markOrphaned(orphanedIds, userId),
       this.projectsRepository.markReachable(reachableIds, userId),
     ]);
+
+    await this.recordProductEvent({
+      userId,
+      projectId: null,
+      eventCode: 'project_sync_completed',
+      title: 'Project sync completed',
+      body: `Project repository sync checked ${rows.length} tracked project${rows.length === 1 ? '' : 's'}.`,
+      metadata: {
+        orphaned: orphanedCount,
+        reachable: reachableCount,
+        total: rows.length,
+      },
+    });
 
     return {
       orphaned: orphanedCount,
@@ -1997,6 +2094,7 @@ export class ProjectsService {
 
     const backendRow = await this.projectsRepository.create({
       userId,
+      workspaceId: await this.resolveDefaultWorkspaceId(userId),
       repoFullName: beRepoFullName,
       templateId: backendTemplateId,
       serviceName: backend.serviceName,
@@ -2129,6 +2227,7 @@ export class ProjectsService {
 
       const frontendRow = await this.projectsRepository.create({
         userId,
+        workspaceId: await this.resolveDefaultWorkspaceId(userId),
         repoFullName: feRepoFullName,
         templateId: frontendTemplateId,
         serviceName: frontend.serviceName,
@@ -2319,6 +2418,63 @@ export class ProjectsService {
       row,
       project: this.toProvisionedProject(row),
     };
+  }
+
+  private async resolveDefaultWorkspaceId(userId: string): Promise<string | null> {
+    const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
+    return workspaces?.items[0]?.id ?? null;
+  }
+
+  private async assertWithinQuota(
+    userId: string,
+    limitCode: UsageLimitCode,
+    increment: number,
+    projectId: string | null,
+  ): Promise<void> {
+    try {
+      await this.usageQuotaService?.assertWithinLimit(
+        userId,
+        limitCode,
+        increment,
+      );
+    } catch (error) {
+      await this.recordProductEvent({
+        userId,
+        projectId,
+        eventCode: 'quota_blocked',
+        title: 'Quota blocked action',
+        body: `Quota ${limitCode} blocked this action.`,
+        metadata: {
+          limitCode,
+          increment,
+        },
+      });
+      throw error;
+    }
+  }
+
+  private async recordProductEvent(input: {
+    userId: string;
+    projectId: string | null;
+    eventCode: string;
+    title: string;
+    body: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    await this.auditEventsService?.recordProjectEvent({
+      actorUserId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      message: input.title,
+      metadata: input.metadata,
+    });
+    await this.notificationEventsService?.record({
+      userId: input.userId,
+      projectId: input.projectId,
+      eventCode: input.eventCode,
+      title: input.title,
+      body: input.body,
+    });
   }
 
   private projectSyncSnapshotsEnabled(): boolean {

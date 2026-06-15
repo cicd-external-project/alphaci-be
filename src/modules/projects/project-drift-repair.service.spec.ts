@@ -23,6 +23,12 @@ describe('ProjectDriftRepairService', () => {
   const configService = {
     getOrThrow: jest.fn(),
   };
+  const auditEventsService = {
+    recordProjectEvent: jest.fn(),
+  };
+  const notificationEventsService = {
+    record: jest.fn(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -72,6 +78,8 @@ describe('ProjectDriftRepairService', () => {
       deploymentTargetsRepository as never,
       projectsService as never,
       configService as never,
+      auditEventsService as never,
+      notificationEventsService as never,
     );
   }
 
@@ -91,6 +99,20 @@ describe('ProjectDriftRepairService', () => {
     );
     expect(JSON.stringify(response)).toContain('fci_prefix');
     expect(JSON.stringify(response)).not.toContain('fci_secret_raw_token');
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'ci_token_rotated',
+      }),
+    );
+    expect(notificationEventsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'ci_token_rotated',
+      }),
+    );
   });
 
   it('detaches a target from FlowCI without deleting provider resources', async () => {
@@ -123,6 +145,13 @@ describe('ProjectDriftRepairService', () => {
     expect(
       deploymentTargetsRepository.deleteDeploymentTargetForUser,
     ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'drift_repair_completed',
+      }),
+    );
   });
 
   it('returns disabled state for live provider repairs', async () => {

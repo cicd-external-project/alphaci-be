@@ -6,6 +6,7 @@ import { CatalogService } from './catalog.service.js';
 
 jest.mock('node:fs/promises');
 jest.mock('node:fs', () => ({
+  existsSync: jest.fn(),
   readFileSync: jest.fn(),
 }));
 
@@ -15,11 +16,11 @@ import * as syncFs from 'node:fs';
 const mockFs = fs as jest.Mocked<typeof fs>;
 const mockSyncFs = syncFs as jest.Mocked<typeof syncFs>;
 
-const makeConfigService = () =>
+const makeConfigService = (repoPath = '/templates') =>
   ({
     getOrThrow: jest.fn().mockReturnValue({
       templates: {
-        repoPath: '/templates',
+        repoPath,
         workflowDir: 'workflow-templates',
       },
     }),
@@ -62,6 +63,7 @@ describe('CatalogService', () => {
     }).compile();
 
     service = module.get(CatalogService);
+    mockSyncFs.existsSync.mockReturnValue(true);
   });
 
   describe('getProjectOptions', () => {
@@ -151,6 +153,36 @@ describe('CatalogService', () => {
       expect(result.recipes[0]?.templateByProjectType.nextjs).toBe(
         'nextjs-service-pipeline',
       );
+    });
+
+    it('resolves relative template repo paths from the backend working directory first', async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          CatalogService,
+          { provide: ConfigService, useValue: makeConfigService('../cicd-workflow') },
+        ],
+      }).compile();
+      service = module.get(CatalogService);
+
+      mockSyncFs.existsSync.mockImplementation((path) =>
+        String(path).replaceAll('\\', '/').endsWith('/cicd-workflow'),
+      );
+      mockSyncFs.readFileSync.mockImplementation((path) => {
+        const normalized = String(path).replaceAll('\\', '/');
+        expect(normalized).toContain('/cicd-workflow/catalog/');
+
+        if (normalized.endsWith('/catalog/stacks.json')) {
+          return JSON.stringify([{ key: 'nextjs', label: 'Next.js' }]);
+        }
+
+        if (normalized.endsWith('/catalog/workflow-refs.json')) {
+          return JSON.stringify({});
+        }
+
+        return '[]';
+      });
+
+      expect(service.getProjectOptions().projectTypes[0]?.id).toBe('nextjs');
     });
   });
 

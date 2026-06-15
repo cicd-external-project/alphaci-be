@@ -2,12 +2,15 @@ import { Module } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
+import { AuditModule } from '../audit/audit.module';
 import { DatabaseModule } from '../database/database.module';
 import { GithubModule } from '../github/github.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PersistenceModule } from '../persistence/persistence.module';
 import { ProjectsRepository } from '../projects/projects.repository';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { UsageModule } from '../usage/usage.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import { DeploymentTargetsRepository } from './deployment-targets.repository';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -30,11 +33,14 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
 
 @Module({
   imports: [
+    AuditModule,
     DatabaseModule,
     GithubModule,
+    NotificationsModule,
     PersistenceModule,
     SubscriptionModule,
     UsageModule,
+    WorkspacesModule,
   ],
   controllers: [
     ProviderConnectionsController,
