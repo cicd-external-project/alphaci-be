@@ -20,6 +20,7 @@ export interface StageReport {
   friendlyMessages: FriendlyMessage[];
   githubRunUrl: string;
   updatedAt: string;
+  rawLogs: string | null;
 }
 
 export interface RunGroup {
@@ -89,6 +90,7 @@ export class CiReportsService {
           }),
         },
         friendlyMessages,
+        ...(body.rawLogs !== undefined && { rawLogs: body.rawLogs }),
       });
     } catch (err) {
       // Re-throw HTTP exceptions (NotFoundException) so NestJS handles them
@@ -110,16 +112,34 @@ export class CiReportsService {
   }
 
   /**
-   * Return the last ~50 grouped runs for a repo, verifying the session user
-   * owns the repository.
+   * Return grouped runs for the authenticated user.
+   *
+   * When repoFullName is provided the results are scoped to that repository and
+   * ownership is verified. When omitted the user's runs across all their repos
+   * are returned (no ownership check needed — the query filters by user_id).
    */
-  async getRuns(userId: string, repoFullName: string): Promise<RunsResponse> {
-    await this.assertOwnership(userId, repoFullName);
+  async getRuns(
+    userId: string,
+    repoFullName?: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<RunsResponse> {
+    if (repoFullName) {
+      await this.assertOwnership(userId, repoFullName);
+      const rows = await this.ciRunReportsRepository.findRecentByRepo(
+        repoFullName,
+        limit,
+        offset,
+      );
+      return { runs: this.groupIntoRuns(rows) };
+    }
 
-    const rows =
-      await this.ciRunReportsRepository.findRecentByRepo(repoFullName);
-
-    return { runs: this.groupIntoRuns(rows, repoFullName) };
+    const rows = await this.ciRunReportsRepository.findRecentByUser(
+      userId,
+      limit,
+      offset,
+    );
+    return { runs: this.groupIntoRuns(rows) };
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────
@@ -183,13 +203,15 @@ export class CiReportsService {
 
   private groupIntoRuns(
     rows: Awaited<ReturnType<CiRunReportsRepository['findRecentByRepo']>>,
-    repoFullName: string,
   ): RunGroup[] {
-    // Preserve run order by tracking first-seen order of run IDs
+    // Preserve run order by tracking first-seen order of run IDs.
+    // Each entry also carries its repo so cross-repo results (findRecentByUser)
+    // display the correct GitHub Actions URL and RunGroup.repoFullName.
     const runOrder: number[] = [];
     const runMap = new Map<
       number,
       {
+        repoFullName: string;
         branch: string;
         commitSha: string;
         startedAt: string;
@@ -204,6 +226,7 @@ export class CiReportsService {
       if (!runMap.has(runId)) {
         runOrder.push(runId);
         runMap.set(runId, {
+          repoFullName: row.repo_full_name,
           branch: row.branch,
           commitSha: row.commit_sha,
           startedAt: row.created_at,
@@ -217,8 +240,9 @@ export class CiReportsService {
           stage: row.stage,
           status: row.status,
           friendlyMessages: row.friendly_messages,
-          githubRunUrl: `https://github.com/${repoFullName}/actions/runs/${String(runId)}`,
+          githubRunUrl: `https://github.com/${row.repo_full_name}/actions/runs/${String(runId)}`,
           updatedAt: row.updated_at,
+          rawLogs: row.raw_logs,
         });
       }
     }
@@ -229,7 +253,7 @@ export class CiReportsService {
         // Should not happen — every runId in runOrder came from runMap
         return {
           runId,
-          repoFullName,
+          repoFullName: '',
           branch: '',
           commitSha: '',
           startedAt: '',
@@ -244,15 +268,16 @@ export class CiReportsService {
             stage: stageName,
             status: 'pending' as const,
             friendlyMessages: [],
-            githubRunUrl: `https://github.com/${repoFullName}/actions/runs/${String(runId)}`,
+            githubRunUrl: `https://github.com/${run.repoFullName}/actions/runs/${String(runId)}`,
             updatedAt: '',
+            rawLogs: null,
           }
         );
       });
 
       return {
         runId,
-        repoFullName,
+        repoFullName: run.repoFullName,
         branch: run.branch,
         commitSha: run.commitSha,
         startedAt: run.startedAt,
@@ -276,15 +301,15 @@ export class CiReportsService {
       return 'success';
     }
 
-    if (present.some((s) => s === 'failure')) {
+    if (present.includes('failure')) {
       return 'failure';
     }
 
-    if (present.some((s) => s === 'running')) {
+    if (present.includes('running')) {
       return 'running';
     }
 
-    if (present.some((s) => s === 'cancelled')) {
+    if (present.includes('cancelled')) {
       return 'cancelled';
     }
 

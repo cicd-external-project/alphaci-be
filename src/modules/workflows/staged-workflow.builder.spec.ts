@@ -86,19 +86,28 @@ describe('buildStagedWorkflowBundle', () => {
     ]);
   });
 
-  it('quality report step parses jest JSON and coverage summary', () => {
+  it('quality report step reads coverage from upstream job outputs, not local files', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
     const qualityYaml = bundle.workflowFiles[1]!.yaml;
-    // jest must emit a JSON summary for the report step to parse
+    // test job must still emit a JSON summary (consumed by the test runner itself)
     expect(qualityYaml).toContain('--json');
     expect(qualityYaml).toContain('--outputFile=test-results.json');
-    // report step must reference the output files
-    expect(qualityYaml).toContain('test-results.json');
-    expect(qualityYaml).toContain('coverage/coverage-summary.json');
+    // report step must read coverage from the upstream test job output and branch-policy output,
+    // not parse local coverage-summary.json (which does not exist on the fresh report runner)
+    expect(qualityYaml).toContain(
+      'needs.backend-tests.outputs.coverage-percent',
+    );
+    expect(qualityYaml).toContain(
+      'needs.branch-policy.outputs.coverage-threshold',
+    );
+    // must NOT reference the dead local file path
+    expect(qualityYaml).not.toContain('coverage/coverage-summary.json');
+    // payload must be built with jq, not a heredoc interpolating context values
+    expect(qualityYaml).toContain('jq -n');
     // curl must POST to CI_REPORT_URL with CI_TOKEN
     expect(qualityYaml).toContain('CI_REPORT_URL');
     expect(qualityYaml).toContain('CI_TOKEN');
