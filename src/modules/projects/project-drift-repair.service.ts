@@ -90,7 +90,11 @@ export class ProjectDriftRepairService {
     }
 
     if (action === 'rotate_ci_token') {
-      this.assertCode(finding, ['ci_token_missing', 'ci_token_revoked'], action);
+      this.assertCode(
+        finding,
+        ['ci_token_missing', 'ci_token_revoked'],
+        action,
+      );
       const result = await this.ciService.issueProjectToken(projectId);
       await this.findingsRepository.markStatus(findingId, 'resolved');
       await this.recordRepairEvent({
@@ -118,7 +122,9 @@ export class ProjectDriftRepairService {
         action,
       );
       if (!finding.targetId) {
-        throw new BadRequestException('Finding is not associated with a target');
+        throw new BadRequestException(
+          'Finding is not associated with a target',
+        );
       }
       const detached =
         await this.deploymentTargetsRepository?.deleteDeploymentTargetForUser(
@@ -170,15 +176,10 @@ export class ProjectDriftRepairService {
         body: 'Workflow preview regenerated.',
         metadata: { findingId, action, findingCode: finding.code },
       });
-      return this.completed(
-        findingId,
-        action,
-        'Workflow preview regenerated',
-        {
-          workflowFiles: preview?.workflowFiles ?? [],
-          validationWarnings: preview?.validationWarnings ?? [],
-        },
-      );
+      return this.completed(findingId, action, 'Workflow preview regenerated', {
+        workflowFiles: preview?.workflowFiles ?? [],
+        validationWarnings: preview?.validationWarnings ?? [],
+      });
     }
 
     if (action === 'create_workflow_update_pr') {

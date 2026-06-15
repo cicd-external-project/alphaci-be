@@ -12,7 +12,9 @@ describe('NotificationEventsService', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
-    configService.getOrThrow.mockReturnValue({ notifications: { enabled: true } });
+    configService.getOrThrow.mockReturnValue({
+      notifications: { enabled: true },
+    });
     repository.getPreferences.mockResolvedValue({
       userId: 'user-1',
       inAppEnabled: true,
@@ -22,7 +24,9 @@ describe('NotificationEventsService', () => {
   });
 
   it('does not create notifications when disabled', async () => {
-    configService.getOrThrow.mockReturnValue({ notifications: { enabled: false } });
+    configService.getOrThrow.mockReturnValue({
+      notifications: { enabled: false },
+    });
     const service = new NotificationEventsService(
       repository,
       configService as never,

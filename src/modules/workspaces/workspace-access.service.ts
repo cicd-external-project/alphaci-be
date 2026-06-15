@@ -27,7 +27,10 @@ export class WorkspaceAccessService {
     userId: string,
     allowedRoles: WorkspaceRole[],
   ): Promise<WorkspaceMembership> {
-    const membership = await this.repository.findMembership(workspaceId, userId);
+    const membership = await this.repository.findMembership(
+      workspaceId,
+      userId,
+    );
     if (!membership) {
       throw new NotFoundException('Workspace not found');
     }
@@ -40,7 +43,10 @@ export class WorkspaceAccessService {
     userId: string,
     allowedRoles: WorkspaceRole[],
   ): Promise<WorkspaceMembership | null> {
-    const membership = await this.repository.findProjectMembership(projectId, userId);
+    const membership = await this.repository.findProjectMembership(
+      projectId,
+      userId,
+    );
     if (!membership) {
       return null;
     }

@@ -186,7 +186,10 @@ describe('ProjectsRepository', () => {
   it('finds a project by id through workspace membership', async () => {
     await repo.findByIdAndUser('project-1', 'user-2');
 
-    const [query] = (db.query as jest.Mock).mock.calls[0] as [string, unknown[]];
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
     expect(query).toContain('orgs.workspace_members');
     expect(query).toContain('member.workspace_id');
   });

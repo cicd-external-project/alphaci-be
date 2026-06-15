@@ -11,7 +11,9 @@ describe('AuditEventsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    configService.getOrThrow.mockReturnValue({ auditEvents: { enabled: true } });
+    configService.getOrThrow.mockReturnValue({
+      auditEvents: { enabled: true },
+    });
   });
 
   it('does not write audit rows when audit is disabled', async () => {

@@ -164,31 +164,34 @@ export class DeploymentTargetsService {
             metadata: this.registerExistingMetadata(dto, renderDefaults),
           };
 
-    const created = await this.deploymentTargetsRepository.createDeploymentTarget({
-      projectId,
-      slot: dto.slot,
-      ownershipMode: dto.ownershipMode,
-      provider: dto.provider,
-      providerConnectionId:
-        dto.ownershipMode === 'byo' ? (dto.providerConnectionId ?? null) : null,
-      providerProjectId: target.id,
-      providerProjectName: target.name,
-      repoFullName: project.repo_full_name,
-      branchName: dto.branchName?.trim() || 'test',
-      rootDirectory: dto.rootDirectory?.trim() || null,
-      buildCommand: dto.buildCommand?.trim() || null,
-      startCommand: dto.startCommand?.trim() || null,
-      renderServiceType: renderDefaults.renderServiceType,
-      renderInstanceType: renderDefaults.renderInstanceType,
-      renderRegion: renderDefaults.renderRegion,
-      renderEnvironmentName: renderDefaults.renderEnvironmentName,
-      dockerContext: renderDefaults.dockerContext,
-      dockerfilePath: renderDefaults.dockerfilePath,
-      imageUrl: dto.imageUrl?.trim() || null,
-      environmentMap: dto.environmentMap ?? {},
-      deploymentStrategy,
-      providerMetadata: target.metadata ?? {},
-    });
+    const created =
+      await this.deploymentTargetsRepository.createDeploymentTarget({
+        projectId,
+        slot: dto.slot,
+        ownershipMode: dto.ownershipMode,
+        provider: dto.provider,
+        providerConnectionId:
+          dto.ownershipMode === 'byo'
+            ? (dto.providerConnectionId ?? null)
+            : null,
+        providerProjectId: target.id,
+        providerProjectName: target.name,
+        repoFullName: project.repo_full_name,
+        branchName: dto.branchName?.trim() || 'test',
+        rootDirectory: dto.rootDirectory?.trim() || null,
+        buildCommand: dto.buildCommand?.trim() || null,
+        startCommand: dto.startCommand?.trim() || null,
+        renderServiceType: renderDefaults.renderServiceType,
+        renderInstanceType: renderDefaults.renderInstanceType,
+        renderRegion: renderDefaults.renderRegion,
+        renderEnvironmentName: renderDefaults.renderEnvironmentName,
+        dockerContext: renderDefaults.dockerContext,
+        dockerfilePath: renderDefaults.dockerfilePath,
+        imageUrl: dto.imageUrl?.trim() || null,
+        environmentMap: dto.environmentMap ?? {},
+        deploymentStrategy,
+        providerMetadata: target.metadata ?? {},
+      });
     await this.recordTargetEvent({
       userId,
       projectId,
@@ -269,7 +272,11 @@ export class DeploymentTargetsService {
     }
 
     await this.assertProjectMutationAccess(projectId, userId);
-    const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
     const findings: Array<{
       code: string;
       severity: 'warning';
@@ -354,7 +361,11 @@ export class DeploymentTargetsService {
       throw new BadRequestException('Project target management is disabled');
     }
 
-    const target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
 
     return {
       targetId: target.id,
@@ -483,7 +494,10 @@ export class DeploymentTargetsService {
       );
     }
     if (input.branchName !== undefined) {
-      normalized.branchName = this.requireString(input.branchName, 'branchName');
+      normalized.branchName = this.requireString(
+        input.branchName,
+        'branchName',
+      );
     }
     if (input.rootDirectory !== undefined) {
       normalized.rootDirectory = input.rootDirectory?.trim() || null;
@@ -509,7 +523,9 @@ export class DeploymentTargetsService {
       return value;
     }
 
-    throw new BadRequestException('slot must be backend, frontend, or standalone');
+    throw new BadRequestException(
+      'slot must be backend, frontend, or standalone',
+    );
   }
 
   private requireRenderEnvironment(value: unknown): RenderEnvironmentName {

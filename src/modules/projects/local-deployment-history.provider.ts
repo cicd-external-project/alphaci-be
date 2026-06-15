@@ -27,15 +27,15 @@ export class LocalDeploymentHistoryProvider {
       process.env['DEPLOYMENT_HISTORY_LOCAL_FIXTURES_ENABLED'] === 'true';
   }
 
-  async listDeployments(
+  listDeployments(
     targets: DeploymentTargetSummary[],
   ): Promise<ProjectDeploymentHistoryItem[]> {
     if (!this.fixtureMode) {
-      return [];
+      return Promise.resolve([]);
     }
 
     const now = '2026-06-12T00:00:00.000Z';
-    return targets.map((target) => ({
+    const deployments: ProjectDeploymentHistoryItem[] = targets.map((target) => ({
       id: `local-${target.id}`,
       targetId: target.id,
       targetName: target.providerProjectName,
@@ -43,11 +43,12 @@ export class LocalDeploymentHistoryProvider {
       environment: target.renderEnvironmentName ?? null,
       branch: target.branchName,
       commitSha: null,
-      status: 'ready',
+      status: 'ready' as const,
       createdAt: now,
       readyAt: now,
       providerUrl: this.providerUrl(target),
     }));
+    return Promise.resolve(deployments);
   }
 
   normalizeStatus(status: string | null | undefined): DeploymentHistoryStatus {

@@ -40,7 +40,10 @@ export class WorkspacesController {
   @Get(':workspaceId/members')
   @UseGuards(SessionAuthGuard)
   listMembers(@Req() req: Request, @Param('workspaceId') workspaceId: string) {
-    return this.workspacesService.listMembers(workspaceId, this.requireUserId(req));
+    return this.workspacesService.listMembers(
+      workspaceId,
+      this.requireUserId(req),
+    );
   }
 
   @Post(':workspaceId/members')

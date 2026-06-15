@@ -13,15 +13,17 @@ import { UsageQuotaService } from '../usage/usage-quota.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
 describe('EnvVarsService', () => {
-  async function createService(overrides: {
-    envVarsRepository?: Partial<Record<string, jest.Mock>>;
-    deploymentTarget?: Record<string, unknown> | null;
-    providerClient?: Partial<Record<string, jest.Mock>>;
-    usageQuotaService?: Partial<Record<string, jest.Mock>>;
-    workspaceAccessService?: Partial<Record<string, jest.Mock>>;
-    auditEventsService?: Partial<Record<string, jest.Mock>>;
-    notificationEventsService?: Partial<Record<string, jest.Mock>>;
-  } = {}) {
+  async function createService(
+    overrides: {
+      envVarsRepository?: Partial<Record<string, jest.Mock>>;
+      deploymentTarget?: Record<string, unknown> | null;
+      providerClient?: Partial<Record<string, jest.Mock>>;
+      usageQuotaService?: Partial<Record<string, jest.Mock>>;
+      workspaceAccessService?: Partial<Record<string, jest.Mock>>;
+      auditEventsService?: Partial<Record<string, jest.Mock>>;
+      notificationEventsService?: Partial<Record<string, jest.Mock>>;
+    } = {},
+  ) {
     const envVarsRepository = {
       listEnvMetadata: jest.fn(),
       listEnvMetadataForUser: jest.fn(),
@@ -255,7 +257,7 @@ describe('EnvVarsService', () => {
       service.validateEnvText('project-1', 'user-1', {
         deploymentTargetId: 'target-1',
         environment: 'test',
-        text: 'DATABASE_URL=postgres://secret\nAPI_KEY=\"super-secret\"\n# ignored\nEMPTY=',
+        text: 'DATABASE_URL=postgres://secret\nAPI_KEY="super-secret"\n# ignored\nEMPTY=',
       }),
     ).resolves.toEqual({
       keyCount: 3,

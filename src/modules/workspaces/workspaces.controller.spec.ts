@@ -80,16 +80,22 @@ describe('WorkspacesController', () => {
   });
 
   it('rejects unauthenticated workspace requests', () => {
-    const controller = new WorkspacesController(makeConfigService(), makeService());
+    const controller = new WorkspacesController(
+      makeConfigService(),
+      makeService(),
+    );
 
-    expect(() =>
-      controller.getMyWorkspaces({ session: {} } as never),
-    ).toThrow(UnauthorizedException);
+    expect(() => controller.getMyWorkspaces({ session: {} } as never)).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('returns disabled workspace contract when workspaces are disabled', () => {
     const service = makeService();
-    const controller = new WorkspacesController(makeConfigService(false), service);
+    const controller = new WorkspacesController(
+      makeConfigService(false),
+      service,
+    );
 
     expect(
       controller.getMyWorkspaces({

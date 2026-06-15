@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
 import { DatabaseService } from '../database/database.service';
-import type { UsageLimitCode, UsageLimitItem, UsageMeResponse } from './usage.types';
+import type { UsageLimitCode, UsageMeResponse } from './usage.types';
 
 const DEFAULT_LIMITS: Record<'free' | 'pro', Record<UsageLimitCode, number>> = {
   free: {

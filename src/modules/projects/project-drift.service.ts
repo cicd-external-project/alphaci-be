@@ -9,9 +9,15 @@ import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
 } from '../env-provisioning/env-provisioning.types';
-import type { ProjectDriftFindingInput, ProjectDriftResponse } from './project-drift.types';
+import type {
+  ProjectDriftFindingInput,
+  ProjectDriftResponse,
+} from './project-drift.types';
 import { ProjectSyncFindingsRepository } from './project-sync-findings.repository';
-import { ProjectsRepository, type ProvisionedProjectRow } from './projects.repository';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from './projects.repository';
 
 @Injectable()
 export class ProjectDriftService {
@@ -105,7 +111,10 @@ export class ProjectDriftService {
         severity: 'warning',
         code: 'project_repo_metadata_missing',
         message: 'Project repository metadata is incomplete.',
-        details: { repoFullName: project.repo_full_name, repoUrl: project.repo_url },
+        details: {
+          repoFullName: project.repo_full_name,
+          repoUrl: project.repo_url,
+        },
       });
     }
 
@@ -181,7 +190,8 @@ export class ProjectDriftService {
         source: 'local_snapshot',
         severity: 'info',
         code: 'env_metadata_empty',
-        message: 'No environment variable metadata is tracked for this project.',
+        message:
+          'No environment variable metadata is tracked for this project.',
       });
     }
 

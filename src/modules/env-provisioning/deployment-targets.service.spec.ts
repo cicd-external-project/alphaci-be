@@ -290,15 +290,20 @@ describe('DeploymentTargetsService', () => {
     );
 
     await expect(
-      service.updateDeploymentTargetMetadata('project-1', 'target-1', 'user-1', {
-        providerProjectName: ' orders-api-uat ',
-        branchName: ' uat ',
-        rootDirectory: ' apps/api ',
-        buildCommand: ' npm run build ',
-        startCommand: ' npm run start:prod ',
-        slot: 'backend',
-        renderEnvironmentName: 'uat',
-      }),
+      service.updateDeploymentTargetMetadata(
+        'project-1',
+        'target-1',
+        'user-1',
+        {
+          providerProjectName: ' orders-api-uat ',
+          branchName: ' uat ',
+          rootDirectory: ' apps/api ',
+          buildCommand: ' npm run build ',
+          startCommand: ' npm run start:prod ',
+          slot: 'backend',
+          renderEnvironmentName: 'uat',
+        },
+      ),
     ).resolves.toEqual(updatedTarget);
 
     expect(vercelClient.createTarget).not.toHaveBeenCalled();
@@ -338,9 +343,14 @@ describe('DeploymentTargetsService', () => {
     );
 
     await expect(
-      service.updateDeploymentTargetMetadata('project-1', 'target-1', 'user-2', {
-        providerProjectName: 'orders-api',
-      }),
+      service.updateDeploymentTargetMetadata(
+        'project-1',
+        'target-1',
+        'user-2',
+        {
+          providerProjectName: 'orders-api',
+        },
+      ),
     ).rejects.toThrow('Deployment target not found');
   });
 
@@ -367,14 +377,16 @@ describe('DeploymentTargetsService', () => {
   });
 
   it('reports provider-write actions disabled until live provider activation', async () => {
-    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce({
-      id: 'target-1',
-      projectId: 'project-1',
-      provider: 'vercel',
-      providerProjectId: 'prj_1',
-      providerProjectName: 'orders-web',
-      providerMetadata: { vercelTeamSlug: 'flowci-team' },
-    });
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'orders-web',
+        providerMetadata: { vercelTeamSlug: 'flowci-team' },
+      },
+    );
 
     await expect(
       service.getDeploymentTargetActions('project-1', 'target-1', 'user-1'),
@@ -396,17 +408,19 @@ describe('DeploymentTargetsService', () => {
   });
 
   it('syncs target state from stored metadata only', async () => {
-    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce({
-      id: 'target-1',
-      projectId: 'project-1',
-      provider: 'render',
-      providerProjectId: 'srv-1',
-      providerProjectName: 'orders-api-test',
-      branchName: 'test',
-      rootDirectory: null,
-      status: 'active',
-      providerMetadata: {},
-    });
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
 
     await expect(
       service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),

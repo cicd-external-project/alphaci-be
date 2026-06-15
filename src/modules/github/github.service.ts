@@ -310,13 +310,16 @@ export class GithubService {
     owner: string,
     repo: string,
   ): Promise<GitHubRepo> {
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'cicd-workflow-product',
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
       },
-    });
+    );
 
     if (!response.ok) {
       const body = await response.text();

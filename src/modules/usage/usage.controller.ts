@@ -1,4 +1,10 @@
-import { Controller, Get, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';

@@ -164,7 +164,9 @@ describe('EnvVarsRepository', () => {
     );
     expect(queryText).toContain('SET removed_at = NOW()');
     expect(queryText).toContain('orgs.workspace_members');
-    expect(queryText).toContain("member.role IN ('owner', 'admin', 'developer')");
+    expect(queryText).toContain(
+      "member.role IN ('owner', 'admin', 'developer')",
+    );
     expect(queryText).not.toContain('DELETE FROM');
   });
 });

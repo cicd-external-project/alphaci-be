@@ -72,7 +72,10 @@ export class NotificationsRepository {
     };
   }
 
-  async markRead(userId: string, id: string): Promise<{ id: string; read: true }> {
+  async markRead(
+    userId: string,
+    id: string,
+  ): Promise<{ id: string; read: true }> {
     const result = await this.databaseService.query<{ id: string }>(
       `
         UPDATE notifications.notifications
@@ -91,7 +94,9 @@ export class NotificationsRepository {
     return { id: result.rows[0].id, read: true };
   }
 
-  async createForUser(input: CreateNotificationInput): Promise<NotificationItem> {
+  async createForUser(
+    input: CreateNotificationInput,
+  ): Promise<NotificationItem> {
     const result = await this.databaseService.query<NotificationRow>(
       `
         INSERT INTO notifications.notifications (
@@ -199,7 +204,9 @@ export class NotificationsRepository {
     return value === null ? null : this.toIsoString(value);
   }
 
-  private toPreferences(row: NotificationPreferencesRow): NotificationPreferences {
+  private toPreferences(
+    row: NotificationPreferencesRow,
+  ): NotificationPreferences {
     return {
       userId: row.user_id,
       inAppEnabled: row.in_app_enabled,
