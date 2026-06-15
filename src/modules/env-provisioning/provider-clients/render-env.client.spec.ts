@@ -31,6 +31,44 @@ describe('RenderEnvClient', () => {
     });
   });
 
+  it('uses fallback owner metadata when Render validation response is sparse', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([]),
+    });
+
+    await expect(
+      new RenderEnvClient().validateConnection('rnd_test'),
+    ).resolves.toEqual({
+      id: 'render-account',
+      name: 'Render account',
+      metadata: {
+        ownerId: 'render-account',
+        ownerName: 'Render account',
+      },
+    });
+  });
+
+  it('lists Render service targets and filters incomplete rows', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          { service: { id: 'srv-1', name: 'orders-api' } },
+          { service: { id: 'srv-2' } },
+          {},
+        ]),
+    });
+
+    await expect(new RenderEnvClient().listTargets('rnd')).resolves.toEqual([
+      {
+        id: 'srv-1',
+        name: 'orders-api',
+        provider: 'render',
+      },
+    ]);
+  });
+
   it('merges env vars before Render replace update', async () => {
     global.fetch = jest
       .fn()
@@ -63,6 +101,41 @@ describe('RenderEnvClient', () => {
           { key: 'EXISTING', value: 'keep' },
           { key: 'DATABASE_URL', value: 'new' },
         ]),
+      }),
+    );
+  });
+
+  it('deletes Render env vars by replacing the set without the key', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            { envVar: { key: 'EXISTING', value: 'keep' } },
+            { envVar: { key: 'DATABASE_URL', value: 'remove' } },
+          ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([]),
+      });
+
+    const client = new RenderEnvClient();
+    await expect(
+      client.deleteEnvironmentVariable({
+        token: 'rnd',
+        targetId: 'srv-1',
+        environment: 'test',
+        key: 'DATABASE_URL',
+      }),
+    ).resolves.toEqual({ key: 'DATABASE_URL', status: 'removed' });
+
+    expect(fetch).toHaveBeenLastCalledWith(
+      'https://api.render.com/v1/services/srv-1/env-vars',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify([{ key: 'EXISTING', value: 'keep' }]),
       }),
     );
   });
@@ -242,4 +315,107 @@ describe('RenderEnvClient', () => {
     expect(request.method).toBe('POST');
     expect(body.ownerId).toBe('tea-configured');
   });
+
+  it('throws when Render owner lookup returns no owner id', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{}]),
+    });
+
+    await expect(
+      new RenderEnvClient().createTarget({
+        token: 'rnd',
+        repoFullName: 'owner/api-service',
+        projectName: 'api-service-test',
+        branchName: 'test',
+      }),
+    ).rejects.toThrow('Render workspace lookup returned no owner id');
+  });
+
+  it('throws when Render service creation returns an invalid response', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ owner: { id: 'tea-1' } }]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ service: {} }),
+      });
+
+    await expect(
+      new RenderEnvClient().createTarget({
+        token: 'rnd',
+        repoFullName: 'owner/api-service',
+        projectName: 'api-service-test',
+        branchName: 'main',
+      }),
+    ).rejects.toThrow('Render service creation returned an invalid response');
+  });
+
+  it('maps Render branches to environment names', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          service: {
+            id: 'srv-1',
+            name: 'api-service-test',
+          },
+        }),
+    });
+
+    const configService = {
+      getOrThrow: jest.fn().mockReturnValue({
+        envProvisioning: {
+          flowciManaged: {
+            renderOwnerId: 'tea-configured',
+          },
+        },
+      }),
+    };
+    const client = new RenderEnvClient(configService as never);
+
+    await expect(
+      client.createTarget({
+        token: 'rnd',
+        repoFullName: 'owner/api-service',
+        projectName: 'api-service-test',
+        branchName: 'main',
+      }),
+    ).resolves.toMatchObject({
+      metadata: { renderEnvironmentName: 'production' },
+    });
+    await expect(
+      client.createTarget({
+        token: 'rnd',
+        repoFullName: 'owner/api-service',
+        projectName: 'api-service-test',
+        branchName: 'uat',
+      }),
+    ).resolves.toMatchObject({
+      metadata: { renderEnvironmentName: 'uat' },
+    });
+  });
+
+  it.each([
+    [402, 'Render billing is not configured'],
+    [409, 'A Render service with this name already exists'],
+    [401, 'Render API key is invalid'],
+    [500, 'Render services could not be loaded: 500 server down'],
+  ])(
+    'maps Render error status %s to actionable errors',
+    async (status, message) => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status,
+        text: () => Promise.resolve(status === 500 ? 'server down' : ''),
+      });
+
+      await expect(new RenderEnvClient().listTargets('rnd')).rejects.toThrow(
+        message,
+      );
+    },
+  );
 });

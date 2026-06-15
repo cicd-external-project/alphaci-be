@@ -65,4 +65,29 @@ describe('CiTokensRepository', () => {
       ['project-1'],
     );
   });
+
+  it('loads token status metadata for a project overview', async () => {
+    const row = {
+      status: 'revoked',
+      token_prefix: 'fci_123456',
+      created_at: '2026-06-12T00:00:00.000Z',
+      updated_at: '2026-06-12T01:00:00.000Z',
+      revoked_at: '2026-06-12T01:00:00.000Z',
+    };
+    query.mockResolvedValueOnce({ rows: [row] });
+
+    const result = await repository.findProjectTokenStatus('project-1');
+
+    expect(result).toEqual({
+      status: 'revoked',
+      tokenPrefix: 'fci_123456',
+      createdAt: '2026-06-12T00:00:00.000Z',
+      updatedAt: '2026-06-12T01:00:00.000Z',
+      revokedAt: '2026-06-12T01:00:00.000Z',
+    });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM ci.project_ci_tokens'),
+      ['project-1'],
+    );
+  });
 });

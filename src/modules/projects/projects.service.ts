@@ -1,23 +1,56 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import yaml from 'js-yaml';
 
+import type { AppConfig } from '../../config/app.config';
 import { CatalogService } from '../catalog/catalog.service';
 import { CiService } from '../ci/ci.service';
+import {
+  CiTokensRepository,
+  type ProjectTokenStatus,
+} from '../ci/ci-tokens.repository';
+import { AuditEventsService } from '../audit/audit-events.service';
+import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
+import { EnvVarsRepository } from '../env-provisioning/env-vars.repository';
+import type {
+  DeploymentTargetSummary,
+  EnvVarMetadata,
+} from '../env-provisioning/env-provisioning.types';
 import { GithubService } from '../github/github.service';
 import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
+import {
+  WorkflowHistoryRepository,
+  type WorkflowHistoryEntry,
+} from '../persistence/workflow-history.repository';
 import {
   ProjectsRepository,
   type ProvisionedProjectRow,
   type ProvisionedProjectStatus,
 } from './projects.repository';
+import {
+  ProjectDashboardSnapshotsRepository,
+  type ProjectDashboardSnapshot,
+  type ProjectDashboardSnapshotFinding,
+} from './project-dashboard-snapshots.repository';
+import {
+  ProjectWorkflowSettingsRepository,
+  type ProjectWorkflowSettingsRowValue,
+} from './project-workflow-settings.repository';
+import {
+  ProjectWorkflowUpdateRequestsRepository,
+  type WorkflowUpdateRequestRecord,
+} from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import {
@@ -30,6 +63,7 @@ import type {
   DeploymentProvider,
   DeploymentWorkflowTarget,
 } from '../workflows/dto/generate-workflow.dto';
+import { UsageQuotaService } from '../usage/usage-quota.service';
 import {
   buildProjectScaffold,
   defaultIncludeDocker,
@@ -134,6 +168,139 @@ export interface ProvisionedProjectsResponse {
   items: ProvisionedProject[];
 }
 
+export type ProjectOverviewHealthStatus = 'ok' | 'warning' | 'error';
+
+export interface ProjectOverviewResponse {
+  project: ProvisionedProject & {
+    createdAt: string;
+    updatedAt: string;
+  };
+  workflow: {
+    path: string;
+    files: WorkflowFileMetadata[];
+    stageCount: number;
+    history: WorkflowHistoryEntry[];
+  };
+  deploymentTargets: {
+    items: DeploymentTargetSummary[];
+    count: number;
+  };
+  environment: {
+    items: EnvVarMetadata[];
+    count: number;
+    failedCount: number;
+  };
+  ciAuth: {
+    status: 'active' | 'revoked' | 'missing';
+    tokenPresent: boolean;
+    tokenPrefix: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+    revokedAt: string | null;
+  };
+  health: {
+    summary: ProjectOverviewHealthStatus;
+    checks: Array<{
+      key: string;
+      label: string;
+      status: ProjectOverviewHealthStatus;
+      message: string;
+    }>;
+  };
+  syncSnapshot: {
+    enabled: boolean;
+    mode: 'local_snapshot';
+    latest: ProjectDashboardSnapshot | null;
+  };
+  capabilities: {
+    envProvisioning: boolean;
+    workflowSettings: boolean;
+    syncSnapshots: boolean;
+    ciRunTracking: boolean;
+    deploymentHistory: boolean;
+    driftDetection: boolean;
+  };
+}
+
+export interface ProjectSyncSnapshotResponse {
+  snapshot: ProjectDashboardSnapshot;
+  overview: ProjectOverviewResponse;
+}
+
+export interface ProjectAuditEventsResponse {
+  enabled: boolean;
+  items: Array<{
+    id: string;
+    eventCode: string;
+    message: string;
+    actorUserId: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface WorkflowSettings {
+  projectId: string;
+  templateId: string;
+  projectTypeId: string | null;
+  workflowRecipeId: string | null;
+  serviceName: string;
+  servicePath: string;
+  nodeVersion: string;
+  packageManager: 'npm';
+  coverageThreshold: number;
+  centralWorkflowRef: string;
+  checks: {
+    lint: boolean;
+    unit: boolean;
+    build: boolean;
+    security: boolean;
+  };
+}
+
+export interface WorkflowSettingsResponse {
+  enabled: boolean;
+  source: 'stored' | 'project_options';
+  settings: WorkflowSettings;
+}
+
+export interface WorkflowSettingsPreviewRequest {
+  templateId?: string;
+  projectTypeId?: string | null;
+  workflowRecipeId?: string | null;
+  serviceName?: string;
+  servicePath?: string;
+  nodeVersion?: string;
+  packageManager?: 'npm';
+  coverageThreshold?: number;
+  centralWorkflowRef?: string;
+  checks?: Partial<WorkflowSettings['checks']>;
+}
+
+export interface WorkflowSettingsPreviewResponse {
+  settings: WorkflowSettings;
+  workflowFiles: StagedWorkflowFile[];
+  diffSummary: Array<{
+    path: string;
+    status: 'new' | 'changed' | 'unchanged';
+  }>;
+  validationWarnings: Array<{
+    field: string;
+    message: string;
+  }>;
+}
+
+export interface WorkflowUpdatePullRequestResponse {
+  projectId: string;
+  repoFullName: string;
+  branchName: string;
+  workflowPath: string;
+  workflowFiles: WorkflowFileMetadata[];
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  status: 'created';
+  request: WorkflowUpdateRequestRecord | null;
+}
+
 // ─── GitHub Contents API response ────────────────────────────────────────────
 
 interface GitHubContentsResponse {
@@ -151,6 +318,26 @@ export class ProjectsService {
     private readonly projectsRepository: ProjectsRepository,
     private readonly ciService: CiService,
     private readonly projectDeploymentProvisioningService: ProjectDeploymentProvisioningService,
+    @Optional()
+    private readonly ciTokensRepository?: CiTokensRepository,
+    @Optional()
+    private readonly deploymentTargetsRepository?: DeploymentTargetsRepository,
+    @Optional()
+    private readonly envVarsRepository?: EnvVarsRepository,
+    @Optional()
+    private readonly workflowHistoryRepository?: WorkflowHistoryRepository,
+    @Optional()
+    private readonly dashboardSnapshotsRepository?: ProjectDashboardSnapshotsRepository,
+    @Optional()
+    private readonly configService?: ConfigService,
+    @Optional()
+    private readonly workflowSettingsRepository?: ProjectWorkflowSettingsRepository,
+    @Optional()
+    private readonly workflowUpdateRequestsRepository?: ProjectWorkflowUpdateRequestsRepository,
+    @Optional()
+    private readonly usageQuotaService?: UsageQuotaService,
+    @Optional()
+    private readonly auditEventsService?: AuditEventsService,
   ) {}
 
   // ─── POST /projects ────────────────────────────────────────────────────────
@@ -161,6 +348,7 @@ export class ProjectsService {
     accessToken: string | null,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
+    await this.usageQuotaService?.assertWithinLimit(userId, 'projects');
     const provisioningToken = await this.resolveProvisioningToken(
       userId,
       accessToken,
@@ -698,6 +886,92 @@ export class ProjectsService {
     };
   }
 
+  async getProjectOverview(
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectOverviewResponse> {
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!row) {
+      throw new NotFoundException('Project not found');
+    }
+
+    const [
+      ciToken,
+      deploymentTargets,
+      envMetadata,
+      workflowHistory,
+      latestSnapshot,
+    ] = await Promise.all([
+      this.loadCiTokenStatus(projectId),
+      this.deploymentTargetsRepository?.listDeploymentTargets(projectId) ??
+        Promise.resolve([]),
+      this.envVarsRepository?.listEnvMetadata(projectId) ?? Promise.resolve([]),
+      this.workflowHistoryRepository?.listForProjectIdentity({
+        userId,
+        serviceName: row.service_name,
+        templateId: row.template_id,
+        limit: 5,
+      }) ?? Promise.resolve([]),
+      this.dashboardSnapshotsRepository?.findLatestByProject(projectId) ??
+        Promise.resolve(null),
+    ]);
+
+    const project = this.toProvisionedProject(row);
+    const workflowFiles = project.workflowFiles ?? [];
+    const matchingHistory = workflowHistory;
+    const ciAuth = this.toCiAuthOverview(ciToken);
+    const failedEnvCount = envMetadata.filter(
+      (metadata) => metadata.status === 'failed',
+    ).length;
+
+    return {
+      project: {
+        ...project,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+      workflow: {
+        path: row.workflow_path,
+        files: workflowFiles,
+        stageCount: workflowFiles.length,
+        history: matchingHistory,
+      },
+      deploymentTargets: {
+        items: deploymentTargets,
+        count: deploymentTargets.length,
+      },
+      environment: {
+        items: envMetadata,
+        count: envMetadata.length,
+        failedCount: failedEnvCount,
+      },
+      ciAuth,
+      health: this.buildOverviewHealth({
+        project,
+        workflowFiles,
+        ciAuth,
+        deploymentTargets,
+        envMetadata,
+      }),
+      syncSnapshot: {
+        enabled: this.projectSyncSnapshotsEnabled(),
+        mode: 'local_snapshot',
+        latest: latestSnapshot,
+      },
+      capabilities: {
+        envProvisioning: true,
+        workflowSettings: this.workflowSettingsPreviewEnabled(),
+        syncSnapshots: this.projectSyncSnapshotsEnabled(),
+        ciRunTracking: this.ciRunTrackingEnabled(),
+        deploymentHistory: this.deploymentHistoryEnabled(),
+        driftDetection: this.driftDetectionEnabled(),
+      },
+    };
+  }
+
   // ─── DELETE /projects/:id ──────────────────────────────────────────────────
 
   /**
@@ -706,6 +980,278 @@ export class ProjectsService {
    * are NOT touched — this is a FlowCI tracking disconnect only.
    * CASCADE deletes ci.project_ci_tokens automatically via the FK.
    */
+  async syncProjectSnapshot(
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectSyncSnapshotResponse> {
+    if (!this.projectSyncSnapshotsEnabled()) {
+      throw new BadRequestException('Project sync snapshots are disabled');
+    }
+
+    if (!this.dashboardSnapshotsRepository) {
+      throw new ServiceUnavailableException(
+        'Project dashboard snapshots are not configured',
+      );
+    }
+
+    const startedAt = new Date().toISOString();
+    const overview = await this.getProjectOverview(projectId, userId);
+    const findings = this.buildLocalSnapshotFindings(overview);
+    const completedAt = new Date().toISOString();
+    const snapshot = await this.dashboardSnapshotsRepository.createSnapshot({
+      projectId,
+      status: overview.health.summary,
+      summary: {
+        mode: 'local_snapshot',
+        projectId,
+        healthSummary: overview.health.summary,
+        workflowStageCount: overview.workflow.stageCount,
+        deploymentTargetCount: overview.deploymentTargets.count,
+        envVarCount: overview.environment.count,
+        failedEnvVarCount: overview.environment.failedCount,
+        ciTokenStatus: overview.ciAuth.status,
+      },
+      findings,
+      startedAt,
+      completedAt,
+      createdBy: userId,
+    });
+
+    return {
+      snapshot,
+      overview: {
+        ...overview,
+        syncSnapshot: {
+          enabled: true,
+          mode: 'local_snapshot',
+          latest: snapshot,
+        },
+      },
+    };
+  }
+
+  async listProjectAuditEvents(
+    projectId: string,
+    userId: string,
+  ): Promise<ProjectAuditEventsResponse> {
+    const project = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return (
+      (await this.auditEventsService?.listProjectEvents(projectId, userId)) ?? {
+        enabled: this.auditEventsEnabled(),
+        items: [],
+      }
+    );
+  }
+
+  async getWorkflowSettings(
+    projectId: string,
+    userId: string,
+  ): Promise<WorkflowSettingsResponse> {
+    if (!this.workflowSettingsPreviewEnabled()) {
+      throw new BadRequestException('Workflow settings preview is disabled');
+    }
+
+    const { row } = await this.loadOwnedProjectForWorkflowSettings(
+      projectId,
+      userId,
+    );
+    const storedSettings =
+      await this.workflowSettingsRepository?.findByProject(projectId);
+
+    if (storedSettings) {
+      return {
+        enabled: true,
+        source: 'stored',
+        settings: this.normalizeWorkflowSettings(row, storedSettings),
+      };
+    }
+
+    return {
+      enabled: true,
+      source: 'project_options',
+      settings: this.normalizeWorkflowSettings(row, null),
+    };
+  }
+
+  async previewWorkflowSettings(
+    projectId: string,
+    userId: string,
+    request: WorkflowSettingsPreviewRequest,
+  ): Promise<WorkflowSettingsPreviewResponse> {
+    if (!this.workflowSettingsPreviewEnabled()) {
+      throw new BadRequestException('Workflow settings preview is disabled');
+    }
+
+    const { row, project } = await this.loadOwnedProjectForWorkflowSettings(
+      projectId,
+      userId,
+    );
+    const storedSettings =
+      await this.workflowSettingsRepository?.findByProject(projectId);
+    const settings = this.mergeWorkflowSettings(
+      this.normalizeWorkflowSettings(row, storedSettings ?? null),
+      request,
+    );
+    const validationWarnings = this.validateWorkflowSettingsPreview(
+      settings,
+      request,
+    );
+
+    if (validationWarnings.length > 0) {
+      return {
+        settings,
+        workflowFiles: [],
+        diffSummary: [],
+        validationWarnings,
+      };
+    }
+
+    const { workflowFiles } = await this.buildWorkflowBundle({
+      templateId: settings.templateId,
+      serviceName: settings.serviceName,
+      servicePath: settings.servicePath,
+      nodeVersion: settings.nodeVersion,
+      coverageThreshold: settings.coverageThreshold,
+      centralWorkflowRef: settings.centralWorkflowRef,
+    });
+
+    return {
+      settings,
+      workflowFiles,
+      diffSummary: this.buildWorkflowPreviewDiff(
+        project.workflowFiles ?? [],
+        workflowFiles,
+      ),
+      validationWarnings: [],
+    };
+  }
+
+  async createWorkflowUpdatePullRequest(
+    projectId: string,
+    userId: string,
+    oauthAccessToken: string | null | undefined,
+    request: WorkflowSettingsPreviewRequest,
+  ): Promise<WorkflowUpdatePullRequestResponse> {
+    if (!this.workflowUpdatePrEnabled()) {
+      throw new BadRequestException(
+        'Workflow update pull requests are disabled',
+      );
+    }
+    await this.usageQuotaService?.assertWithinLimit(userId, 'workflow_prs');
+
+    const { row, project } = await this.loadOwnedProjectForWorkflowSettings(
+      projectId,
+      userId,
+    );
+    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
+    const [owner, repo] = this.parseRepoFullName(row.repo_full_name);
+    const preview = await this.previewWorkflowSettings(
+      projectId,
+      userId,
+      request,
+    );
+
+    if (preview.validationWarnings.length > 0) {
+      throw new BadRequestException(
+        preview.validationWarnings.map((warning) => warning.message).join(' '),
+      );
+    }
+
+    const repoInfo = await this.githubService.getRepo(token, owner, repo);
+    const baseBranch = repoInfo.defaultBranch || 'main';
+    const branchName = `flowci/workflow-update-${this.timestampForBranch()}`;
+    await this.githubService.createBranch(
+      token,
+      owner,
+      repo,
+      branchName,
+      baseBranch,
+    );
+
+    for (const file of preview.workflowFiles) {
+      await this.githubService.putFileContent(
+        token,
+        owner,
+        repo,
+        file.path,
+        file.yaml,
+        branchName,
+        'ci: update FlowCI workflow configuration',
+      );
+    }
+
+    let pullRequest: { number: number; htmlUrl: string };
+    try {
+      pullRequest = await this.githubService.createPullRequest(
+        token,
+        owner,
+        repo,
+        {
+          title: 'Update FlowCI workflow configuration',
+          head: branchName,
+          base: baseBranch,
+          body: this.buildWorkflowUpdatePullRequestBody(preview),
+        },
+      );
+    } catch (error) {
+      throw new BadRequestException(
+        'GitHub could not create the workflow update pull request. Check repository permissions and whether an update PR already exists.',
+        { cause: error },
+      );
+    }
+
+    const workflowFiles = preview.workflowFiles.map((file) => ({
+      stage: file.stage,
+      name: file.name,
+      path: file.path,
+      gated: file.gated,
+    }));
+    const persistedRequest =
+      (await this.workflowUpdateRequestsRepository?.createRequest({
+        projectId,
+        requestedBy: userId,
+        branchName,
+        baseBranch,
+        pullRequestNumber: pullRequest.number,
+        pullRequestUrl: pullRequest.htmlUrl,
+        status: 'created',
+        settings: preview.settings as unknown as Record<string, unknown>,
+        workflowFiles,
+      })) ?? null;
+
+    await this.auditEventsService?.record({
+      actorUserId: userId,
+      projectId,
+      eventCode: 'workflow_pr_created',
+      message: 'Workflow update PR created',
+      metadata: {
+        pullRequestNumber: pullRequest.number,
+        pullRequestUrl: pullRequest.htmlUrl,
+        branchName,
+        baseBranch,
+      },
+    });
+
+    return {
+      projectId,
+      repoFullName: project.repoFullName,
+      branchName,
+      workflowPath: preview.workflowFiles[0]?.path ?? row.workflow_path,
+      workflowFiles,
+      pullRequestNumber: pullRequest.number,
+      pullRequestUrl: pullRequest.htmlUrl,
+      status: 'created',
+      request: persistedRequest,
+    };
+  }
+
   async disconnectProject(projectId: string, userId: string): Promise<void> {
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
@@ -1108,6 +1654,7 @@ export class ProjectsService {
     deploymentProvider?: DeploymentProvider | undefined;
     deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
     workflowVariant?: 'backend' | 'frontend' | undefined;
+    centralWorkflowRef?: string | undefined;
   }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const {
       templateId,
@@ -1120,6 +1667,7 @@ export class ProjectsService {
       deploymentProvider,
       deploymentTargets = [],
       workflowVariant,
+      centralWorkflowRef,
     } = options;
 
     const template = await this.catalogService.getTemplateById(templateId);
@@ -1137,6 +1685,7 @@ export class ProjectsService {
       ...(deploymentProvider !== undefined && { deploymentProvider }),
       ...(deploymentTargets.length > 0 && { deploymentTargets }),
       ...(workflowVariant !== undefined && { workflowVariant }),
+      ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
     });
 
     const outputFileName = customOutputFileName ?? '00-flowci-access.yml';
@@ -1742,6 +2291,443 @@ export class ProjectsService {
           break;
       }
     }
+  }
+
+  private async loadCiTokenStatus(
+    projectId: string,
+  ): Promise<ProjectTokenStatus | null> {
+    if (!this.ciTokensRepository) {
+      return null;
+    }
+
+    return this.ciTokensRepository.findProjectTokenStatus(projectId);
+  }
+
+  private async loadOwnedProjectForWorkflowSettings(
+    projectId: string,
+    userId: string,
+  ): Promise<{ row: ProvisionedProjectRow; project: ProvisionedProject }> {
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
+    if (!row) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return {
+      row,
+      project: this.toProvisionedProject(row),
+    };
+  }
+
+  private projectSyncSnapshotsEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.projectSyncSnapshots.enabled ?? false;
+  }
+
+  private workflowSettingsPreviewEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.workflowSettingsPreview.enabled ?? false;
+  }
+
+  private workflowUpdatePrEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.workflowUpdatePr.enabled ?? false;
+  }
+
+  private ciRunTrackingEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.ciRunTracking?.enabled ?? false;
+  }
+
+  private deploymentHistoryEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.deploymentHistory?.enabled ?? false;
+  }
+
+  private driftDetectionEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.driftDetection?.enabled ?? false;
+  }
+
+  private auditEventsEnabled(): boolean {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.auditEvents?.enabled ?? false;
+  }
+
+  private timestampForBranch(date = new Date()): string {
+    return date.toISOString().replaceAll(/\D/g, '').slice(0, 14);
+  }
+
+  private buildWorkflowUpdatePullRequestBody(
+    preview: WorkflowSettingsPreviewResponse,
+  ): string {
+    const fileList = preview.workflowFiles
+      .map((file) => `- ${file.path}`)
+      .join('\n');
+    const changedSettings = [
+      `Node version: ${preview.settings.nodeVersion}`,
+      `Coverage threshold: ${String(preview.settings.coverageThreshold)}`,
+      `Service path: ${preview.settings.servicePath}`,
+      `Central workflow ref: ${preview.settings.centralWorkflowRef}`,
+    ].join('\n');
+
+    return [
+      'This PR updates the FlowCI workflow configuration for this project.',
+      '',
+      'Changed settings:',
+      changedSettings,
+      '',
+      'Generated workflow files:',
+      fileList,
+      '',
+      'Runtime environment values are not included.',
+    ].join('\n');
+  }
+
+  private normalizeWorkflowSettings(
+    row: ProvisionedProjectRow,
+    stored: ProjectWorkflowSettingsRowValue | null,
+  ): WorkflowSettings {
+    const storedSettings = stored?.settings ?? {};
+    const projectOptions = row.project_options ?? {};
+    const checks = this.readChecks(projectOptions, storedSettings);
+
+    return {
+      projectId: row.id,
+      templateId:
+        this.readString(storedSettings['templateId']) ?? row.template_id,
+      projectTypeId:
+        this.readNullableString(storedSettings['projectTypeId']) ??
+        row.project_type_id,
+      workflowRecipeId:
+        this.readNullableString(storedSettings['workflowRecipeId']) ??
+        row.workflow_recipe_id,
+      serviceName:
+        this.readString(storedSettings['serviceName']) ?? row.service_name,
+      servicePath:
+        this.readString(storedSettings['servicePath']) ??
+        this.readString(projectOptions['servicePath']) ??
+        '.',
+      nodeVersion:
+        this.readString(storedSettings['nodeVersion']) ??
+        this.readString(projectOptions['nodeVersion']) ??
+        '24',
+      packageManager: 'npm',
+      coverageThreshold:
+        this.readNumber(storedSettings['coverageThreshold']) ??
+        this.readNumber(projectOptions['coverageThreshold']) ??
+        80,
+      centralWorkflowRef:
+        this.readString(storedSettings['centralWorkflowRef']) ?? 'v1',
+      checks,
+    };
+  }
+
+  private mergeWorkflowSettings(
+    base: WorkflowSettings,
+    request: WorkflowSettingsPreviewRequest,
+  ): WorkflowSettings {
+    return {
+      ...base,
+      ...(request.templateId !== undefined && {
+        templateId: request.templateId,
+      }),
+      ...(request.projectTypeId !== undefined && {
+        projectTypeId: request.projectTypeId,
+      }),
+      ...(request.workflowRecipeId !== undefined && {
+        workflowRecipeId: request.workflowRecipeId,
+      }),
+      ...(request.serviceName !== undefined && {
+        serviceName: request.serviceName,
+      }),
+      ...(request.servicePath !== undefined && {
+        servicePath: request.servicePath,
+      }),
+      ...(request.nodeVersion !== undefined && {
+        nodeVersion: request.nodeVersion,
+      }),
+      packageManager: 'npm',
+      ...(request.coverageThreshold !== undefined && {
+        coverageThreshold: request.coverageThreshold,
+      }),
+      ...(request.centralWorkflowRef !== undefined && {
+        centralWorkflowRef: request.centralWorkflowRef,
+      }),
+      checks: {
+        ...base.checks,
+        ...(request.checks ?? {}),
+      },
+    };
+  }
+
+  private validateWorkflowSettingsPreview(
+    settings: WorkflowSettings,
+    request: WorkflowSettingsPreviewRequest,
+  ): WorkflowSettingsPreviewResponse['validationWarnings'] {
+    const warnings: WorkflowSettingsPreviewResponse['validationWarnings'] = [];
+
+    if (
+      !Number.isInteger(settings.coverageThreshold) ||
+      settings.coverageThreshold < 0 ||
+      settings.coverageThreshold > 100
+    ) {
+      warnings.push({
+        field: 'coverageThreshold',
+        message: 'Coverage threshold must be between 0 and 100.',
+      });
+    }
+
+    if (
+      request.packageManager !== undefined &&
+      request.packageManager !== 'npm'
+    ) {
+      warnings.push({
+        field: 'packageManager',
+        message: 'Only npm workflow previews are supported in this phase.',
+      });
+    }
+
+    if (!/^[0-9]{2}$/.test(settings.nodeVersion)) {
+      warnings.push({
+        field: 'nodeVersion',
+        message: 'Node version must be a two-digit major version.',
+      });
+    }
+
+    return warnings;
+  }
+
+  private buildWorkflowPreviewDiff(
+    currentFiles: WorkflowFileMetadata[],
+    previewFiles: StagedWorkflowFile[],
+  ): WorkflowSettingsPreviewResponse['diffSummary'] {
+    const currentPaths = new Set(currentFiles.map((file) => file.path));
+
+    return previewFiles.map((file) => ({
+      path: file.path,
+      status:
+        currentPaths.size === 0
+          ? 'new'
+          : currentPaths.has(file.path)
+            ? 'changed'
+            : 'new',
+    }));
+  }
+
+  private readChecks(
+    projectOptions: Record<string, unknown>,
+    storedSettings: Record<string, unknown>,
+  ): WorkflowSettings['checks'] {
+    const storedChecks =
+      typeof storedSettings['checks'] === 'object' &&
+      storedSettings['checks'] !== null &&
+      !Array.isArray(storedSettings['checks'])
+        ? (storedSettings['checks'] as Record<string, unknown>)
+        : {};
+    const optionTests =
+      typeof projectOptions['tests'] === 'object' &&
+      projectOptions['tests'] !== null &&
+      !Array.isArray(projectOptions['tests'])
+        ? (projectOptions['tests'] as Record<string, unknown>)
+        : {};
+
+    return {
+      lint:
+        this.readBoolean(storedChecks['lint']) ??
+        this.readBoolean(optionTests['lint']) ??
+        true,
+      unit:
+        this.readBoolean(storedChecks['unit']) ??
+        this.readBoolean(optionTests['unit']) ??
+        true,
+      build:
+        this.readBoolean(storedChecks['build']) ??
+        this.readBoolean(optionTests['build']) ??
+        true,
+      security:
+        this.readBoolean(storedChecks['security']) ??
+        this.readBoolean(optionTests['security']) ??
+        true,
+    };
+  }
+
+  private readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value : null;
+  }
+
+  private readNullableString(value: unknown): string | null {
+    return typeof value === 'string' ? value : null;
+  }
+
+  private readNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private readBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null;
+  }
+
+  private buildLocalSnapshotFindings(
+    overview: ProjectOverviewResponse,
+  ): ProjectDashboardSnapshotFinding[] {
+    const findings: ProjectDashboardSnapshotFinding[] = [];
+
+    if (overview.workflow.stageCount === 0) {
+      findings.push({
+        code: 'workflow_files_missing',
+        severity: 'warning',
+        message: 'No workflow file metadata is tracked yet.',
+        source: 'local_snapshot',
+      });
+    }
+
+    if (overview.deploymentTargets.count === 0) {
+      findings.push({
+        code: 'deployment_target_not_provisioned',
+        severity: 'warning',
+        message: 'No deployment targets are configured.',
+        source: 'local_snapshot',
+      });
+    }
+
+    if (overview.ciAuth.status === 'missing') {
+      findings.push({
+        code: 'ci_token_missing',
+        severity: 'warning',
+        message: 'No project CI token is tracked.',
+        source: 'local_snapshot',
+      });
+    }
+
+    if (overview.ciAuth.status === 'revoked') {
+      findings.push({
+        code: 'ci_token_revoked',
+        severity: 'warning',
+        message: 'Project CI token is revoked.',
+        source: 'local_snapshot',
+      });
+    }
+
+    if (overview.environment.count === 0) {
+      findings.push({
+        code: 'env_metadata_empty',
+        severity: 'warning',
+        message: 'No env var metadata is tracked yet.',
+        source: 'local_snapshot',
+      });
+    }
+
+    for (const check of overview.health.checks) {
+      if (check.status === 'error') {
+        findings.push({
+          code: check.key,
+          severity: 'error',
+          message: check.message,
+          source: 'local_snapshot',
+        });
+      }
+    }
+
+    return findings;
+  }
+
+  private toCiAuthOverview(token: ProjectTokenStatus | null): {
+    status: 'active' | 'revoked' | 'missing';
+    tokenPresent: boolean;
+    tokenPrefix: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+    revokedAt: string | null;
+  } {
+    if (!token) {
+      return {
+        status: 'missing',
+        tokenPresent: false,
+        tokenPrefix: null,
+        createdAt: null,
+        updatedAt: null,
+        revokedAt: null,
+      };
+    }
+
+    return {
+      status: token.status,
+      tokenPresent: true,
+      tokenPrefix: token.tokenPrefix,
+      createdAt: token.createdAt,
+      updatedAt: token.updatedAt,
+      revokedAt: token.revokedAt,
+    };
+  }
+
+  private buildOverviewHealth(input: {
+    project: ProvisionedProject;
+    workflowFiles: WorkflowFileMetadata[];
+    ciAuth: ProjectOverviewResponse['ciAuth'];
+    deploymentTargets: DeploymentTargetSummary[];
+    envMetadata: EnvVarMetadata[];
+  }): ProjectOverviewResponse['health'] {
+    const checks: ProjectOverviewResponse['health']['checks'] = [
+      {
+        key: 'project_status',
+        label: 'Project status',
+        status: input.project.status === 'failed' ? 'error' : 'ok',
+        message:
+          input.project.status === 'failed'
+            ? (input.project.failureReason ?? 'Project provisioning failed.')
+            : `Project is ${input.project.status}.`,
+      },
+      {
+        key: 'workflow_bundle',
+        label: 'Workflow bundle',
+        status: input.workflowFiles.length > 0 ? 'ok' : 'warning',
+        message:
+          input.workflowFiles.length > 0
+            ? `${input.workflowFiles.length} workflow file${input.workflowFiles.length === 1 ? '' : 's'} tracked.`
+            : 'No workflow file metadata is tracked yet.',
+      },
+      {
+        key: 'ci_token',
+        label: 'CI token',
+        status: input.ciAuth.status === 'active' ? 'ok' : 'warning',
+        message:
+          input.ciAuth.status === 'active'
+            ? 'Project CI token is active.'
+            : input.ciAuth.status === 'revoked'
+              ? 'Project CI token is revoked.'
+              : 'No project CI token is tracked.',
+      },
+      {
+        key: 'deployment_targets',
+        label: 'Deployment targets',
+        status: input.deploymentTargets.length > 0 ? 'ok' : 'warning',
+        message:
+          input.deploymentTargets.length > 0
+            ? `${input.deploymentTargets.length} deployment target${input.deploymentTargets.length === 1 ? '' : 's'} tracked.`
+            : 'No deployment targets are configured.',
+      },
+      {
+        key: 'env_metadata',
+        label: 'Environment metadata',
+        status: input.envMetadata.some((item) => item.status === 'failed')
+          ? 'warning'
+          : 'ok',
+        message:
+          input.envMetadata.length > 0
+            ? `${input.envMetadata.length} env var key${input.envMetadata.length === 1 ? '' : 's'} tracked.`
+            : 'No env var metadata is tracked yet.',
+      },
+    ];
+    const summary = checks.some((check) => check.status === 'error')
+      ? 'error'
+      : checks.some((check) => check.status === 'warning')
+        ? 'warning'
+        : 'ok';
+
+    return { summary, checks };
   }
 
   private toProvisionedProject(row: ProvisionedProjectRow): ProvisionedProject {

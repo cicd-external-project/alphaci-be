@@ -9,7 +9,10 @@ describe('DeploymentTargetsService', () => {
   };
   const deploymentTargetsRepository = {
     createDeploymentTarget: jest.fn(),
+    deleteDeploymentTargetForUser: jest.fn(),
+    findDeploymentTargetForUser: jest.fn(),
     listDeploymentTargets: jest.fn(),
+    updateDeploymentTargetMetadataForUser: jest.fn(),
     updateProviderMetadata: jest.fn(),
   };
   const providerConnectionsRepository = {
@@ -54,6 +57,9 @@ describe('DeploymentTargetsService', () => {
           vercelTeamId: 'team_flowci',
           vercelTeamSlug: 'flowci-team',
         },
+      },
+      projectTargetManagement: {
+        enabled: true,
       },
     });
 
@@ -152,6 +158,9 @@ describe('DeploymentTargetsService', () => {
           vercelTeamSlug: 'flowci-team',
         },
       },
+      projectTargetManagement: {
+        enabled: true,
+      },
     });
 
     await expect(
@@ -219,5 +228,136 @@ describe('DeploymentTargetsService', () => {
       },
     ];
     expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
+  });
+
+  it('updates FlowCI target metadata without calling provider clients', async () => {
+    const updatedTarget = {
+      id: 'target-1',
+      projectId: 'project-1',
+      slot: 'backend',
+      provider: 'render',
+      providerProjectName: 'orders-api-uat',
+      branchName: 'uat',
+      rootDirectory: 'apps/api',
+      buildCommand: 'npm run build',
+      startCommand: 'npm run start:prod',
+      renderEnvironmentName: 'uat',
+    };
+    deploymentTargetsRepository.updateDeploymentTargetMetadataForUser.mockResolvedValueOnce(
+      updatedTarget,
+    );
+
+    await expect(
+      service.updateDeploymentTargetMetadata('project-1', 'target-1', 'user-1', {
+        providerProjectName: ' orders-api-uat ',
+        branchName: ' uat ',
+        rootDirectory: ' apps/api ',
+        buildCommand: ' npm run build ',
+        startCommand: ' npm run start:prod ',
+        slot: 'backend',
+        renderEnvironmentName: 'uat',
+      }),
+    ).resolves.toEqual(updatedTarget);
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.updateDeploymentTargetMetadataForUser,
+    ).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      expect.objectContaining({
+        providerProjectName: 'orders-api-uat',
+        branchName: 'uat',
+        rootDirectory: 'apps/api',
+        buildCommand: 'npm run build',
+        startCommand: 'npm run start:prod',
+        slot: 'backend',
+        renderEnvironmentName: 'uat',
+      }),
+    );
+  });
+
+  it('rejects metadata updates for another user target', async () => {
+    deploymentTargetsRepository.updateDeploymentTargetMetadataForUser.mockResolvedValueOnce(
+      null,
+    );
+
+    await expect(
+      service.updateDeploymentTargetMetadata('project-1', 'target-1', 'user-2', {
+        providerProjectName: 'orders-api',
+      }),
+    ).rejects.toThrow('Deployment target not found');
+  });
+
+  it('detaches a target from FlowCI without calling provider delete APIs', async () => {
+    deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
+      true,
+    );
+
+    await expect(
+      service.detachDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toEqual({ detached: true });
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.deleteDeploymentTargetForUser,
+    ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
+  });
+
+  it('reports provider-write actions disabled until live provider activation', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce({
+      id: 'target-1',
+      projectId: 'project-1',
+      provider: 'vercel',
+      providerProjectId: 'prj_1',
+      providerProjectName: 'orders-web',
+      providerMetadata: { vercelTeamSlug: 'flowci-team' },
+    });
+
+    await expect(
+      service.getDeploymentTargetActions('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      targetId: 'target-1',
+      actions: {
+        sync: { enabled: true, mode: 'local_metadata' },
+        detach: { enabled: true },
+        reinstallDeploymentSecrets: {
+          enabled: false,
+          reason: 'Provider activation required',
+        },
+        openProviderDashboard: {
+          enabled: true,
+          url: 'https://vercel.com/flowci-team/orders-web',
+        },
+      },
+    });
+  });
+
+  it('syncs target state from stored metadata only', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce({
+      id: 'target-1',
+      projectId: 'project-1',
+      provider: 'render',
+      providerProjectId: 'srv-1',
+      providerProjectName: 'orders-api-test',
+      branchName: 'test',
+      rootDirectory: null,
+      status: 'active',
+      providerMetadata: {},
+    });
+
+    await expect(
+      service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      mode: 'local_metadata',
+      status: 'active',
+      findings: [],
+      target: {
+        id: 'target-1',
+      },
+    });
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
   });
 });

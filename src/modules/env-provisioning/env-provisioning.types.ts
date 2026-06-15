@@ -88,4 +88,5 @@ export interface EnvVarMetadata {
   lastProvisionedBy: string;
   status: EnvVarProvisionStatus;
   errorSummary: string | null;
+  removedAt?: string | null;
 }

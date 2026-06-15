@@ -99,7 +99,10 @@
     "coveragePathIgnorePatterns": [
       "/node_modules/",
       "src/main.ts",
-      "\\.module\\.ts$"
+      "src/scripts/",
+      "\\.module\\.ts$",
+      "\\.types\\.ts$",
+      "/dto/"
     ],
     "coverageDirectory": "../coverage",
     "coverageReporters": [

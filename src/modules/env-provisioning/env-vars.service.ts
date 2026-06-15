@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -18,10 +19,25 @@ import type {
 } from './env-provisioning.types';
 import { ProviderClientRegistry } from './provider-clients/provider-client.registry';
 import { ProviderConnectionsRepository } from './provider-connections.repository';
+import { UsageQuotaService } from '../usage/usage-quota.service';
 
 const ENVIRONMENTS: EnvEnvironment[] = ['test', 'uat', 'production'];
 const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{1,127}$/;
 const MAX_ENV_VALUE_LENGTH = 16_384;
+
+export interface ValidateEnvTextInput {
+  deploymentTargetId: string;
+  environment: EnvEnvironment;
+  text: string;
+}
+
+export interface ValidateEnvTextResponse {
+  keyCount: number;
+  keys: string[];
+  duplicates: string[];
+  invalidKeys: string[];
+  warnings: Array<{ code: string; message: string }>;
+}
 
 @Injectable()
 export class EnvVarsService {
@@ -32,10 +48,50 @@ export class EnvVarsService {
     private readonly clientRegistry: ProviderClientRegistry,
     private readonly encryptionService: EnvTokenEncryptionService,
     private readonly configService: ConfigService,
+    @Optional()
+    private readonly usageQuotaService?: UsageQuotaService,
   ) {}
 
-  async listEnvMetadata(projectId: string) {
-    return this.envVarsRepository.listEnvMetadata(projectId);
+  async listEnvMetadata(projectId: string, userId: string) {
+    return this.envVarsRepository.listEnvMetadataForUser(projectId, userId);
+  }
+
+  async validateEnvText(
+    projectId: string,
+    userId: string,
+    input: ValidateEnvTextInput,
+  ): Promise<ValidateEnvTextResponse> {
+    if (!ENVIRONMENTS.includes(input.environment)) {
+      throw new BadRequestException('Invalid environment');
+    }
+    await this.getOwnedTargetOrThrow(projectId, input.deploymentTargetId, userId);
+
+    const parsed = this.parseEnvText(input.text);
+    const seen = new Set<string>();
+    const keys: string[] = [];
+    const duplicates = new Set<string>();
+    const invalidKeys = new Set<string>();
+
+    for (const entry of parsed) {
+      if (!ENV_KEY_PATTERN.test(entry.key)) {
+        invalidKeys.add(entry.key);
+        continue;
+      }
+      if (seen.has(entry.key)) {
+        duplicates.add(entry.key);
+        continue;
+      }
+      seen.add(entry.key);
+      keys.push(entry.key);
+    }
+
+    return {
+      keyCount: parsed.length,
+      keys,
+      duplicates: [...duplicates],
+      invalidKeys: [...invalidKeys],
+      warnings: [],
+    };
   }
 
   async provisionEnvVars(
@@ -51,13 +107,25 @@ export class EnvVarsService {
     }
     this.validateVars(dto.vars);
 
-    const target =
-      await this.deploymentTargetsRepository.findDeploymentTargetForUser(
-        dto.deploymentTargetId,
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      dto.deploymentTargetId,
+      userId,
+    );
+    const existingKeyCount = await this.envVarsRepository.countExistingActiveKeys(
+      {
+        deploymentTargetId: target.id,
+        environment: dto.environment,
+        keys: dto.vars.map((variable) => variable.key),
+      },
+    );
+    const newKeyCount = dto.vars.length - existingKeyCount;
+    if (newKeyCount > 0) {
+      await this.usageQuotaService?.assertWithinLimit(
         userId,
+        'env_keys',
+        newKeyCount,
       );
-    if (!target || target.projectId !== projectId) {
-      throw new NotFoundException('Deployment target not found');
     }
 
     const token = await this.resolveProviderToken(target, userId);
@@ -91,6 +159,79 @@ export class EnvVarsService {
     });
 
     return result;
+  }
+
+  async deleteEnvMetadata(
+    projectId: string,
+    metadataId: string,
+    userId: string,
+  ): Promise<{ removed: true; key: string }> {
+    const metadata = await this.envVarsRepository.findEnvMetadataForUser(
+      metadataId,
+      userId,
+    );
+    if (!metadata || metadata.projectId !== projectId) {
+      throw new NotFoundException('Environment variable metadata not found');
+    }
+
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      metadata.deploymentTargetId,
+      userId,
+    );
+    const token = await this.resolveProviderToken(target, userId);
+    await this.clientRegistry.getClient(target.provider).deleteEnvironmentVariable({
+      token,
+      targetId: target.providerProjectId,
+      environment: metadata.environment,
+      key: metadata.key,
+    });
+
+    const removed = await this.envVarsRepository.markEnvMetadataRemoved(
+      metadataId,
+      userId,
+      null,
+    );
+    if (!removed) {
+      throw new NotFoundException('Environment variable metadata not found');
+    }
+
+    return { removed: true, key: metadata.key };
+  }
+
+  private async getOwnedTargetOrThrow(
+    projectId: string,
+    deploymentTargetId: string,
+    userId: string,
+  ): Promise<DeploymentTargetSummary> {
+    const target =
+      await this.deploymentTargetsRepository.findDeploymentTargetForUser(
+        deploymentTargetId,
+        userId,
+      );
+    if (!target || target.projectId !== projectId) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    return target;
+  }
+
+  private parseEnvText(text: string): Array<{ key: string }> {
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map((line) => line.replace(/^export\s+/, ''))
+      .map((line) => {
+        const separatorIndex = line.indexOf('=');
+        return {
+          key:
+            separatorIndex === -1
+              ? line.trim()
+              : line.slice(0, separatorIndex).trim(),
+        };
+      })
+      .filter((entry) => entry.key.length > 0);
   }
 
   private validateVars(vars: EnvVarInput[] | undefined): void {

@@ -64,6 +64,16 @@ export interface CreateDeploymentTargetInput {
   providerMetadata?: Record<string, unknown>;
 }
 
+export interface UpdateDeploymentTargetMetadataInput {
+  slot?: EnvTargetSlot;
+  providerProjectName?: string;
+  branchName?: string;
+  rootDirectory?: string | null;
+  buildCommand?: string | null;
+  startCommand?: string | null;
+  renderEnvironmentName?: RenderEnvironmentName | null;
+}
+
 @Injectable()
 export class DeploymentTargetsRepository {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -177,6 +187,76 @@ export class DeploymentTargetsRepository {
     }
 
     return this.toSummary(row);
+  }
+
+  async updateDeploymentTargetMetadataForUser(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    input: UpdateDeploymentTargetMetadataInput,
+  ): Promise<DeploymentTargetSummary | null> {
+    const result = await this.databaseService.query<DeploymentTargetRow>(
+      `
+        UPDATE env_provisioning.project_deployment_targets AS target
+        SET slot = CASE WHEN $4 THEN $5 ELSE target.slot END,
+            provider_project_name = CASE WHEN $6 THEN $7 ELSE target.provider_project_name END,
+            branch_name = CASE WHEN $8 THEN $9 ELSE target.branch_name END,
+            root_directory = CASE WHEN $10 THEN $11 ELSE target.root_directory END,
+            build_command = CASE WHEN $12 THEN $13 ELSE target.build_command END,
+            start_command = CASE WHEN $14 THEN $15 ELSE target.start_command END,
+            render_environment_name = CASE WHEN $16 THEN $17 ELSE target.render_environment_name END,
+            updated_at = NOW()
+        FROM projects.provisioned_projects AS project
+        WHERE project.id = target.project_id
+          AND target.project_id = $1
+          AND target.id = $2
+          AND project.user_id = $3
+        RETURNING target.*;
+      `,
+      [
+        projectId,
+        targetId,
+        userId,
+        input.slot !== undefined,
+        input.slot ?? null,
+        input.providerProjectName !== undefined,
+        input.providerProjectName ?? null,
+        input.branchName !== undefined,
+        input.branchName ?? null,
+        input.rootDirectory !== undefined,
+        input.rootDirectory ?? null,
+        input.buildCommand !== undefined,
+        input.buildCommand ?? null,
+        input.startCommand !== undefined,
+        input.startCommand ?? null,
+        input.renderEnvironmentName !== undefined,
+        input.renderEnvironmentName ?? null,
+      ],
+    );
+
+    const row = result.rows[0];
+    return row ? this.toSummary(row) : null;
+  }
+
+  async deleteDeploymentTargetForUser(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        DELETE FROM env_provisioning.project_deployment_targets AS target
+        USING projects.provisioned_projects AS project
+        WHERE project.id = target.project_id
+          AND target.project_id = $1
+          AND target.id = $2
+          AND project.user_id = $3
+        RETURNING target.id;
+      `,
+      [projectId, targetId, userId],
+    );
+
+    return (result.rowCount ?? 0) > 0;
   }
 
   async findDeploymentTargetForUser(

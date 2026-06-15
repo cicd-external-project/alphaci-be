@@ -302,7 +302,35 @@ export class GithubService {
     }
 
     const payload = (await response.json()) as GitHubRepoResponse[];
-    return payload.map((repo) => ({
+    return payload.map((repo) => this.toRepo(repo));
+  }
+
+  async getRepo(
+    accessToken: string,
+    owner: string,
+    repo: string,
+  ): Promise<GitHubRepo> {
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'cicd-workflow-product',
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub repo lookup failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as GitHubRepoResponse;
+    return this.toRepo(payload);
+  }
+
+  private toRepo(repo: GitHubRepoResponse): GitHubRepo {
+    return {
       id: repo.id,
       name: repo.name,
       fullName: repo.full_name,
@@ -311,7 +339,7 @@ export class GithubService {
       defaultBranch: repo.default_branch,
       htmlUrl: repo.html_url,
       updatedAt: repo.updated_at,
-    }));
+    };
   }
 
   async createRepo(
