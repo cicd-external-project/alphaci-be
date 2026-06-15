@@ -398,14 +398,12 @@ jobs:
 
   it('records audit and notification events when project quota blocks creation', async () => {
     const usageQuotaService = {
-      assertWithinLimit: jest
-        .fn()
-        .mockRejectedValue(
-          new BadRequestException({
-            message: 'Usage quota exceeded',
-            limitCode: 'projects',
-          }),
-        ),
+      assertWithinLimit: jest.fn().mockRejectedValue(
+        new BadRequestException({
+          message: 'Usage quota exceeded',
+          limitCode: 'projects',
+        }),
+      ),
     };
     const auditEventsService = {
       recordProjectEvent: jest.fn(),
@@ -464,7 +462,8 @@ jobs:
   });
 
   it('attaches created projects to the default workspace when available', async () => {
-    const projectsRepository = makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const projectsRepository =
+      makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
     const workspacesService =
       makeWorkspacesService() as jest.Mocked<WorkspacesService>;
     const workspaceService = new ProjectsService(
@@ -554,7 +553,8 @@ jobs:
   });
 
   it('passes selected workspace id into project listing', async () => {
-    const projectsRepository = makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const projectsRepository =
+      makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
     const listService = new ProjectsService(
       makeCatalogService(),
       githubService,

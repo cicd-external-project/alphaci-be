@@ -71,7 +71,9 @@ export class ProviderConnectionsService {
     return { revoked: true };
   }
 
-  private async assertCanManageProviderConnections(userId: string): Promise<void> {
+  private async assertCanManageProviderConnections(
+    userId: string,
+  ): Promise<void> {
     if (!this.workspacesService) {
       return;
     }

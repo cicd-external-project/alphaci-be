@@ -131,7 +131,9 @@ describe('ProviderConnectionsService', () => {
         label: 'Team Vercel',
         token: 'vercel-token-cdef',
       }),
-    ).rejects.toThrow('Provider connection management requires owner or admin workspace access');
+    ).rejects.toThrow(
+      'Provider connection management requires owner or admin workspace access',
+    );
 
     expect(repository.createProviderConnection).not.toHaveBeenCalled();
   });

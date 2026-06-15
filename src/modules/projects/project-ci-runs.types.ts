@@ -9,7 +9,12 @@ export type CiRunStage =
   | 'unknown';
 
 export type CiRunStatus = 'queued' | 'in_progress' | 'completed';
-export type CiRunConclusion = 'success' | 'failure' | 'cancelled' | 'skipped' | null;
+export type CiRunConclusion =
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'skipped'
+  | null;
 
 export interface ProjectCiRun {
   id: string;

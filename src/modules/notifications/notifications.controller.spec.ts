@@ -26,7 +26,9 @@ describe('NotificationsController', () => {
         ],
         unreadCount: 1,
       }),
-      markRead: jest.fn().mockResolvedValue({ id: 'notification-1', read: true }),
+      markRead: jest
+        .fn()
+        .mockResolvedValue({ id: 'notification-1', read: true }),
       getPreferences: jest.fn().mockResolvedValue({
         userId: 'user-1',
         inAppEnabled: true,
@@ -43,7 +45,10 @@ describe('NotificationsController', () => {
 
   it('returns persisted notifications for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(), service);
+    const controller = new NotificationsController(
+      makeConfigService(),
+      service,
+    );
 
     await expect(
       controller.list({ session: { user: { id: 'user-1' } } } as never),
@@ -66,7 +71,10 @@ describe('NotificationsController', () => {
 
   it('marks a notification read for an authenticated user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(), service);
+    const controller = new NotificationsController(
+      makeConfigService(),
+      service,
+    );
 
     await expect(
       controller.markRead(
@@ -90,7 +98,10 @@ describe('NotificationsController', () => {
 
   it('returns disabled notification contract when notifications are disabled', () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(false), service);
+    const controller = new NotificationsController(
+      makeConfigService(false),
+      service,
+    );
 
     expect(
       controller.list({
@@ -102,7 +113,10 @@ describe('NotificationsController', () => {
 
   it('rejects marking notifications read when notifications are disabled', () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(false), service);
+    const controller = new NotificationsController(
+      makeConfigService(false),
+      service,
+    );
 
     expect(() =>
       controller.markRead(
@@ -115,7 +129,10 @@ describe('NotificationsController', () => {
 
   it('returns notification preferences for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(), service);
+    const controller = new NotificationsController(
+      makeConfigService(),
+      service,
+    );
 
     await expect(
       controller.getPreferences({ session: { userId: 'user-1' } } as never),
@@ -128,13 +145,15 @@ describe('NotificationsController', () => {
 
   it('updates notification preferences for the current user', async () => {
     const service = makeService();
-    const controller = new NotificationsController(makeConfigService(), service);
+    const controller = new NotificationsController(
+      makeConfigService(),
+      service,
+    );
 
     await expect(
-      controller.updatePreferences(
-        { session: { userId: 'user-1' } } as never,
-        { inAppEnabled: false },
-      ),
+      controller.updatePreferences({ session: { userId: 'user-1' } } as never, {
+        inAppEnabled: false,
+      }),
     ).resolves.toMatchObject({
       userId: 'user-1',
       inAppEnabled: false,

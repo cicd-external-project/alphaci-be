@@ -172,9 +172,8 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     }>;
     const remaining = current
       .map((item) => item.envVar)
-      .filter(
-        (item): item is { key: string; value?: string } =>
-          Boolean(item?.key && item.key !== input.key),
+      .filter((item): item is { key: string; value?: string } =>
+        Boolean(item?.key && item.key !== input.key),
       )
       .map((item) => ({ key: item.key, value: item.value ?? '' }));
 

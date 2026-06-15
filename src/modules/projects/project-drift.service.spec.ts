@@ -69,7 +69,9 @@ describe('ProjectDriftService', () => {
       { id: 'finding-1', code: 'ci_token_missing' },
     ]);
 
-    await expect(createService().listFindings('project-1', 'user-1')).resolves.toMatchObject({
+    await expect(
+      createService().listFindings('project-1', 'user-1'),
+    ).resolves.toMatchObject({
       enabled: true,
       mode: 'local_snapshot',
       findings: [{ code: 'ci_token_missing' }],
@@ -82,12 +84,16 @@ describe('ProjectDriftService', () => {
       driftDetection: { enabled: false },
     });
 
-    await expect(createService().runDetection('project-1', 'user-1')).resolves.toEqual({
+    await expect(
+      createService().runDetection('project-1', 'user-1'),
+    ).resolves.toEqual({
       enabled: false,
       mode: 'local_snapshot',
       findings: [],
     });
-    expect(deploymentTargetsRepository.listDeploymentTargets).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.listDeploymentTargets,
+    ).not.toHaveBeenCalled();
     expect(findingsRepository.replaceActiveFindings).not.toHaveBeenCalled();
   });
 

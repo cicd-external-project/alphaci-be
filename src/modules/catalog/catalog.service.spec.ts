@@ -159,7 +159,10 @@ describe('CatalogService', () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           CatalogService,
-          { provide: ConfigService, useValue: makeConfigService('../cicd-workflow') },
+          {
+            provide: ConfigService,
+            useValue: makeConfigService('../cicd-workflow'),
+          },
         ],
       }).compile();
       service = module.get(CatalogService);

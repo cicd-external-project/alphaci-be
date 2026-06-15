@@ -13,7 +13,10 @@ import type {
   CiRunsProjectContext,
   ProjectCiRun,
 } from './project-ci-runs.types';
-import { ProjectsRepository, type ProvisionedProjectRow } from './projects.repository';
+import {
+  ProjectsRepository,
+  type ProvisionedProjectRow,
+} from './projects.repository';
 
 export interface ProjectCiRunsResponse {
   enabled: boolean;
@@ -91,7 +94,10 @@ export class ProjectCiRunsService {
     projectId: string,
     userId: string,
   ): Promise<CiRunsProjectContext> {
-    const row = await this.projectsRepository.findByIdAndUser(projectId, userId);
+    const row = await this.projectsRepository.findByIdAndUser(
+      projectId,
+      userId,
+    );
     if (!row) {
       throw new NotFoundException('Project not found');
     }

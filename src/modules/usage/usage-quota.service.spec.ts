@@ -20,24 +20,25 @@ describe('UsageQuotaService', () => {
     configService.getOrThrow.mockReturnValue({
       usageQuotas: { enabled: true },
     });
-    service = new UsageQuotaService(makeDatabaseService(query), configService as never);
+    service = new UsageQuotaService(
+      makeDatabaseService(query),
+      configService as never,
+    );
   });
 
   it('returns local usage counters and free plan limits', async () => {
-    query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            projects: '2',
-            managed_render_services: '1',
-            managed_vercel_projects: '0',
-            deployment_targets: '2',
-            env_keys: '4',
-            workflow_prs: '1',
-          },
-        ],
-      });
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: [
+        {
+          projects: '2',
+          managed_render_services: '1',
+          managed_vercel_projects: '0',
+          deployment_targets: '2',
+          env_keys: '4',
+          workflow_prs: '1',
+        },
+      ],
+    });
 
     await expect(service.getUsage('user-1')).resolves.toMatchObject({
       enabled: true,
@@ -79,20 +80,18 @@ describe('UsageQuotaService', () => {
   });
 
   it('blocks actions that would exceed enabled quotas', async () => {
-    query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            projects: '3',
-            managed_render_services: '0',
-            managed_vercel_projects: '0',
-            deployment_targets: '0',
-            env_keys: '0',
-            workflow_prs: '0',
-          },
-        ],
-      });
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: [
+        {
+          projects: '3',
+          managed_render_services: '0',
+          managed_vercel_projects: '0',
+          deployment_targets: '0',
+          env_keys: '0',
+          workflow_prs: '0',
+        },
+      ],
+    });
 
     await expect(
       service.assertWithinLimit('user-1', 'projects'),

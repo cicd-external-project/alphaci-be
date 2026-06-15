@@ -125,18 +125,16 @@ describe('NotificationsRepository', () => {
   });
 
   it('reads notification preferences, creating defaults first', async () => {
-    query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            user_id: 'user-1',
-            in_app_enabled: true,
-            email_enabled: false,
-            updated_at: new Date('2026-06-15T00:00:00.000Z'),
-          },
-        ],
-      });
+    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+      rows: [
+        {
+          user_id: 'user-1',
+          in_app_enabled: true,
+          email_enabled: false,
+          updated_at: new Date('2026-06-15T00:00:00.000Z'),
+        },
+      ],
+    });
 
     await expect(repository.getPreferences('user-1')).resolves.toEqual({
       userId: 'user-1',
@@ -146,7 +144,9 @@ describe('NotificationsRepository', () => {
     });
     expect(query).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('INSERT INTO notifications.notification_preferences'),
+      expect.stringContaining(
+        'INSERT INTO notifications.notification_preferences',
+      ),
       ['user-1'],
     );
     expect(query).toHaveBeenNthCalledWith(

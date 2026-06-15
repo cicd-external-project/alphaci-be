@@ -40,7 +40,9 @@ describe('ProjectDeploymentsService', () => {
   }
 
   it('handles empty deployment history without provider credentials', async () => {
-    await expect(createService().listDeployments('project-1', 'user-1')).resolves.toEqual({
+    await expect(
+      createService().listDeployments('project-1', 'user-1'),
+    ).resolves.toEqual({
       enabled: true,
       mode: 'local_mock',
       liveProvidersEnabled: false,
@@ -81,7 +83,9 @@ describe('ProjectDeploymentsService', () => {
       },
     ]);
 
-    await expect(createService().listDeployments('project-1', 'user-1')).resolves.toMatchObject({
+    await expect(
+      createService().listDeployments('project-1', 'user-1'),
+    ).resolves.toMatchObject({
       deployments: [
         {
           id: 'local-target-render',
@@ -101,7 +105,9 @@ describe('ProjectDeploymentsService', () => {
       },
     });
 
-    await expect(createService().listDeployments('project-1', 'user-1')).resolves.toMatchObject({
+    await expect(
+      createService().listDeployments('project-1', 'user-1'),
+    ).resolves.toMatchObject({
       enabled: false,
       deployments: [],
     });

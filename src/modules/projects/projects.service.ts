@@ -2420,7 +2420,9 @@ export class ProjectsService {
     };
   }
 
-  private async resolveDefaultWorkspaceId(userId: string): Promise<string | null> {
+  private async resolveDefaultWorkspaceId(
+    userId: string,
+  ): Promise<string | null> {
     const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
     return workspaces?.items[0]?.id ?? null;
   }

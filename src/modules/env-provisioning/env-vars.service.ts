@@ -74,7 +74,11 @@ export class EnvVarsService {
     if (!ENVIRONMENTS.includes(input.environment)) {
       throw new BadRequestException('Invalid environment');
     }
-    await this.getOwnedTargetOrThrow(projectId, input.deploymentTargetId, userId);
+    await this.getOwnedTargetOrThrow(
+      projectId,
+      input.deploymentTargetId,
+      userId,
+    );
 
     const parsed = this.parseEnvText(input.text);
     const seen = new Set<string>();
@@ -123,21 +127,15 @@ export class EnvVarsService {
       dto.deploymentTargetId,
       userId,
     );
-    const existingKeyCount = await this.envVarsRepository.countExistingActiveKeys(
-      {
+    const existingKeyCount =
+      await this.envVarsRepository.countExistingActiveKeys({
         deploymentTargetId: target.id,
         environment: dto.environment,
         keys: dto.vars.map((variable) => variable.key),
-      },
-    );
+      });
     const newKeyCount = dto.vars.length - existingKeyCount;
     if (newKeyCount > 0) {
-      await this.assertWithinQuota(
-        userId,
-        projectId,
-        'env_keys',
-        newKeyCount,
-      );
+      await this.assertWithinQuota(userId, projectId, 'env_keys', newKeyCount);
     }
 
     const token = await this.resolveProviderToken(target, userId);
@@ -207,12 +205,14 @@ export class EnvVarsService {
       userId,
     );
     const token = await this.resolveProviderToken(target, userId);
-    await this.clientRegistry.getClient(target.provider).deleteEnvironmentVariable({
-      token,
-      targetId: target.providerProjectId,
-      environment: metadata.environment,
-      key: metadata.key,
-    });
+    await this.clientRegistry
+      .getClient(target.provider)
+      .deleteEnvironmentVariable({
+        token,
+        targetId: target.providerProjectId,
+        environment: metadata.environment,
+        key: metadata.key,
+      });
 
     const removed = await this.envVarsRepository.markEnvMetadataRemoved(
       metadataId,

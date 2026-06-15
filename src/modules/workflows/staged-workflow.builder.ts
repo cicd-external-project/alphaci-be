@@ -451,6 +451,7 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function protectedDeployBranchExpression(): string {
   return [
     '${{',

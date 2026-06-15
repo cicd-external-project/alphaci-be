@@ -196,7 +196,9 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     }
 
     const deleteResponse = await fetch(
-      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}/env/${envId}`),
+      this.withScope(
+        `${VERCEL_API_URL}/v9/projects/${input.targetId}/env/${envId}`,
+      ),
       {
         method: 'DELETE',
         headers: this.headers(input.token),

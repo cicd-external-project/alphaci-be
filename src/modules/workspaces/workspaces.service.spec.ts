@@ -144,7 +144,12 @@ describe('WorkspacesService', () => {
     const service = new WorkspacesService(repository, accessService);
 
     await expect(
-      service.updateMemberRole('workspace-1', 'user-1', 'member-owner', 'admin'),
+      service.updateMemberRole(
+        'workspace-1',
+        'user-1',
+        'member-owner',
+        'admin',
+      ),
     ).rejects.toThrow('Workspace must keep at least one owner');
     expect(repository.updateMemberRole).not.toHaveBeenCalled();
   });

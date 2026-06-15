@@ -23,16 +23,17 @@ export class LocalCiRunsProvider implements CiRunsProvider {
     options: LocalCiRunsProviderOptions = {},
   ) {
     this.fixtureMode =
-      options.fixtureMode ?? process.env['CI_RUN_LOCAL_FIXTURES_ENABLED'] === 'true';
+      options.fixtureMode ??
+      process.env['CI_RUN_LOCAL_FIXTURES_ENABLED'] === 'true';
   }
 
-  async listRuns(context: CiRunsProjectContext): Promise<ProjectCiRun[]> {
+  listRuns(context: CiRunsProjectContext): Promise<ProjectCiRun[]> {
     if (!this.fixtureMode) {
-      return [];
+      return Promise.resolve([]);
     }
 
     const now = '2026-06-12T00:00:00.000Z';
-    return context.workflowFiles.map((file) => {
+    const runs: ProjectCiRun[] = context.workflowFiles.map((file) => {
       const stage = this.mapWorkflowNameToStage(file.name);
       return {
         id: `local-${context.projectId}-${stage}`,
@@ -41,14 +42,15 @@ export class LocalCiRunsProvider implements CiRunsProvider {
         branch: 'test',
         commitSha: null,
         actor: 'flowci-local',
-        status: 'completed',
-        conclusion: stage === 'quality' ? 'failure' : 'success',
+        status: 'completed' as const,
+        conclusion: stage === 'quality' ? ('failure' as const) : ('success' as const),
         createdAt: now,
         updatedAt: now,
         htmlUrl: this.githubWorkflowUrl(context.repoFullName, file.path),
         canRerun: false,
       };
     });
+    return Promise.resolve(runs);
   }
 
   async getRun(
@@ -69,7 +71,10 @@ export class LocalCiRunsProvider implements CiRunsProvider {
     return 'unknown';
   }
 
-  private githubWorkflowUrl(repoFullName: string, workflowPath: string): string {
+  private githubWorkflowUrl(
+    repoFullName: string,
+    workflowPath: string,
+  ): string {
     const fileName = workflowPath.split('/').pop() ?? workflowPath;
     return `https://github.com/${repoFullName}/actions/workflows/${fileName}`;
   }
