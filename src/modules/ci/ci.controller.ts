@@ -1,18 +1,30 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   Post,
+  Query,
+  Req,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { CiService } from './ci.service';
+import { CiReportsService } from './ci-reports.service';
+import { CiReportBodyDto } from './dto/ci-report-body.dto';
+import { GetRunsQueryDto } from './dto/get-runs-query.dto';
 import type { ValidateCiRunDto } from './dto/validate-ci-run.dto';
 
 @Controller('ci')
 export class CiController {
-  constructor(private readonly ciService: CiService) {}
+  constructor(
+    private readonly ciService: CiService,
+    private readonly ciReportsService: CiReportsService,
+  ) {}
 
   @Post('validate')
   @HttpCode(200)
@@ -32,6 +44,44 @@ export class CiController {
     };
 
     return this.ciService.validateRun(input);
+  }
+
+  /**
+   * POST /api/v1/ci/report
+   * Ingests a CI stage run report from the generated workflow.
+   * Authenticated via CI_TOKEN bearer — same mechanism as /ci/validate.
+   */
+  @Post('report')
+  @HttpCode(200)
+  async ingestReport(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() body: CiReportBodyDto,
+  ) {
+    // Verify the CI_TOKEN is valid for this repo before accepting the report
+    const token = this.extractBearerToken(authorization);
+    await this.ciService.validateRun({
+      token,
+      repoFullName: body.repoFullName,
+      stage: body.stage,
+    });
+
+    return this.ciReportsService.ingestReport(body);
+  }
+
+  /**
+   * GET /api/v1/ci/runs?repoFullName=owner/repo
+   * Returns the last ~50 grouped run reports for a repository.
+   * Authenticated via session — ownership is verified inside the service.
+   */
+  @Get('runs')
+  @UseGuards(SessionAuthGuard)
+  async getRuns(@Req() req: Request, @Query() query: GetRunsQueryDto) {
+    const userId = req.session.user?.id ?? req.session.userId;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    return this.ciReportsService.getRuns(userId, query.repoFullName);
   }
 
   private extractBearerToken(authorization: string | undefined): string {

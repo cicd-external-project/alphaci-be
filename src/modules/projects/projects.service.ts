@@ -55,6 +55,7 @@ import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import {
   buildStagedWorkflowBundle,
+  CI_REPORT_URL,
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
@@ -485,6 +486,13 @@ export class ProjectsService {
       'CI_TOKEN',
       ciToken.token,
     );
+    await this.githubService.setActionsSecret(
+      provisioningToken,
+      ownerLogin,
+      repoName,
+      'CI_REPORT_URL',
+      CI_REPORT_URL,
+    );
 
     const deploymentProvisioning =
       await this.projectDeploymentProvisioningService.provisionForProject({
@@ -690,6 +698,13 @@ export class ProjectsService {
       'CI_TOKEN',
       ciToken.token,
     );
+    await this.githubService.setActionsSecret(
+      accessToken,
+      ownerLogin,
+      repoName,
+      'CI_REPORT_URL',
+      CI_REPORT_URL,
+    );
 
     const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
       await this.projectDeploymentProvisioningService.provisionForProject({
@@ -829,6 +844,13 @@ export class ProjectsService {
       repo,
       'CI_TOKEN',
       ciToken.token,
+    );
+    await this.githubService.setActionsSecret(
+      accessToken,
+      owner,
+      repo,
+      'CI_REPORT_URL',
+      CI_REPORT_URL,
     );
 
     const deploymentProvisioning =
@@ -2003,6 +2025,13 @@ export class ProjectsService {
       'CI_TOKEN',
       backendCiToken.token,
     );
+    await this.githubService.setActionsSecret(
+      accessToken,
+      ownerLogin,
+      actualBeRepoName,
+      'CI_REPORT_URL',
+      CI_REPORT_URL,
+    );
 
     // ── Frontend repository (non-fatal on failure) ──────────────────────────
 
@@ -2126,6 +2155,13 @@ export class ProjectsService {
         actualFeRepoName,
         'CI_TOKEN',
         frontendCiToken.token,
+      );
+      await this.githubService.setActionsSecret(
+        accessToken,
+        feOwnerLogin,
+        actualFeRepoName,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
       );
 
       deploymentProvisioningResults.push(

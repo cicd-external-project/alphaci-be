@@ -22,7 +22,7 @@ on:
         type: string
 jobs:
   pipeline:
-    uses: ImplementSprint/central-workflow/.github/workflows/be-pipeline.yml@main
+    uses: cicd-external-project/cicd-workflow/.github/workflows/be-pipeline.yml@main
     with:
       service_name: placeholder
 `.trim();

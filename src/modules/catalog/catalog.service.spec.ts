@@ -92,7 +92,7 @@ describe('CatalogService', () => {
         if (normalized.endsWith('/catalog/workflow-refs.json')) {
           return JSON.stringify({
             currentStable: 'v1',
-            repository: 'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow',
+            repository: 'cicd-external-project/cicd-workflow',
             workflows: {
               frontendMaster: '.github/workflows/master-pipeline-fe.yml',
               backendMaster: '.github/workflows/master-pipeline-be.yml',
@@ -129,9 +129,9 @@ describe('CatalogService', () => {
             }),
             workflowRefByProjectType: expect.objectContaining({
               nextjs:
-                'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/service-nextjs.yml@v1',
+                'cicd-external-project/cicd-workflow/.github/workflows/service-nextjs.yml@v1',
               nestjs:
-                'Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow/.github/workflows/service-nestjs.yml@v1',
+                'cicd-external-project/cicd-workflow/.github/workflows/service-nestjs.yml@v1',
             }),
           }),
         ]),

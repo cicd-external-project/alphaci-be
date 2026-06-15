@@ -31,8 +31,11 @@ export interface StagedWorkflowBundle {
 const CENTRAL_WORKFLOW_REF =
   'cicd-external-project/cicd-workflow/.github/workflows';
 
-const CI_VALIDATE_URL =
-  'https://flowci-be-test.onrender.com/api/v1/ci/validate';
+const PLATFORM_BASE_URL = 'https://flowci-be-test.onrender.com';
+
+const CI_VALIDATE_URL = `${PLATFORM_BASE_URL}/api/v1/ci/validate`;
+
+export const CI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 
 /**
  * Branch promotion model enforced by the generated pipelines:
@@ -54,6 +57,12 @@ const CI_VALIDATE_URL =
  * originating branch instead of `github.ref_name` alone.
  */
 const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
+
+const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
+
+const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
+  PROTECTED_DEPLOY_BRANCHES,
+);
 
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
 
@@ -98,8 +107,8 @@ export function buildStagedWorkflowBundle(
   // coverage/coverage-summary.json, and SonarCloud ingests lcov, so the
   // command must produce both reporters.
   const testCommand = isBackend
-    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov'
-    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov';
+    ? 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json'
+    : 'npm run test -- --coverage --coverageReporters=json-summary --coverageReporters=lcov --json --outputFile=test-results.json';
   const lintCommand = 'npm run lint';
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
@@ -142,9 +151,11 @@ export function buildStagedWorkflowBundle(
         permissions: { contents: 'read' },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': validationJob('access'),
+          'report-results': reportingJob('access', ['validate-access']),
         },
       }),
     },
@@ -168,6 +179,7 @@ export function buildStagedWorkflowBundle(
         },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -247,6 +259,14 @@ export function buildStagedWorkflowBundle(
               SONAR_ORGANIZATION: '${{ secrets.SONAR_ORGANIZATION }}',
             },
           },
+          'report-results': reportingJob('quality', [
+            'validate-access',
+            'branch-policy',
+            testJobId,
+            'lint',
+            'security',
+            'sonar',
+          ]),
         },
       }),
     },
@@ -270,6 +290,7 @@ export function buildStagedWorkflowBundle(
         },
         env: {
           CI_VALIDATE_URL,
+          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -313,6 +334,10 @@ export function buildStagedWorkflowBundle(
             deployJobIds,
             centralWorkflowRef,
           ),
+          'report-results': reportingJob('package', [
+            'validate-access',
+            'build',
+          ]),
         },
       }),
     },
@@ -415,6 +440,21 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
       },
     ],
   };
+}
+
+function protectedDeployBranchExpression(): string {
+  return [
+    '${{',
+    '(',
+    "github.event_name == 'workflow_dispatch' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
+    ') || (',
+    "github.event_name == 'workflow_run' &&",
+    "github.event.workflow_run.conclusion == 'success' &&",
+    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
+    ')',
+    '}}',
+  ].join(' ');
 }
 
 function buildJob(servicePath: string, nodeVersion: string) {

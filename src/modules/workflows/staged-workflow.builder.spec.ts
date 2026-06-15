@@ -54,6 +54,71 @@ describe('buildStagedWorkflowBundle', () => {
     ]);
   });
 
+  it('includes a best-effort report-results job in every stage', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    for (const file of bundle.workflowFiles) {
+      const wf = yaml.load(file.yaml) as ParsedWorkflow;
+      const reportJob = wf.jobs['report-results'];
+
+      expect(reportJob).toBeDefined();
+      // must always run, even on failure or cancellation
+      expect(reportJob?.if).toBe('${{ always() }}');
+    }
+
+    // access: only needs validate-access
+    const access = yaml.load(bundle.workflowFiles[0]!.yaml) as ParsedWorkflow;
+    expect(access.jobs['report-results']?.needs).toEqual(['validate-access']);
+
+    // quality: needs every substantive quality job
+    const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
+    expect(quality.jobs['report-results']?.needs).toContain('backend-tests');
+    expect(quality.jobs['report-results']?.needs).toContain('sonar');
+
+    // package: needs validate-access + build
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    expect(pkg.jobs['report-results']?.needs).toEqual([
+      'validate-access',
+      'build',
+    ]);
+  });
+
+  it('quality report step parses jest JSON and coverage summary', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    const qualityYaml = bundle.workflowFiles[1]!.yaml;
+    // jest must emit a JSON summary for the report step to parse
+    expect(qualityYaml).toContain('--json');
+    expect(qualityYaml).toContain('--outputFile=test-results.json');
+    // report step must reference the output files
+    expect(qualityYaml).toContain('test-results.json');
+    expect(qualityYaml).toContain('coverage/coverage-summary.json');
+    // curl must POST to CI_REPORT_URL with CI_TOKEN
+    expect(qualityYaml).toContain('CI_REPORT_URL');
+    expect(qualityYaml).toContain('CI_TOKEN');
+  });
+
+  it('all three stages expose CI_REPORT_URL in env and curl uses it', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    for (const file of bundle.workflowFiles) {
+      expect(file.yaml).toContain('CI_REPORT_URL');
+      // graceful degradation: curl failure must not fail the pipeline
+      expect(file.yaml).toContain(
+        '|| echo "::warning::Failed to report pipeline results to FlowCI"',
+      );
+    }
+  });
+
   it('suffixes paths and workflow names for a variant so slots do not collide', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
