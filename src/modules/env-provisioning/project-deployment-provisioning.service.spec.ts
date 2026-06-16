@@ -109,6 +109,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         variableGroups: [
           {
             name: 'Shared API',
+            provider: 'render',
             appliesTo: 'all',
             env: [
               {
@@ -182,6 +183,7 @@ describe('ProjectDeploymentProvisioningService', () => {
         variableGroups: [
           {
             name: 'Frontend public env',
+            provider: 'vercel',
             appliesTo: 'selected',
             targetBranches: ['frontend:vercel:test'],
             env: [

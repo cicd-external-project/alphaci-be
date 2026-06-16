@@ -276,6 +276,10 @@ export class ProjectDeploymentProvisioningService {
     >[number],
     target: DeploymentProvisioningTargetDto,
   ): boolean {
+    if (group.provider && group.provider !== target.provider) {
+      return false;
+    }
+
     if ((group.appliesTo ?? 'all') === 'all') {
       return true;
     }
