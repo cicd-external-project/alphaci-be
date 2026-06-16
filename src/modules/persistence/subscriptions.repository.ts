@@ -80,7 +80,7 @@ export class SubscriptionsRepository {
           cancel_at_period_end,
           metadata
         )
-        VALUES ($1, 'free', 'free', 'inactive', 'supabase', 0, 'month', NULL, NULL, false, '{}'::jsonb)
+        VALUES ($1, 'free', 'free', 'active', 'supabase', 0, 'month', NULL, NULL, false, '{}'::jsonb)
         RETURNING
           plan,
           status,

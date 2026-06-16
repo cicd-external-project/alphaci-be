@@ -101,7 +101,7 @@ describe('SubscriptionsRepository', () => {
         ...fakeRow,
         plan: 'free' as const,
         plan_code: 'free',
-        status: 'inactive' as const,
+        status: 'active' as const,
         amount_php: 0,
       };
       const freshDb = {
@@ -125,6 +125,16 @@ describe('SubscriptionsRepository', () => {
       const freshRepo = module.get(SubscriptionsRepository);
       const result = await freshRepo.ensureDefaultFreeSubscription('user-new');
       expect(result.plan).toBe('free');
+      expect(result.status).toBe('active');
+
+      const insertCall = (freshDb.query as jest.Mock).mock.calls.find(
+        ([query]) =>
+          typeof query === 'string' &&
+          query.includes('INSERT INTO user_subscriptions'),
+      );
+      expect(insertCall?.[0]).toContain(
+        "VALUES ($1, 'free', 'free', 'active'",
+      );
     });
   });
 
@@ -189,7 +199,7 @@ describe('SubscriptionsRepository', () => {
         ...fakeRow,
         plan: 'free' as const,
         plan_code: 'free',
-        status: 'inactive' as const,
+        status: 'active' as const,
       };
       // ensurePlanCatalog goes through withClient → clientMock.query, not db.query.
       // Only 3 db.query calls occur: the UPDATE, the fallback SELECT, and the fallback INSERT.
@@ -200,6 +210,7 @@ describe('SubscriptionsRepository', () => {
 
       const result = await repo.cancelCurrent('user-1');
       expect(result.plan).toBe('free');
+      expect(result.status).toBe('active');
     });
   });
 });
