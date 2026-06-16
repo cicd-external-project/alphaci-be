@@ -143,6 +143,12 @@ export class DeploymentProvisioningRequestDto {
   @IsBoolean()
   enabled!: boolean;
 
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningEnvSetDto)
+  sharedEnv?: DeploymentProvisioningEnvSetDto[];
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => DeploymentProvisioningTargetDto)

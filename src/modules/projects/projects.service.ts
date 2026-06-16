@@ -1479,6 +1479,7 @@ export class ProjectsService {
 
     return {
       enabled: request.enabled,
+      ...(request.sharedEnv ? { sharedEnv: request.sharedEnv } : {}),
       targets: request.targets.filter((target) => slots.includes(target.slot)),
     };
   }

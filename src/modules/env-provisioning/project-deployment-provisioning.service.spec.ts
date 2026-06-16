@@ -93,6 +93,60 @@ describe('ProjectDeploymentProvisioningService', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('fans out shared env vars and lets target-specific vars override them', async () => {
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsService as never,
+      envVarsService as never,
+      vercelCiSecretsService as never,
+    );
+
+    await service.provisionForProject({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders-api',
+      request: {
+        enabled: true,
+        sharedEnv: [
+          {
+            environment: 'test',
+            vars: [
+              { key: 'API_URL', value: 'https://shared.example.com' },
+              { key: 'LOG_LEVEL', value: 'debug' },
+            ],
+          },
+        ],
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-test',
+            branchName: 'test',
+            env: [
+              {
+                environment: 'test',
+                vars: [{ key: 'API_URL', value: 'https://branch.example.com' }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      {
+        deploymentTargetId: 'target-1',
+        environment: 'test',
+        vars: [
+          { key: 'API_URL', value: 'https://branch.example.com' },
+          { key: 'LOG_LEVEL', value: 'debug' },
+        ],
+      },
+    );
+  });
+
   it('reports partial status when one requested target fails', async () => {
     deploymentTargetsService.createDeploymentTarget
       .mockResolvedValueOnce({
