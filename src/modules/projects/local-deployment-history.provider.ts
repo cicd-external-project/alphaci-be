@@ -35,19 +35,21 @@ export class LocalDeploymentHistoryProvider {
     }
 
     const now = '2026-06-12T00:00:00.000Z';
-    const deployments: ProjectDeploymentHistoryItem[] = targets.map((target) => ({
-      id: `local-${target.id}`,
-      targetId: target.id,
-      targetName: target.providerProjectName,
-      provider: target.provider,
-      environment: target.renderEnvironmentName ?? null,
-      branch: target.branchName,
-      commitSha: null,
-      status: 'ready' as const,
-      createdAt: now,
-      readyAt: now,
-      providerUrl: this.providerUrl(target),
-    }));
+    const deployments: ProjectDeploymentHistoryItem[] = targets.map(
+      (target) => ({
+        id: `local-${target.id}`,
+        targetId: target.id,
+        targetName: target.providerProjectName,
+        provider: target.provider,
+        environment: target.renderEnvironmentName ?? null,
+        branch: target.branchName,
+        commitSha: null,
+        status: 'ready' as const,
+        createdAt: now,
+        readyAt: now,
+        providerUrl: this.providerUrl(target),
+      }),
+    );
     return Promise.resolve(deployments);
   }
 

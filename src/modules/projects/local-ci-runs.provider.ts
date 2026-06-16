@@ -43,7 +43,8 @@ export class LocalCiRunsProvider implements CiRunsProvider {
         commitSha: null,
         actor: 'flowci-local',
         status: 'completed' as const,
-        conclusion: stage === 'quality' ? ('failure' as const) : ('success' as const),
+        conclusion:
+          stage === 'quality' ? ('failure' as const) : ('success' as const),
         createdAt: now,
         updatedAt: now,
         htmlUrl: this.githubWorkflowUrl(context.repoFullName, file.path),

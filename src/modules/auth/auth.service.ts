@@ -10,6 +10,7 @@ import { OAuthStateRepository } from '../persistence/oauth-state.repository';
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 import { UsersRepository } from '../persistence/users.repository';
+import { ExampleProjectSeederService } from '../projects/example-project-seeder.service';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -66,6 +67,7 @@ export class AuthService {
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
     private readonly oauthStateRepository: OAuthStateRepository,
+    private readonly exampleProjectSeederService: ExampleProjectSeederService,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
   }
@@ -293,6 +295,19 @@ export class AuthService {
     await this.subscriptionsRepository.ensureDefaultFreeSubscription(
       newUser.id,
     );
+    // Defense-in-depth: ExampleProjectSeederService already swallows its own
+    // errors internally, but this call site also guards against rejection
+    // (e.g. a future bug in the seeder, or a DI/mocking mistake) so that
+    // demo-project seeding can NEVER take down account creation/login.
+    try {
+      await this.exampleProjectSeederService.ensureExampleProjectSeeded(
+        newUser.id,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Example project seeding rejected unexpectedly for user ${newUser.id}: ${(error as Error).message}`,
+      );
+    }
 
     await this.establishSession(request, newUser);
     request.session.githubAccessToken = pending.accessToken;
@@ -371,6 +386,22 @@ export class AuthService {
       await this.subscriptionsRepository.ensureDefaultFreeSubscription(
         persistedUser.id,
       );
+      if (accountState.kind === 'new') {
+        // Best-effort: ExampleProjectSeederService already swallows its own
+        // errors internally and never throws (see
+        // ExampleProjectSeederService.ensureExampleProjectSeeded). This
+        // call-site try/catch is defense-in-depth so that even an
+        // unexpected rejection here can never block login.
+        try {
+          await this.exampleProjectSeederService.ensureExampleProjectSeeded(
+            persistedUser.id,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Example project seeding rejected unexpectedly for user ${persistedUser.id}: ${(error as Error).message}`,
+          );
+        }
+      }
       await this.establishSession(request, persistedUser);
       request.session.githubAccessToken = accessToken;
       // Persist the access token to the store. `session.regenerate()` inside

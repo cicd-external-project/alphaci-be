@@ -28,6 +28,7 @@ export interface ProvisionedProjectRow {
   workflow_recipe_id: string | null;
   project_options: Record<string, unknown> | null;
   workspace_id?: string | null;
+  is_example?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -50,6 +51,7 @@ export interface CreateProvisionedProjectInput {
   projectOptions?: Record<string, unknown> | null;
   workflowSha256?: string | null;
   workspaceId?: string | null;
+  isExample?: boolean;
 }
 
 @Injectable()
@@ -86,14 +88,15 @@ export class ProjectsRepository {
         workflow_recipe_id,
         workflow_template_id,
         project_options,
-        workspace_id
+        workspace_id,
+        is_example
       )
       VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15,
         $16, $17, $18, $19, $20,
-        $21, $22, $23, $24
+        $21, $22, $23, $24, $25
       )
       RETURNING
         id,
@@ -113,6 +116,7 @@ export class ProjectsRepository {
         workflow_recipe_id,
         project_options,
         workspace_id,
+        is_example,
         created_at,
         updated_at;
     `;
@@ -152,6 +156,7 @@ export class ProjectsRepository {
         data.templateId,
         JSON.stringify(projectOptions),
         data.workspaceId ?? null,
+        data.isExample ?? false,
       ],
     );
 
@@ -161,6 +166,25 @@ export class ProjectsRepository {
     }
 
     return row;
+  }
+
+  /**
+   * Checks whether userId already has a seeded example/demo project row.
+   * Used as the idempotency guard before seeding so this is safe to call
+   * repeatedly (e.g. on every login), not just once at signup.
+   */
+  async hasExampleProject(userId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `
+        SELECT 1
+        FROM projects.provisioned_projects
+        WHERE user_id = $1
+          AND is_example = true
+        LIMIT 1;
+      `,
+      [userId],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   async listByUser(
@@ -197,6 +221,7 @@ export class ProjectsRepository {
           workflow_recipe_id,
           project_options,
           workspace_id,
+          is_example,
           created_at,
           updated_at
         FROM projects.provisioned_projects
@@ -243,6 +268,7 @@ export class ProjectsRepository {
           workflow_recipe_id,
           project_options,
           workspace_id,
+          is_example,
           created_at,
           updated_at
         FROM projects.provisioned_projects

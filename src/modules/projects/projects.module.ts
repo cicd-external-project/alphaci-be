@@ -26,6 +26,7 @@ import { ProjectWorkflowSettingsRepository } from './project-workflow-settings.r
 import { ProjectWorkflowUpdateRequestsRepository } from './project-workflow-update-requests.repository';
 import { ProjectsRepository } from './projects.repository';
 import { ProjectsService } from './projects.service';
+import { ExampleProjectSeederService } from './example-project-seeder.service';
 
 @Module({
   imports: [
@@ -55,8 +56,10 @@ import { ProjectsService } from './projects.service';
     ProjectSyncFindingsRepository,
     ProjectWorkflowSettingsRepository,
     ProjectWorkflowUpdateRequestsRepository,
+    ExampleProjectSeederService,
     SessionAuthGuard,
     SubscriptionGuard,
   ],
+  exports: [ExampleProjectSeederService],
 })
 export class ProjectsModule {}
