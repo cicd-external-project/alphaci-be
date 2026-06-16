@@ -128,6 +128,9 @@ export class DeploymentTargetsService {
             ...(renderDefaults.renderServiceType
               ? { renderServiceType: renderDefaults.renderServiceType }
               : {}),
+            ...(renderDefaults.renderRuntime
+              ? { renderRuntime: renderDefaults.renderRuntime }
+              : {}),
             ...(renderDefaults.renderInstanceType
               ? { renderInstanceType: renderDefaults.renderInstanceType }
               : {}),
@@ -190,7 +193,12 @@ export class DeploymentTargetsService {
         imageUrl: dto.imageUrl?.trim() || null,
         environmentMap: dto.environmentMap ?? {},
         deploymentStrategy,
-        providerMetadata: target.metadata ?? {},
+        providerMetadata: {
+          ...(target.metadata ?? {}),
+          ...(renderDefaults.renderRuntime
+            ? { renderRuntime: renderDefaults.renderRuntime }
+            : {}),
+        },
       });
     await this.recordTargetEvent({
       userId,
@@ -657,6 +665,7 @@ export class DeploymentTargetsService {
 
   private resolveRenderDefaults(dto: CreateDeploymentTargetDto): {
     renderServiceType: CreateDeploymentTargetDto['renderServiceType'] | null;
+    renderRuntime: CreateDeploymentTargetDto['renderRuntime'] | null;
     renderInstanceType: string | null;
     renderRegion: string | null;
     renderEnvironmentName:
@@ -668,6 +677,7 @@ export class DeploymentTargetsService {
     if (dto.provider !== 'render') {
       return {
         renderServiceType: null,
+        renderRuntime: null,
         renderInstanceType: null,
         renderRegion: null,
         renderEnvironmentName: null,
@@ -689,6 +699,7 @@ export class DeploymentTargetsService {
 
     return {
       renderServiceType: defaults.serviceType,
+      renderRuntime: dto.renderRuntime ?? 'node',
       renderInstanceType: defaults.instanceType,
       renderRegion: defaults.region,
       renderEnvironmentName:
@@ -725,6 +736,7 @@ export class DeploymentTargetsService {
     return {
       deploymentStrategy: 'render_existing_service',
       renderServiceType: renderDefaults.renderServiceType,
+      renderRuntime: renderDefaults.renderRuntime,
       renderInstanceType: renderDefaults.renderInstanceType,
       renderRegion: renderDefaults.renderRegion,
       renderEnvironmentName: renderDefaults.renderEnvironmentName,

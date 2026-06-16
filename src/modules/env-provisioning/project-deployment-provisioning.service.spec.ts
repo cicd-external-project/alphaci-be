@@ -56,6 +56,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             rootDirectory: '.',
             buildCommand: 'npm ci && npm run build',
             startCommand: 'npm run start:prod',
+            renderRuntime: 'python',
             env: [
               {
                 environment: 'test',
@@ -75,6 +76,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       expect.objectContaining({
         action: 'create',
         provider: 'render',
+        renderRuntime: 'python',
         slot: 'backend',
       }),
     );

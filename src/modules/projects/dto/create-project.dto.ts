@@ -98,6 +98,17 @@ export class DeploymentProvisioningTargetDto {
     | 'cron_job';
 
   @IsOptional()
+  @IsIn(['node', 'python', 'ruby', 'go', 'rust', 'elixir', 'docker'])
+  renderRuntime?:
+    | 'node'
+    | 'python'
+    | 'ruby'
+    | 'go'
+    | 'rust'
+    | 'elixir'
+    | 'docker';
+
+  @IsOptional()
   @IsString()
   renderInstanceType?: string;
 

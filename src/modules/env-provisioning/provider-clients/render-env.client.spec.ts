@@ -212,6 +212,115 @@ describe('RenderEnvClient', () => {
     });
   });
 
+  it('uses the selected native Render runtime when creating Git-backed services', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              owner: {
+                id: 'tea-1',
+                name: 'FlowCI workspace',
+              },
+            },
+          ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            service: {
+              id: 'srv-python',
+              name: 'worker-test',
+            },
+          }),
+      });
+
+    const client = new RenderEnvClient();
+    const target = await client.createTarget({
+      token: 'rnd',
+      repoFullName: 'owner/worker',
+      projectName: 'worker-test',
+      branchName: 'test',
+      rootDirectory: '.',
+      buildCommand: 'pip install -r requirements.txt',
+      startCommand: 'python app.py',
+      renderRuntime: 'python',
+    });
+
+    expect(target.metadata).toMatchObject({
+      renderRuntime: 'python',
+    });
+    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+      string,
+      { body: string; method: string },
+    ];
+    expect(JSON.parse(request.body)).toMatchObject({
+      serviceDetails: {
+        runtime: 'python',
+        buildCommand: 'pip install -r requirements.txt',
+        startCommand: 'python app.py',
+      },
+    });
+  });
+
+  it('creates native Dockerfile-backed Render services without build or start commands', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              owner: {
+                id: 'tea-1',
+                name: 'FlowCI workspace',
+              },
+            },
+          ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            service: {
+              id: 'srv-docker',
+              name: 'api-docker-test',
+            },
+          }),
+      });
+
+    await new RenderEnvClient().createTarget({
+      token: 'rnd',
+      repoFullName: 'owner/api',
+      projectName: 'api-docker-test',
+      branchName: 'test',
+      rootDirectory: 'backend',
+      buildCommand: 'npm ci && npm run build',
+      startCommand: 'npm run start:prod',
+      renderRuntime: 'docker',
+    });
+
+    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+      string,
+      { body: string; method: string },
+    ];
+    const body = JSON.parse(request.body) as {
+      buildCommand?: string;
+      startCommand?: string;
+      serviceDetails: {
+        runtime: string;
+        buildCommand?: string;
+        startCommand?: string;
+      };
+    };
+    expect(body.buildCommand).toBeUndefined();
+    expect(body.startCommand).toBeUndefined();
+    expect(body.serviceDetails).toEqual({ runtime: 'docker' });
+  });
+
   it('creates image-backed Render services with the bootstrap image', async () => {
     const fetchMock = jest.fn().mockResolvedValueOnce({
       ok: true,

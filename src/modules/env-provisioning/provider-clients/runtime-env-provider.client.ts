@@ -4,6 +4,7 @@ import type {
   EnvProvider,
   EnvVarInput,
   RenderEnvironmentName,
+  RenderRuntime,
   RenderServiceType,
 } from '../env-provisioning.types';
 
@@ -35,6 +36,7 @@ export interface CreateProviderTargetInput {
   startCommand?: string;
   deploymentStrategy?: DeploymentStrategy;
   renderServiceType?: RenderServiceType;
+  renderRuntime?: RenderRuntime;
   renderInstanceType?: string;
   renderRegion?: string;
   renderEnvironmentName?: RenderEnvironmentName;
