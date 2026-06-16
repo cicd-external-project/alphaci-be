@@ -127,6 +127,7 @@ export interface DeploymentProvisioningResult {
     providerProjectName: string | null;
     providerMetadata: Record<string, unknown>;
     renderServiceType?: string | null;
+    renderRuntime?: string | null;
     renderInstanceType?: string | null;
     renderRegion?: string | null;
     renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
@@ -1478,6 +1479,10 @@ export class ProjectsService {
 
     return {
       enabled: request.enabled,
+      ...(request.variableGroups
+        ? { variableGroups: request.variableGroups }
+        : {}),
+      ...(request.sharedEnv ? { sharedEnv: request.sharedEnv } : {}),
       targets: request.targets.filter((target) => slots.includes(target.slot)),
     };
   }

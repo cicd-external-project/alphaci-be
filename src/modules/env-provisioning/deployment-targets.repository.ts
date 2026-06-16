@@ -9,6 +9,7 @@ import type {
   EnvProvider,
   EnvTargetSlot,
   RenderEnvironmentName,
+  RenderRuntime,
   RenderServiceType,
 } from './env-provisioning.types';
 
@@ -322,6 +323,7 @@ export class DeploymentTargetsRepository {
       buildCommand: row.build_command,
       startCommand: row.start_command,
       renderServiceType: row.render_service_type,
+      renderRuntime: this.renderRuntimeFromMetadata(row.provider_metadata),
       renderInstanceType: row.render_instance_type,
       renderRegion: row.render_region,
       renderEnvironmentName: row.render_environment_name,
@@ -333,5 +335,20 @@ export class DeploymentTargetsRepository {
       providerMetadata: row.provider_metadata ?? {},
       status: row.status,
     };
+  }
+
+  private renderRuntimeFromMetadata(
+    metadata: Record<string, unknown> | null,
+  ): RenderRuntime | null {
+    const value = metadata?.['renderRuntime'];
+    return value === 'node' ||
+      value === 'python' ||
+      value === 'ruby' ||
+      value === 'go' ||
+      value === 'rust' ||
+      value === 'elixir' ||
+      value === 'docker'
+      ? value
+      : null;
   }
 }

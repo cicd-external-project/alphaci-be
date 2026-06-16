@@ -56,6 +56,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             rootDirectory: '.',
             buildCommand: 'npm ci && npm run build',
             startCommand: 'npm run start:prod',
+            renderRuntime: 'python',
             env: [
               {
                 environment: 'test',
@@ -75,6 +76,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       expect.objectContaining({
         action: 'create',
         provider: 'render',
+        renderRuntime: 'python',
         slot: 'backend',
       }),
     );
@@ -89,6 +91,146 @@ describe('ProjectDeploymentProvisioningService', () => {
     );
     expect(JSON.stringify(result)).not.toContain('postgres://secret');
     expect(result.status).toBe('completed');
+  });
+
+  it('fans out variable group env vars and lets target-specific vars override them', async () => {
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsService as never,
+      envVarsService as never,
+      vercelCiSecretsService as never,
+    );
+
+    await service.provisionForProject({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders-api',
+      request: {
+        enabled: true,
+        variableGroups: [
+          {
+            name: 'Shared API',
+            appliesTo: 'all',
+            env: [
+              {
+                environment: 'test',
+                vars: [
+                  { key: 'API_URL', value: 'https://shared.example.com' },
+                  { key: 'LOG_LEVEL', value: 'debug' },
+                ],
+              },
+            ],
+          },
+        ],
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-test',
+            branchName: 'test',
+            env: [
+              {
+                environment: 'test',
+                vars: [{ key: 'API_URL', value: 'https://branch.example.com' }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      {
+        deploymentTargetId: 'target-1',
+        environment: 'test',
+        vars: [
+          { key: 'API_URL', value: 'https://branch.example.com' },
+          { key: 'LOG_LEVEL', value: 'debug' },
+        ],
+      },
+    );
+  });
+
+  it('can apply a variable group to a selected Vercel target branch', async () => {
+    deploymentTargetsService.createDeploymentTarget
+      .mockResolvedValueOnce({
+        id: 'target-backend',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+      })
+      .mockResolvedValueOnce({
+        id: 'target-frontend',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'orders-web-test',
+      });
+    const service = new ProjectDeploymentProvisioningService(
+      deploymentTargetsService as never,
+      envVarsService as never,
+      vercelCiSecretsService as never,
+    );
+
+    await service.provisionForProject({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders',
+      request: {
+        enabled: true,
+        variableGroups: [
+          {
+            name: 'Frontend public env',
+            appliesTo: 'selected',
+            targetBranches: ['frontend:vercel:test'],
+            env: [
+              {
+                environment: 'test',
+                vars: [
+                  {
+                    key: 'NEXT_PUBLIC_API_URL',
+                    value: 'https://api.example.com',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-test',
+            branchName: 'test',
+          },
+          {
+            slot: 'frontend',
+            provider: 'vercel',
+            ownershipMode: 'flowci_managed',
+            projectName: 'orders-web-test',
+            branchName: 'test',
+          },
+        ],
+      },
+    });
+
+    expect(envVarsService.provisionEnvVars).toHaveBeenCalledTimes(1);
+    expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      {
+        deploymentTargetId: 'target-frontend',
+        environment: 'test',
+        vars: [
+          {
+            key: 'NEXT_PUBLIC_API_URL',
+            value: 'https://api.example.com',
+          },
+        ],
+      },
+    );
   });
 
   it('reports partial status when one requested target fails', async () => {

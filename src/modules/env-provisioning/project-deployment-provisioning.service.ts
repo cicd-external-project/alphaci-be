@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import type { DeploymentProvisioningRequestDto } from '../projects/dto/create-project.dto';
+import type {
+  DeploymentProvisioningEnvSetDto,
+  DeploymentProvisioningRequestDto,
+  DeploymentProvisioningTargetDto,
+} from '../projects/dto/create-project.dto';
 import type { DeploymentProvisioningResult } from '../projects/projects.service';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
@@ -76,6 +80,9 @@ export class ProjectDeploymentProvisioningService {
             : {}),
           ...(requestedTarget.renderServiceType
             ? { renderServiceType: requestedTarget.renderServiceType }
+            : {}),
+          ...(requestedTarget.renderRuntime
+            ? { renderRuntime: requestedTarget.renderRuntime }
             : {}),
           ...(requestedTarget.renderInstanceType
             ? { renderInstanceType: requestedTarget.renderInstanceType }
@@ -168,7 +175,11 @@ export class ProjectDeploymentProvisioningService {
         }
 
         const env: DeploymentProvisioningResult['targets'][number]['env'] = [];
-        for (const envSet of requestedTarget.env ?? []) {
+        for (const envSet of this.resolveEnvSets(
+          input.request,
+          requestedTarget,
+          requestedTarget.env,
+        )) {
           const result = await this.envVarsService.provisionEnvVars(
             input.projectId,
             input.userId,
@@ -226,6 +237,76 @@ export class ProjectDeploymentProvisioningService {
     };
   }
 
+  private resolveEnvSets(
+    request: DeploymentProvisioningRequestDto,
+    target: DeploymentProvisioningTargetDto,
+    targetEnvSets: DeploymentProvisioningEnvSetDto[] | undefined,
+  ): DeploymentProvisioningEnvSetDto[] {
+    const mergedByEnvironment = new Map<
+      DeploymentProvisioningEnvSetDto['environment'],
+      Map<string, { key: string; value: string }>
+    >();
+
+    for (const envSet of request.sharedEnv ?? []) {
+      this.mergeEnvSet(mergedByEnvironment, envSet);
+    }
+    for (const group of request.variableGroups ?? []) {
+      if (!this.variableGroupAppliesToTarget(group, target)) {
+        continue;
+      }
+      for (const envSet of group.env ?? []) {
+        this.mergeEnvSet(mergedByEnvironment, envSet);
+      }
+    }
+    for (const envSet of targetEnvSets ?? []) {
+      this.mergeEnvSet(mergedByEnvironment, envSet);
+    }
+
+    return [...mergedByEnvironment.entries()]
+      .map(([environment, varsByKey]) => ({
+        environment,
+        vars: [...varsByKey.values()],
+      }))
+      .filter((envSet) => envSet.vars.length > 0);
+  }
+
+  private variableGroupAppliesToTarget(
+    group: NonNullable<
+      DeploymentProvisioningRequestDto['variableGroups']
+    >[number],
+    target: DeploymentProvisioningTargetDto,
+  ): boolean {
+    if ((group.appliesTo ?? 'all') === 'all') {
+      return true;
+    }
+
+    return (group.targetBranches ?? []).includes(this.targetBranchKey(target));
+  }
+
+  private targetBranchKey(target: DeploymentProvisioningTargetDto): string {
+    return `${target.slot}:${target.provider}:${target.branchName ?? 'test'}`;
+  }
+
+  private mergeEnvSet(
+    mergedByEnvironment: Map<
+      DeploymentProvisioningEnvSetDto['environment'],
+      Map<string, { key: string; value: string }>
+    >,
+    envSet: DeploymentProvisioningEnvSetDto,
+  ): void {
+    const varsByKey =
+      mergedByEnvironment.get(envSet.environment) ??
+      new Map<string, { key: string; value: string }>();
+
+    for (const variable of envSet.vars ?? []) {
+      if (variable.key && variable.value !== '') {
+        varsByKey.set(variable.key, variable);
+      }
+    }
+
+    mergedByEnvironment.set(envSet.environment, varsByKey);
+  }
+
   private aggregateStatus(
     targets: DeploymentProvisioningResult['targets'],
   ): DeploymentProvisioningResult['status'] {
@@ -245,6 +326,7 @@ export class ProjectDeploymentProvisioningService {
 
   private renderResultMetadata(target: {
     renderServiceType?: unknown;
+    renderRuntime?: unknown;
     renderInstanceType?: unknown;
     renderRegion?: unknown;
     renderEnvironmentName?: unknown;

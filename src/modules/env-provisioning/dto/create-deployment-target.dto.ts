@@ -4,6 +4,7 @@ import type {
   EnvTargetSlot,
   RenderDeployMethod,
   RenderEnvironmentName,
+  RenderRuntime,
   RenderServiceType,
 } from '../env-provisioning.types';
 
@@ -22,6 +23,7 @@ export interface CreateDeploymentTargetDto {
   startCommand?: string;
   renderDeployMethod?: RenderDeployMethod;
   renderServiceType?: RenderServiceType;
+  renderRuntime?: RenderRuntime;
   renderInstanceType?: string;
   renderRegion?: string;
   renderEnvironmentName?: RenderEnvironmentName;
