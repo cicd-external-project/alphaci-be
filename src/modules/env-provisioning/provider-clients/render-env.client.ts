@@ -83,6 +83,8 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       throw new Error('Render service creation returned an invalid response');
     }
     const renderServiceType = input.renderServiceType ?? 'web_service';
+    const renderRuntime =
+      input.renderRuntime ?? this.resolveRenderRuntime(input);
     const renderEnvironmentName =
       input.renderEnvironmentName ??
       this.environmentFromBranch(input.branchName);
@@ -99,6 +101,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         renderServiceId: serviceId,
         renderOwnerId: ownerId,
         renderServiceType,
+        renderRuntime,
         renderInstanceType: input.renderInstanceType ?? null,
         renderRegion: input.renderRegion ?? null,
         renderEnvironmentName,
@@ -236,8 +239,12 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       repo: `https://github.com/${input.repoFullName}`,
       branch: input.branchName,
       rootDir: input.rootDirectory,
-      buildCommand: input.buildCommand,
-      startCommand: input.startCommand,
+      ...(this.resolveRenderRuntime(input) !== 'docker'
+        ? {
+            buildCommand: input.buildCommand,
+            startCommand: input.startCommand,
+          }
+        : {}),
       serviceDetails,
     };
   }
@@ -245,22 +252,27 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
   private serviceDetails(
     input: CreateProviderTargetInput,
   ): Record<string, unknown> {
-    const runtime =
-      input.deploymentStrategy === 'render_image_pushed' ? 'image' : 'node';
+    const runtime = this.resolveRenderRuntime(input);
 
     return {
       runtime,
       ...(input.renderInstanceType ? { plan: input.renderInstanceType } : {}),
       ...(input.renderRegion ? { region: input.renderRegion } : {}),
-      ...(input.startCommand &&
-      input.deploymentStrategy !== 'render_image_pushed'
+      ...(input.startCommand && runtime !== 'image' && runtime !== 'docker'
         ? { startCommand: input.startCommand }
         : {}),
-      ...(input.buildCommand &&
-      input.deploymentStrategy !== 'render_image_pushed'
+      ...(input.buildCommand && runtime !== 'image' && runtime !== 'docker'
         ? { buildCommand: input.buildCommand }
         : {}),
     };
+  }
+
+  private resolveRenderRuntime(input: CreateProviderTargetInput): string {
+    if (input.deploymentStrategy === 'render_image_pushed') {
+      return 'image';
+    }
+
+    return input.renderRuntime ?? 'node';
   }
 
   private getBootstrapImage(): string {

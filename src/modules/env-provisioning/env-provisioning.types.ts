@@ -18,6 +18,14 @@ export type RenderServiceType =
   | 'private_service'
   | 'background_worker'
   | 'cron_job';
+export type RenderRuntime =
+  | 'node'
+  | 'python'
+  | 'ruby'
+  | 'go'
+  | 'rust'
+  | 'elixir'
+  | 'docker';
 export type RenderDeployMethod =
   | 'managed_image'
   | 'byo_image'
@@ -64,6 +72,7 @@ export interface DeploymentTargetSummary {
   buildCommand: string | null;
   startCommand: string | null;
   renderServiceType?: RenderServiceType | null;
+  renderRuntime?: RenderRuntime | null;
   renderInstanceType?: string | null;
   renderRegion?: string | null;
   renderEnvironmentName?: RenderEnvironmentName | null;

@@ -77,6 +77,9 @@ export class ProjectDeploymentProvisioningService {
           ...(requestedTarget.renderServiceType
             ? { renderServiceType: requestedTarget.renderServiceType }
             : {}),
+          ...(requestedTarget.renderRuntime
+            ? { renderRuntime: requestedTarget.renderRuntime }
+            : {}),
           ...(requestedTarget.renderInstanceType
             ? { renderInstanceType: requestedTarget.renderInstanceType }
             : {}),
@@ -245,6 +248,7 @@ export class ProjectDeploymentProvisioningService {
 
   private renderResultMetadata(target: {
     renderServiceType?: unknown;
+    renderRuntime?: unknown;
     renderInstanceType?: unknown;
     renderRegion?: unknown;
     renderEnvironmentName?: unknown;

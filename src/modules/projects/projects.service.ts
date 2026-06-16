@@ -127,6 +127,7 @@ export interface DeploymentProvisioningResult {
     providerProjectName: string | null;
     providerMetadata: Record<string, unknown>;
     renderServiceType?: string | null;
+    renderRuntime?: string | null;
     renderInstanceType?: string | null;
     renderRegion?: string | null;
     renderEnvironmentName?: 'test' | 'uat' | 'production' | null;
