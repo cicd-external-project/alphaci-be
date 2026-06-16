@@ -139,9 +139,36 @@ export class DeploymentProvisioningTargetDto {
   env?: DeploymentProvisioningEnvSetDto[];
 }
 
+export class DeploymentProvisioningVariableGroupDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  name?: string;
+
+  @IsOptional()
+  @IsIn(['all', 'selected'])
+  appliesTo?: 'all' | 'selected';
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  targetBranches?: string[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningEnvSetDto)
+  env!: DeploymentProvisioningEnvSetDto[];
+}
+
 export class DeploymentProvisioningRequestDto {
   @IsBoolean()
   enabled!: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DeploymentProvisioningVariableGroupDto)
+  variableGroups?: DeploymentProvisioningVariableGroupDto[];
 
   @IsOptional()
   @IsArray()

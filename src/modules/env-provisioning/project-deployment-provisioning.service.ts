@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type {
   DeploymentProvisioningEnvSetDto,
   DeploymentProvisioningRequestDto,
+  DeploymentProvisioningTargetDto,
 } from '../projects/dto/create-project.dto';
 import type { DeploymentProvisioningResult } from '../projects/projects.service';
 import { DeploymentTargetsService } from './deployment-targets.service';
@@ -176,6 +177,7 @@ export class ProjectDeploymentProvisioningService {
         const env: DeploymentProvisioningResult['targets'][number]['env'] = [];
         for (const envSet of this.resolveEnvSets(
           input.request,
+          requestedTarget,
           requestedTarget.env,
         )) {
           const result = await this.envVarsService.provisionEnvVars(
@@ -237,6 +239,7 @@ export class ProjectDeploymentProvisioningService {
 
   private resolveEnvSets(
     request: DeploymentProvisioningRequestDto,
+    target: DeploymentProvisioningTargetDto,
     targetEnvSets: DeploymentProvisioningEnvSetDto[] | undefined,
   ): DeploymentProvisioningEnvSetDto[] {
     const mergedByEnvironment = new Map<
@@ -246,6 +249,14 @@ export class ProjectDeploymentProvisioningService {
 
     for (const envSet of request.sharedEnv ?? []) {
       this.mergeEnvSet(mergedByEnvironment, envSet);
+    }
+    for (const group of request.variableGroups ?? []) {
+      if (!this.variableGroupAppliesToTarget(group, target)) {
+        continue;
+      }
+      for (const envSet of group.env ?? []) {
+        this.mergeEnvSet(mergedByEnvironment, envSet);
+      }
     }
     for (const envSet of targetEnvSets ?? []) {
       this.mergeEnvSet(mergedByEnvironment, envSet);
@@ -257,6 +268,23 @@ export class ProjectDeploymentProvisioningService {
         vars: [...varsByKey.values()],
       }))
       .filter((envSet) => envSet.vars.length > 0);
+  }
+
+  private variableGroupAppliesToTarget(
+    group: NonNullable<
+      DeploymentProvisioningRequestDto['variableGroups']
+    >[number],
+    target: DeploymentProvisioningTargetDto,
+  ): boolean {
+    if ((group.appliesTo ?? 'all') === 'all') {
+      return true;
+    }
+
+    return (group.targetBranches ?? []).includes(this.targetBranchKey(target));
+  }
+
+  private targetBranchKey(target: DeploymentProvisioningTargetDto): string {
+    return `${target.slot}:${target.provider}:${target.branchName ?? 'test'}`;
   }
 
   private mergeEnvSet(
