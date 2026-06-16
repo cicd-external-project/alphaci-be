@@ -159,6 +159,7 @@ export interface ProvisionedProject {
   projectTypeId?: string | null;
   workflowRecipeId?: string | null;
   projectOptions?: Record<string, unknown> | null;
+  isExample?: boolean;
 }
 
 export interface SyncProjectsResponse {
@@ -2910,6 +2911,7 @@ export class ProjectsService {
       projectTypeId: row.project_type_id,
       workflowRecipeId: row.workflow_recipe_id,
       projectOptions: row.project_options,
+      isExample: row.is_example ?? false,
     };
   }
 

@@ -193,4 +193,62 @@ describe('ProjectsRepository', () => {
     expect(query).toContain('orgs.workspace_members');
     expect(query).toContain('member.workspace_id');
   });
+
+  it('defaults isExample to false when creating a real project', async () => {
+    await repo.create({
+      userId: 'user-1',
+      repoFullName: 'tone/orders-api',
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      workflowPath: '.github/workflows/ci.yml',
+      status: 'provisioned',
+    });
+
+    const [query, values] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(query).toContain('is_example');
+    expect(values[values.length - 1]).toBe(false);
+  });
+
+  it('persists isExample = true when explicitly requested', async () => {
+    await repo.create({
+      userId: 'user-1',
+      repoFullName: 'flowci-demo/flowci-demo-app',
+      templateId: 'nest-service-pipeline',
+      serviceName: 'flowci-demo-backend',
+      workflowPath:
+        '.github/workflows/flowci-demo-backend-nest-service-pipeline.yml',
+      status: 'provisioned',
+      visibility: 'public',
+      isExample: true,
+    });
+
+    const [, values] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(values[values.length - 1]).toBe(true);
+  });
+
+  it('hasExampleProject returns true when a row is found', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
+
+    const result = await repo.hasExampleProject('user-1');
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('is_example = true'),
+      ['user-1'],
+    );
+    expect(result).toBe(true);
+  });
+
+  it('hasExampleProject returns false when no row is found', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const result = await repo.hasExampleProject('user-1');
+
+    expect(result).toBe(false);
+  });
 });

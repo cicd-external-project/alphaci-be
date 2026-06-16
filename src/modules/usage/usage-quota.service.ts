@@ -109,7 +109,7 @@ export class UsageQuotaService {
     }>(
       `
         SELECT
-          (SELECT COUNT(*) FROM projects.provisioned_projects WHERE user_id = $1) AS projects,
+          (SELECT COUNT(*) FROM projects.provisioned_projects WHERE user_id = $1 AND is_example = false) AS projects,
           (
             SELECT COUNT(*)
             FROM env_provisioning.project_deployment_targets t
