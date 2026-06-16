@@ -145,6 +145,9 @@ export class DeploymentProvisioningVariableGroupDto {
   @MaxLength(80)
   name?: string;
 
+  @IsIn(['render', 'vercel'])
+  provider!: 'render' | 'vercel';
+
   @IsOptional()
   @IsIn(['all', 'selected'])
   appliesTo?: 'all' | 'selected';
