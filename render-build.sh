@@ -1,18 +1,11 @@
 #!/bin/bash
 set -e
 
-echo "Starting Render custom build script..."
+echo "Starting Render build..."
 
-# 1. Build the shared SDK
-echo "Building @apicenter/sdk..."
-cd ../../api-shared
+echo "Cloning workflow templates..."
+git clone https://github.com/Tone-Lloyd-Sir-Catubag-CICD/cicd-workflow.git /opt/cicd-workflow || true
+
 npm install
 npm run build
-
-# 2. Build the backend
-echo "Building the backend app..."
-cd ../repo-be/template-repo-be
-npm install
-npm run build
-
 echo "Build complete!"
