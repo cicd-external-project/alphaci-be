@@ -267,6 +267,25 @@ describe('AuthService', () => {
       expect(url).toContain('/auth/callback');
     });
 
+    it('returns auth=failed (not a 500) when the state DB lookup throws', async () => {
+      // Regression: a transient DB connection error during findAndDelete used to
+      // propagate out of the callback as an unhandled 500 because the lookup sat
+      // outside the try/catch. It must now degrade to an auth=failed redirect.
+      const { service } = await createService(true, {
+        findAndDelete: jest
+          .fn()
+          .mockRejectedValue(new Error('connection terminated unexpectedly')),
+      });
+      const req = makeRequest();
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+      expect(url).toContain('auth=failed');
+      expect(url).toContain('/auth/callback');
+    });
+
     it('returns invalid_state when code is missing', async () => {
       const { service } = await createService();
       const req = makeRequest();

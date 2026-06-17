@@ -7,6 +7,7 @@ import { DatabaseService } from './database.service.js';
 const mockPoolQuery = jest.fn();
 const mockPoolConnect = jest.fn();
 const mockPoolEnd = jest.fn();
+const mockPoolOn = jest.fn();
 
 jest.mock('pg', () => ({
   Pool: jest.fn().mockImplementation((options) => ({
@@ -14,6 +15,7 @@ jest.mock('pg', () => ({
     query: mockPoolQuery,
     connect: mockPoolConnect,
     end: mockPoolEnd,
+    on: mockPoolOn,
   })),
 }));
 
@@ -130,5 +132,76 @@ describe('DatabaseService', () => {
     expect(release).toHaveBeenCalled();
     await expect(service.close()).resolves.toBeUndefined();
     expect(mockPoolEnd).toHaveBeenCalled();
+  });
+
+  it('registers an idle-client error handler and enables TCP keepalive', () => {
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    expect(service.isEnabled()).toBe(true);
+    // Idle-client error handler is wired so a dropped connection never crashes
+    // the process.
+    expect(mockPoolOn).toHaveBeenCalledWith('error', expect.any(Function));
+    // The handler itself only logs (must not throw).
+    const handler = mockPoolOn.mock.calls.find(
+      (call) => call[0] === 'error',
+    )?.[1] as (err: Error) => void;
+    expect(() => handler(new Error('connection dropped'))).not.toThrow();
+  });
+
+  it('retries a query once when it hits a stale connection', async () => {
+    const staleError = Object.assign(new Error('Connection terminated'), {
+      code: '08006',
+    });
+    mockPoolQuery
+      .mockRejectedValueOnce(staleError)
+      .mockResolvedValueOnce({ rows: [{ value: 1 }] });
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    await expect(service.query('SELECT 1')).resolves.toEqual({
+      rows: [{ value: 1 }],
+    });
+    expect(mockPoolQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on a non-connection (SQL) error', async () => {
+    const sqlError = Object.assign(new Error('duplicate key value'), {
+      code: '23505',
+    });
+    mockPoolQuery.mockRejectedValueOnce(sqlError);
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    await expect(service.query('INSERT ...')).rejects.toThrow(
+      'duplicate key value',
+    );
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates the error if the retry also fails', async () => {
+    const staleError = Object.assign(
+      new Error('server closed the connection'),
+      {
+        code: 'ECONNRESET',
+      },
+    );
+    mockPoolQuery
+      .mockRejectedValueOnce(staleError)
+      .mockRejectedValueOnce(staleError);
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    await expect(service.query('SELECT 1')).rejects.toThrow(
+      'server closed the connection',
+    );
+    expect(mockPoolQuery).toHaveBeenCalledTimes(2);
   });
 });
