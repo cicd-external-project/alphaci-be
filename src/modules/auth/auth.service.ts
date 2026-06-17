@@ -61,6 +61,7 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly config: AppConfig;
   private readonly returnToOrigins: Set<string>;
+  private readonly returnToOriginPatterns: RegExp[];
 
   constructor(
     private readonly configService: ConfigService,
@@ -74,6 +75,15 @@ export class AuthService {
     this.returnToOrigins = this.buildReturnToOrigins(
       this.config.frontendUrl,
       this.configService.get<string>('ALLOWED_ORIGINS'),
+    );
+    // The OAuth returnTo allow-list must mirror the CORS allow-list
+    // (security.config.ts). CORS honors ALLOWED_ORIGIN_PATTERNS so that Vercel
+    // preview deployments (e.g. https://cicd-workflow-<hash>.vercel.app) can
+    // call the API; the post-login redirect must honor the SAME patterns or it
+    // silently falls back to FRONTEND_URL and strands the user on the wrong
+    // (often stale) frontend deployment.
+    this.returnToOriginPatterns = this.buildReturnToOriginPatterns(
+      this.configService.get<string>('ALLOWED_ORIGIN_PATTERNS'),
     );
   }
 
@@ -572,7 +582,7 @@ export class AuthService {
     try {
       const parsed = new URL(returnTo);
 
-      if (this.returnToOrigins.has(parsed.origin)) {
+      if (this.isAllowedReturnToOrigin(parsed.origin)) {
         return parsed.toString();
       }
     } catch {
@@ -580,6 +590,24 @@ export class AuthService {
     }
 
     return this.config.frontendUrl;
+  }
+
+  /**
+   * Mirror of the CORS allow-list logic (security.config.ts): an origin is
+   * allowed if it is an exact match OR — for HTTPS origins only — matches one of
+   * the configured ALLOWED_ORIGIN_PATTERNS. Plain-HTTP origins can never match a
+   * pattern, so preview-URL patterns cannot be abused to redirect to http://.
+   */
+  private isAllowedReturnToOrigin(origin: string): boolean {
+    if (this.returnToOrigins.has(origin)) {
+      return true;
+    }
+
+    if (origin.startsWith('https://')) {
+      return this.returnToOriginPatterns.some((re) => re.test(origin));
+    }
+
+    return false;
   }
 
   private buildReturnToOrigins(
@@ -594,6 +622,26 @@ export class AuthService {
     }
 
     return origins;
+  }
+
+  /**
+   * Compile ALLOWED_ORIGIN_PATTERNS into anchored RegExps. Invalid patterns are
+   * silently skipped (env validation owns operator feedback), matching the
+   * behavior of corsOptions() in security.config.ts so the two allow-lists stay
+   * byte-for-byte consistent.
+   */
+  private buildReturnToOriginPatterns(allowedPatterns?: string): RegExp[] {
+    return (allowedPatterns ?? '')
+      .split(',')
+      .map((pattern) => pattern.trim())
+      .filter((pattern) => pattern.length > 0)
+      .flatMap((pattern) => {
+        try {
+          return [new RegExp(`^${pattern}$`)];
+        } catch {
+          return [];
+        }
+      });
   }
 
   private addReturnToOrigin(origins: Set<string>, value: string): void {

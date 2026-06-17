@@ -31,11 +31,15 @@ const fakeFreeSub: SubscriptionState = {
 
 const makeConfig = (withGitHub = true) =>
   ({
-    get: jest.fn((key: string) =>
-      key === 'ALLOWED_ORIGINS'
-        ? 'http://localhost:3000,https://cicd-workflow-hioomva9i-api-center-t.vercel.app'
-        : undefined,
-    ),
+    get: jest.fn((key: string) => {
+      if (key === 'ALLOWED_ORIGINS') {
+        return 'http://localhost:3000,https://cicd-workflow-hioomva9i-api-center-t.vercel.app';
+      }
+      if (key === 'ALLOWED_ORIGIN_PATTERNS') {
+        return 'https://cicd-workflow-[^.]+\\.vercel\\.app';
+      }
+      return undefined;
+    }),
     getOrThrow: jest.fn().mockReturnValue({
       frontendUrl: 'http://localhost:3000',
       archivedAccountRetentionDays: 30,
@@ -241,6 +245,43 @@ describe('AuthService', () => {
       expect(oauthStateRepo.save).toHaveBeenCalledWith(
         expect.any(String),
         returnTo,
+        'github',
+      );
+    });
+
+    it('accepts returnTo URLs matching ALLOWED_ORIGIN_PATTERNS (new/preview deployments)', async () => {
+      const { service, oauthStateRepo } = await createService();
+      const req = makeRequest();
+      // This origin is NOT in ALLOWED_ORIGINS — it only matches the regex
+      // pattern. Before the fix this fell back to FRONTEND_URL (the stale
+      // deployment); it must now be preserved so the user returns to the
+      // frontend they actually logged in from.
+      const returnTo =
+        'https://cicd-workflow-newdeploy-ele-tribe.vercel.app/auth/callback?intent=login';
+
+      await service.startGitHubAuth(req, returnTo);
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(oauthStateRepo.save).toHaveBeenCalledWith(
+        expect.any(String),
+        returnTo,
+        'github',
+      );
+    });
+
+    it('rejects http:// returnTo origins even if they match a pattern shape', async () => {
+      const { service, oauthStateRepo } = await createService();
+      const req = makeRequest();
+      // Plain-HTTP can never match a pattern (HTTPS-only), so this falls back.
+      await service.startGitHubAuth(
+        req,
+        'http://cicd-workflow-spoof.vercel.app/auth/callback',
+      );
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(oauthStateRepo.save).toHaveBeenCalledWith(
+        expect.any(String),
+        'http://localhost:3000', // pattern rejected http://, fell back
         'github',
       );
     });
