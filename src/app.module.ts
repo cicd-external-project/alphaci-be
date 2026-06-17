@@ -28,6 +28,8 @@ import { EnvProvisioningModule } from './modules/env-provisioning/env-provisioni
 import { UsageModule } from './modules/usage/usage.module.js';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
+import { FeedbackModule } from './modules/feedback/feedback.module.js';
+import { AdminModule } from './modules/admin/admin.module.js';
 
 @Module({
   imports: [
@@ -59,6 +61,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     UsageModule,
     WorkspacesModule,
     NotificationsModule,
+    FeedbackModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

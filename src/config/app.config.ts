@@ -110,6 +110,13 @@ export interface AppConfig {
     maxAgeMs: number;
     secure: boolean;
     storeDriver: 'postgres' | 'memory';
+    // Optional cookie Domain attribute. Leave UNSET for the current split-domain
+    // setup (host-only cookie, today's behavior). When FE + BE move under one
+    // parent domain (e.g. app.example.com + api.example.com), set this to
+    // ".example.com" so the session cookie is shared first-party across the
+    // subdomains — this is what makes login work on Safari/iOS (no third-party
+    // cookie). See docs/AUTH_CUSTOM_DOMAIN_CUTOVER.md.
+    cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
 }
@@ -277,6 +284,11 @@ export const appConfig = registerAs('app', (): AppConfig => {
       secure: env['SESSION_SECURE'] === 'true',
       storeDriver:
         env['SESSION_STORE_DRIVER'] === 'postgres' ? 'postgres' : 'memory',
+      // Only include cookieDomain when explicitly set, so the default stays
+      // host-only (current behavior) under exactOptionalPropertyTypes.
+      ...(env['SESSION_COOKIE_DOMAIN']?.trim()
+        ? { cookieDomain: env['SESSION_COOKIE_DOMAIN'].trim() }
+        : {}),
     },
     archivedAccountRetentionDays: Number(
       env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] ?? 30,
