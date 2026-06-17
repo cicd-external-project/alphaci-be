@@ -236,6 +236,16 @@ describe('AuthService', () => {
         (req.session as unknown as Record<string, unknown>).oauthProvider,
       ).toBeUndefined();
     });
+
+    it('returns auth=failed (not a 500) when the DB save throws', async () => {
+      const { service } = await createService(true, {
+        save: jest.fn().mockRejectedValue(new Error('connection terminated unexpectedly')),
+      });
+      const req = makeRequest();
+      const url = await service.startGitHubAuth(req);
+      expect(url).toContain('auth=failed');
+      expect(url).not.toContain('github.com');
+    });
   });
 
   describe('handleGitHubCallback', () => {
