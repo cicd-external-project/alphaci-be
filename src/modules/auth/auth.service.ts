@@ -178,15 +178,7 @@ export class AuthService {
     if (request.session.user) {
       request.session.user.onboardingCompleted = true;
     }
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((err) => {
-        if (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-          return;
-        }
-        resolve();
-      });
-    });
+    await this.saveSession(request);
   }
 
   /**
@@ -251,15 +243,7 @@ export class AuthService {
     request.session.githubAccessToken = pending.accessToken;
     delete request.session.pendingArchived;
 
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((err) => {
-        if (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-          return;
-        }
-        resolve();
-      });
-    });
+    await this.saveSession(request);
   }
 
   /**
@@ -300,15 +284,7 @@ export class AuthService {
     request.session.githubAccessToken = pending.accessToken;
     delete request.session.pendingArchived;
 
-    await new Promise<void>((resolve, reject) => {
-      request.session.save((err) => {
-        if (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-          return;
-        }
-        resolve();
-      });
-    });
+    await this.saveSession(request);
   }
 
   private async handleOAuthProviderCallback(
@@ -333,8 +309,7 @@ export class AuthService {
       // When the state record is missing/expired we have no stored returnTo. Default
       // to the callback page (not the site root) so the FE renders the invalid_state
       // error instead of silently dropping the user on the marketing homepage.
-      const returnTo =
-        oauthRecord?.returnTo ?? fallbackReturnTo;
+      const returnTo = oauthRecord?.returnTo ?? fallbackReturnTo;
 
       const isInvalidState =
         !code || !state || oauthRecord?.provider !== 'github';
@@ -365,15 +340,7 @@ export class AuthService {
           accessToken,
         };
 
-        await new Promise<void>((resolve, reject) => {
-          request.session.save((err) => {
-            if (err) {
-              reject(err instanceof Error ? err : new Error(String(err)));
-              return;
-            }
-            resolve();
-          });
-        });
+        await this.saveSession(request);
 
         return this.withQuery(returnTo, 'auth', 'archived_choice');
       }
@@ -394,15 +361,7 @@ export class AuthService {
       // automatically flushed with `resave: false`. An explicit save is
       // required to guarantee the token reaches the session store before we
       // redirect the browser.
-      await new Promise<void>((resolve, reject) => {
-        request.session.save((err) => {
-          if (err) {
-            reject(err instanceof Error ? err : new Error(String(err)));
-            return;
-          }
-          resolve();
-        });
-      });
+      await this.saveSession(request);
 
       await this.outboxRepository.publishLater({
         topic: 'user.signed_in',
@@ -432,6 +391,23 @@ export class AuthService {
         `Example project seeding rejected unexpectedly for user ${userId}: ${(error as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Promisified `request.session.save()`. express-session uses a node-style
+   * callback; this wraps it so callers can `await` and so the error-normalizing
+   * boilerplate lives in exactly one place.
+   */
+  private saveSession(request: Request): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      request.session.save((err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   /**
