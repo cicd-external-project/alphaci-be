@@ -73,7 +73,11 @@ describe('EnvVarsController', () => {
   it('validates env text for the authenticated user', async () => {
     const service = makeService();
     const controller = new EnvVarsController(service);
-    const body = { text: 'API_URL=https://example.test' };
+    const body = {
+      text: 'API_URL=https://example.test',
+      deploymentTargetId: 'target-1',
+      environment: 'test' as const,
+    };
 
     await expect(
       controller.validate(

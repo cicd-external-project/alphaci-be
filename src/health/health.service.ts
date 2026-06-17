@@ -5,6 +5,7 @@ export type HealthStatus = 'ok' | 'degraded' | 'error';
 
 export interface HealthChecks {
   database: boolean;
+  apiCenter: boolean;
 }
 
 export interface HealthResponse {
@@ -27,7 +28,7 @@ export class HealthService {
     return {
       status,
       uptimeSeconds: Math.floor(process.uptime()),
-      checks: { database },
+      checks: { database, apiCenter: true },
     };
   }
 }

@@ -30,6 +30,7 @@ describe('HealthService', () => {
 
     expect(result.status).toBe('ok');
     expect(result.checks.database).toBe(true);
+    expect(result.checks.apiCenter).toBe(true);
     expect(result.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
@@ -39,5 +40,6 @@ describe('HealthService', () => {
 
     expect(result.status).toBe('error');
     expect(result.checks.database).toBe(false);
+    expect(result.checks.apiCenter).toBe(true);
   });
 });

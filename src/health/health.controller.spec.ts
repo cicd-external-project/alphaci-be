@@ -13,7 +13,7 @@ function makeServiceMock(
     getStatus: jest.fn().mockResolvedValue({
       status,
       uptimeSeconds: 42,
-      checks: { database },
+      checks: { database, apiCenter: true },
     } satisfies HealthResponse),
   };
 }
@@ -46,6 +46,7 @@ describe('HealthController', () => {
 
     expect(response.status).toBe('ok');
     expect(response.checks.database).toBe(true);
+    expect(response.checks.apiCenter).toBe(true);
     expect(typeof response.uptimeSeconds).toBe('number');
     expect(response.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
@@ -64,6 +65,7 @@ describe('HealthController', () => {
         const body = err.getResponse() as HealthResponse;
         expect(body.status).toBe('error');
         expect(body.checks.database).toBe(false);
+        expect(body.checks.apiCenter).toBe(true);
       }
     }
   });

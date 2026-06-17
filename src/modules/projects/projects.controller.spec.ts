@@ -577,8 +577,7 @@ describe('ProjectsController', () => {
     await expect(
       controller.setupProject(makeRequest(fakeUser, undefined), {
         repoFullName: 'testuser/orders-api',
-        projectTypeId: 'nestjs-api',
-        workflowRecipeId: 'backend-api-ci',
+        templateId: 'backend-api-ci',
         serviceName: 'orders-api',
       }),
     ).rejects.toThrow(UnauthorizedException);
