@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -90,7 +90,7 @@ export class AuthService {
     // This keeps the table lean without adding a cron dependency. The prune
     // is fire-and-forget (errors are caught inside pruneExpired) so it never
     // blocks or fails the login flow.
-    if (Math.random() < 0.05) {
+    if (randomInt(100) < 5) {
       void this.oauthStateRepository.pruneExpired();
     }
 

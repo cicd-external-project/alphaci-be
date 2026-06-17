@@ -103,6 +103,7 @@ export interface AppConfig {
   };
   supabase: {
     dbUrl: string | undefined;
+    dbCaCert?: string;
   };
   session: {
     secret: string;
@@ -267,6 +268,9 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     supabase: {
       dbUrl: env['SUPABASE_DB_URL'],
+      ...(env['SUPABASE_DB_CA_CERT']?.trim()
+        ? { dbCaCert: env['SUPABASE_DB_CA_CERT'].trim() }
+        : {}),
     },
     session: {
       secret: (() => {
