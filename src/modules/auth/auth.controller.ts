@@ -17,6 +17,7 @@ import type { AppConfig } from '../../config/app.config';
 import { DevOnlyGuard } from '../../common/guards/dev-only.guard';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/subscription.service';
+import { PlatformAdminsRepository } from '../admin/platform-admins.repository';
 import { AuthService } from './auth.service';
 
 @Throttle({ default: { ttl: 60_000, limit: 10 } })
@@ -27,6 +28,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly subscriptionService: SubscriptionService,
+    private readonly platformAdminsRepository: PlatformAdminsRepository,
     private readonly configService: ConfigService,
   ) {
     this.sessionCookieName =
@@ -95,6 +97,9 @@ export class AuthController {
     return {
       authenticated: true,
       user,
+      // null for ordinary users; 'admin' | 'super_admin' for platform admins.
+      // The frontend uses this to gate the /admin surface.
+      platformRole: await this.platformAdminsRepository.findRole(user.id),
       subscription: await Promise.resolve(
         this.subscriptionService.getForUser(user),
       ),

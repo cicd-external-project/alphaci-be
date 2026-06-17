@@ -336,7 +336,11 @@ export class AuthService {
         ? await this.oauthStateRepository.findAndDelete(state)
         : null;
 
-    const returnTo = oauthRecord?.returnTo ?? this.config.frontendUrl;
+    // When the state record is missing/expired we have no stored returnTo. Default
+    // to the callback page (not the site root) so the FE renders the invalid_state
+    // error instead of silently dropping the user on the marketing homepage.
+    const returnTo =
+      oauthRecord?.returnTo ?? `${this.config.frontendUrl}/auth/callback`;
 
     const isInvalidState =
       !code || !state || oauthRecord?.provider !== 'github';

@@ -1,11 +1,15 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 import type { DatabaseService } from '../database/database.service';
 import { UsageQuotaService } from './usage-quota.service';
 
-const makeDatabaseService = (query: jest.Mock) =>
+const makeDatabaseService = (query: jest.Mock, isEnabled = true) =>
   ({
     query,
+    isEnabled: () => isEnabled,
   }) as unknown as DatabaseService;
 
 describe('UsageQuotaService', () => {
@@ -107,5 +111,57 @@ describe('UsageQuotaService', () => {
       service.assertWithinLimit('user-1', 'projects'),
     ).resolves.toBeUndefined();
     expect(query).not.toHaveBeenCalled();
+  });
+
+  describe('assertManagedFleetCapacity', () => {
+    const withFleetCap = (provider: 'render' | 'vercel', max: number) => {
+      configService.getOrThrow.mockReturnValue({
+        envProvisioning: {
+          flowciManaged:
+            provider === 'render'
+              ? { renderManagedFleetMax: max }
+              : { vercelManagedFleetMax: max },
+        },
+      });
+    };
+
+    it('rejects new managed targets once the platform fleet cap is reached', async () => {
+      withFleetCap('render', 2);
+      query.mockResolvedValueOnce({ rows: [{ count: '2' }] });
+
+      await expect(
+        service.assertManagedFleetCapacity('render'),
+      ).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('allows a managed target while under the fleet cap', async () => {
+      withFleetCap('vercel', 5);
+      query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
+
+      await expect(
+        service.assertManagedFleetCapacity('vercel'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('treats a cap of 0 as unlimited and never queries', async () => {
+      withFleetCap('render', 0);
+
+      await expect(
+        service.assertManagedFleetCapacity('render'),
+      ).resolves.toBeUndefined();
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when the database is not configured', async () => {
+      service = new UsageQuotaService(
+        makeDatabaseService(query, false),
+        configService as never,
+      );
+
+      await expect(
+        service.assertManagedFleetCapacity('render'),
+      ).resolves.toBeUndefined();
+      expect(query).not.toHaveBeenCalled();
+    });
   });
 });

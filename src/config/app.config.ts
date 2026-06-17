@@ -43,6 +43,11 @@ export interface AppConfig {
       renderAllowedInstanceTypes?: string[];
       renderAllowPaidManaged?: boolean;
       renderManagedMaxServicesPerUser?: number;
+      // Platform-wide caps on managed targets across ALL users. Because managed
+      // mode shares a single Render/Vercel account, per-user quotas alone cannot
+      // protect the shared account from aggregate exhaustion. 0 = unlimited.
+      renderManagedFleetMax?: number;
+      vercelManagedFleetMax?: number;
       renderBootstrapImage?: string;
       renderRegistryCredentialId?: string | null;
       renderRegistryUsername?: string | null;
@@ -105,6 +110,13 @@ export interface AppConfig {
     maxAgeMs: number;
     secure: boolean;
     storeDriver: 'postgres' | 'memory';
+    // Optional cookie Domain attribute. Leave UNSET for the current split-domain
+    // setup (host-only cookie, today's behavior). When FE + BE move under one
+    // parent domain (e.g. app.example.com + api.example.com), set this to
+    // ".example.com" so the session cookie is shared first-party across the
+    // subdomains — this is what makes login work on Safari/iOS (no third-party
+    // cookie). See docs/AUTH_CUSTOM_DOMAIN_CUTOVER.md.
+    cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
 }
@@ -187,6 +199,12 @@ export const appConfig = registerAs('app', (): AppConfig => {
         renderManagedMaxServicesPerUser: Number(
           env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2',
         ),
+        renderManagedFleetMax: Number(
+          env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ?? '0',
+        ),
+        vercelManagedFleetMax: Number(
+          env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ?? '0',
+        ),
         renderBootstrapImage:
           env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
           'docker.io/library/nginx:alpine',
@@ -266,6 +284,11 @@ export const appConfig = registerAs('app', (): AppConfig => {
       secure: env['SESSION_SECURE'] === 'true',
       storeDriver:
         env['SESSION_STORE_DRIVER'] === 'postgres' ? 'postgres' : 'memory',
+      // Only include cookieDomain when explicitly set, so the default stays
+      // host-only (current behavior) under exactOptionalPropertyTypes.
+      ...(env['SESSION_COOKIE_DOMAIN']?.trim()
+        ? { cookieDomain: env['SESSION_COOKIE_DOMAIN'].trim() }
+        : {}),
     },
     archivedAccountRetentionDays: Number(
       env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] ?? 30,

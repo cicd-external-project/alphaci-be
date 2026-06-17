@@ -91,6 +91,73 @@ export class GithubService {
     return `https://github.com/apps/${this.appSlug}/installations/new`;
   }
 
+  /**
+   * Wraps fetch with bounded retry/backoff for GitHub rate limits.
+   *
+   * Retries only on 429 and rate-limit 403s — detected via response headers so
+   * the body is never consumed and remains readable by callers (a permission
+   * 403 is NOT retried because its x-ratelimit-remaining is non-zero). Honors
+   * Retry-After / X-RateLimit-Reset but caps the inline wait so a provisioning
+   * request can never hang past the platform's request timeout; if the reset is
+   * further out than the cap, the original response is returned for the caller
+   * to surface normally.
+   */
+  private async fetchWithRetry(
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): ReturnType<typeof fetch> {
+    const maxAttempts = 3;
+    const maxWaitMs = 8_000;
+
+    for (let attempt = 1; ; attempt += 1) {
+      const response = await fetch(input, init);
+
+      const isRateLimited =
+        response.status === 429 ||
+        (response.status === 403 &&
+          (response.headers?.get('retry-after') != null ||
+            response.headers?.get('x-ratelimit-remaining') === '0'));
+
+      if (!isRateLimited || attempt >= maxAttempts) {
+        return response;
+      }
+
+      const waitMs = this.resolveRetryDelayMs(response, attempt);
+      if (waitMs > maxWaitMs) {
+        return response;
+      }
+
+      this.logger.warn(
+        `GitHub rate limit (${String(response.status)}); retrying in ${String(waitMs)}ms (attempt ${String(attempt)}/${String(maxAttempts)})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
+  private resolveRetryDelayMs(
+    response: Awaited<ReturnType<typeof fetch>>,
+    attempt: number,
+  ): number {
+    const retryAfter = response.headers?.get('retry-after');
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        return seconds * 1000;
+      }
+    }
+
+    const reset = response.headers?.get('x-ratelimit-reset');
+    if (reset) {
+      const resetMs = Number(reset) * 1000 - Date.now();
+      if (Number.isFinite(resetMs) && resetMs > 0) {
+        return resetMs;
+      }
+    }
+
+    // Exponential backoff fallback: 1s, 2s, 4s.
+    return 2 ** (attempt - 1) * 1000;
+  }
+
   createAppJwt(nowSeconds = Math.floor(Date.now() / 1000)): string {
     if (!this.appId || !this.appPrivateKey) {
       throw new UnprocessableEntityException(
@@ -113,7 +180,7 @@ export class GithubService {
   }
 
   async createInstallationAccessToken(installationId: number): Promise<string> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/app/installations/${String(installationId)}/access_tokens`,
       {
         method: 'POST',
@@ -259,7 +326,7 @@ export class GithubService {
     accessToken: string,
     repoFullName: string,
   ): Promise<boolean> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/repos/${repoFullName}`,
       {
         method: 'GET',
@@ -286,7 +353,7 @@ export class GithubService {
   }
 
   async listRepos(accessToken: string): Promise<GitHubRepo[]> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       'https://api.github.com/user/repos?per_page=100&sort=updated&type=all',
       {
         headers: {
@@ -310,7 +377,7 @@ export class GithubService {
     owner: string,
     repo: string,
   ): Promise<GitHubRepo> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}`,
       {
         headers: {
@@ -354,22 +421,25 @@ export class GithubService {
     ownerLogin: string;
     repoName: string;
   }> {
-    const response = await fetch('https://api.github.com/user/repos', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'cicd-workflow-product',
-        'Content-Type': 'application/json',
+    const response = await this.fetchWithRetry(
+      'https://api.github.com/user/repos',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: dto.repoName,
+          description: dto.description ?? '',
+          private: dto.private,
+          auto_init: true,
+          default_branch: 'main',
+        }),
       },
-      body: JSON.stringify({
-        name: dto.repoName,
-        description: dto.description ?? '',
-        private: dto.private,
-        auto_init: true,
-        default_branch: 'main',
-      }),
-    });
+    );
 
     if (!response.ok) {
       const body = await response.text();
@@ -416,7 +486,7 @@ export class GithubService {
       if (attempt > 0) {
         await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
       }
-      const refRes = await fetch(
+      const refRes = await this.fetchWithRetry(
         `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${fromBranch}`,
         {
           headers: {
@@ -438,7 +508,7 @@ export class GithubService {
       );
     }
 
-    const createRes = await fetch(
+    const createRes = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/git/refs`,
       {
         method: 'POST',
@@ -469,7 +539,7 @@ export class GithubService {
     filePath: string,
     ref: string,
   ): Promise<string | null> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
       {
         headers: {
@@ -511,7 +581,7 @@ export class GithubService {
     const encodedContent = Buffer.from(content, 'utf8').toString('base64');
     let existingSha: string | undefined;
 
-    const checkRes = await fetch(
+    const checkRes = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`,
       {
         headers: {
@@ -542,7 +612,7 @@ export class GithubService {
       body.sha = existingSha;
     }
 
-    const putRes = await fetch(
+    const putRes = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
       {
         method: 'PUT',
@@ -576,7 +646,7 @@ export class GithubService {
     repo: string,
     pullRequest: { title: string; head: string; base: string; body?: string },
   ): Promise<{ number: number; htmlUrl: string }> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/pulls`,
       {
         method: 'POST',
@@ -624,7 +694,7 @@ export class GithubService {
       return;
     }
 
-    const keyRes = await fetch(
+    const keyRes = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/public-key`,
       {
         headers: {
@@ -659,7 +729,7 @@ export class GithubService {
       sodium.base64_variants.ORIGINAL,
     );
 
-    const putRes = await fetch(
+    const putRes = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/actions/secrets/${secretName}`,
       {
         method: 'PUT',
@@ -709,7 +779,7 @@ export class GithubService {
     repo: string,
     branch: string,
   ): Promise<void> {
-    const res = await fetch(
+    const res = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
       {
         method: 'PUT',
@@ -743,7 +813,7 @@ export class GithubService {
   private async fetchInstallationMetadata(
     installationId: number,
   ): Promise<GitHubInstallationMetadataResponse> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://api.github.com/app/installations/${String(installationId)}`,
       {
         headers: {
@@ -767,7 +837,7 @@ export class GithubService {
   private async fetchInstallationRepositories(
     accessToken: string,
   ): Promise<string[]> {
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       'https://api.github.com/installation/repositories?per_page=100',
       {
         headers: {

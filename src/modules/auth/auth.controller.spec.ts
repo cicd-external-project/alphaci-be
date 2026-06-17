@@ -5,6 +5,7 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { SubscriptionService } from '../subscription/subscription.service.js';
 import { ConfigService } from '@nestjs/config';
+import { PlatformAdminsRepository } from '../admin/platform-admins.repository.js';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard.js';
 import type { Request, Response } from 'express';
 import type {
@@ -76,6 +77,11 @@ const makeConfigService = () =>
       .mockReturnValue({ session: { name: 'cicd_workflow_sid' } }),
   }) as unknown as ConfigService;
 
+const makePlatformAdminsRepository = () =>
+  ({
+    findRole: jest.fn().mockResolvedValue(null),
+  }) as unknown as PlatformAdminsRepository;
+
 describe('AuthController', () => {
   let controller: AuthController;
   let authService: AuthService;
@@ -90,6 +96,10 @@ describe('AuthController', () => {
       providers: [
         { provide: AuthService, useValue: authService },
         { provide: SubscriptionService, useValue: subscriptionService },
+        {
+          provide: PlatformAdminsRepository,
+          useValue: makePlatformAdminsRepository(),
+        },
         { provide: ConfigService, useValue: makeConfigService() },
       ],
     })

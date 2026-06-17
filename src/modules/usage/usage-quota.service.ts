@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
@@ -71,6 +75,62 @@ export class UsageQuotaService {
         current: item.current,
         limit: item.limit,
         upgradeRequired: usage.plan === 'free',
+      });
+    }
+  }
+
+  /**
+   * Platform-wide capacity guard for managed provisioning.
+   *
+   * Managed ('flowci_managed') targets all share a single Render/Vercel account,
+   * so per-user quotas cannot protect that shared account from the aggregate of
+   * every user. This counts managed targets across ALL users for the provider
+   * and refuses new ones once the configured fleet cap is reached, pointing the
+   * user at BYO. A cap of 0 (default) means unlimited / disabled.
+   *
+   * Note: this is a soft cap — the count-then-insert is not atomic, so a burst
+   * of concurrent creates may overshoot by a few. That is acceptable for a
+   * coarse safety ceiling; the per-user quota remains the hard per-tenant limit.
+   */
+  async assertManagedFleetCapacity(
+    provider: 'render' | 'vercel',
+  ): Promise<void> {
+    if (!this.databaseService.isEnabled()) {
+      return;
+    }
+
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    const cap =
+      provider === 'render'
+        ? (config.envProvisioning.flowciManaged.renderManagedFleetMax ?? 0)
+        : (config.envProvisioning.flowciManaged.vercelManagedFleetMax ?? 0);
+
+    if (!Number.isFinite(cap) || cap <= 0) {
+      return;
+    }
+
+    const result = await this.databaseService.query<{
+      count: string | number;
+    }>(
+      `
+        SELECT COUNT(*) AS count
+        FROM env_provisioning.project_deployment_targets
+        WHERE ownership_mode = 'flowci_managed' AND provider = $1;
+      `,
+      [provider],
+    );
+    const current = this.toNumber(result.rows[0]?.count);
+
+    if (current + 1 > cap) {
+      const providerLabel = provider === 'render' ? 'Render' : 'Vercel';
+      throw new ServiceUnavailableException({
+        message:
+          `Managed ${providerLabel} provisioning is at capacity. ` +
+          `Connect your own ${providerLabel} account (BYO) to continue, or try again later.`,
+        provider,
+        current,
+        limit: cap,
+        managedFleetExhausted: true,
       });
     }
   }

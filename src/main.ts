@@ -71,6 +71,12 @@ async function bootstrap(): Promise<void> {
         // the conditional prevents the invalid none+insecure combination in dev.
         sameSite: appCfg.session.secure ? 'none' : 'lax',
         maxAge: appCfg.session.maxAgeMs,
+        // When SESSION_COOKIE_DOMAIN is set (FE + BE on one parent domain), the
+        // cookie is shared first-party across subdomains — required for Safari/iOS
+        // login. Omitted by default → host-only cookie (current behavior).
+        ...(appCfg.session.cookieDomain
+          ? { domain: appCfg.session.cookieDomain }
+          : {}),
       },
     }),
   );

@@ -262,6 +262,9 @@ describe('AuthService', () => {
         'unknown-state',
       );
       expect(url).toContain('auth=invalid_state');
+      // Regression guard: an expired/unknown state must land on the callback
+      // page (which renders the error), not the marketing homepage root.
+      expect(url).toContain('/auth/callback');
     });
 
     it('returns invalid_state when code is missing', async () => {
