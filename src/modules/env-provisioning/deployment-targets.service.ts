@@ -83,6 +83,12 @@ export class DeploymentTargetsService {
         'managed_vercel_projects',
       );
     }
+    // Platform-wide capacity guard: managed targets share one Render/Vercel
+    // account, so cap the aggregate across all users (per-user quotas above
+    // cannot protect the shared account). Runs even if per-user quotas are off.
+    if (dto.ownershipMode === 'flowci_managed') {
+      await this.usageQuotaService?.assertManagedFleetCapacity(dto.provider);
+    }
     const tokenInput: {
       ownershipMode: string;
       providerConnectionId?: string;

@@ -43,6 +43,11 @@ export interface AppConfig {
       renderAllowedInstanceTypes?: string[];
       renderAllowPaidManaged?: boolean;
       renderManagedMaxServicesPerUser?: number;
+      // Platform-wide caps on managed targets across ALL users. Because managed
+      // mode shares a single Render/Vercel account, per-user quotas alone cannot
+      // protect the shared account from aggregate exhaustion. 0 = unlimited.
+      renderManagedFleetMax?: number;
+      vercelManagedFleetMax?: number;
       renderBootstrapImage?: string;
       renderRegistryCredentialId?: string | null;
       renderRegistryUsername?: string | null;
@@ -186,6 +191,12 @@ export const appConfig = registerAs('app', (): AppConfig => {
           env['FLOWCI_RENDER_ALLOW_PAID_MANAGED'] === 'true',
         renderManagedMaxServicesPerUser: Number(
           env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2',
+        ),
+        renderManagedFleetMax: Number(
+          env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ?? '0',
+        ),
+        vercelManagedFleetMax: Number(
+          env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ?? '0',
         ),
         renderBootstrapImage:
           env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
