@@ -79,22 +79,30 @@ export class AuthService {
       return this.withQuery(safeReturnTo, 'auth', 'unavailable');
     }
 
-    const state = randomUUID();
+    try {
+      const state = randomUUID();
 
-    // Store OAuth state in DB — eliminates the session cookie dependency for
-    // state verification. The cookie race condition on cold starts is moot
-    // because state lives in Supabase, not the session store.
-    await this.oauthStateRepository.save(state, safeReturnTo, 'github');
+      // Store OAuth state in DB — eliminates the session cookie dependency for
+      // state verification. The cookie race condition on cold starts is moot
+      // because state lives in Supabase, not the session store.
+      await this.oauthStateRepository.save(state, safeReturnTo, 'github');
 
-    // Probabilistic cleanup: prune expired rows on ~5% of login starts.
-    // This keeps the table lean without adding a cron dependency. The prune
-    // is fire-and-forget (errors are caught inside pruneExpired) so it never
-    // blocks or fails the login flow.
-    if (randomInt(100) < 5) {
-      void this.oauthStateRepository.pruneExpired();
+      // Probabilistic cleanup: prune expired rows on ~5% of login starts.
+      // This keeps the table lean without adding a cron dependency. The prune
+      // is fire-and-forget (errors are caught inside pruneExpired) so it never
+      // blocks or fails the login flow.
+      if (randomInt(100) < 5) {
+        void this.oauthStateRepository.pruneExpired();
+      }
+
+      return this.buildGitHubAuthorizationUrl(state);
+    } catch (err) {
+      this.logger.error(
+        `OAuth start failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return this.withQuery(safeReturnTo, 'auth', 'failed');
     }
-
-    return this.buildGitHubAuthorizationUrl(state);
   }
 
   async handleGitHubCallback(
