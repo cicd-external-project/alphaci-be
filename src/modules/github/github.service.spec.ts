@@ -56,6 +56,8 @@ const appConfig: AppConfig = {
   },
   projectSyncSnapshots: {
     enabled: false,
+    liveGithubEnabled: false,
+    liveProvidersEnabled: false,
   },
   workflowSettingsPreview: {
     enabled: false,
@@ -88,6 +90,16 @@ const appConfig: AppConfig = {
     storeDriver: 'memory',
   },
   archivedAccountRetentionDays: 30,
+  projectTargetManagement: { enabled: false },
+  ciRunTracking: { enabled: false, liveGithubEnabled: false },
+  deploymentHistory: { enabled: false, liveProvidersEnabled: false },
+  driftDetection: { enabled: false },
+  driftRepair: { enabled: false, liveRepairEnabled: false },
+  driftLiveChecks: { enabled: false },
+  usageQuotas: { enabled: false },
+  workspaces: { enabled: false },
+  auditEvents: { enabled: false },
+  notifications: { enabled: false },
 };
 
 const makeConfigService = (config: AppConfig = appConfig) =>

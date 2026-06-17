@@ -132,9 +132,7 @@ describe('SubscriptionsRepository', () => {
           typeof query === 'string' &&
           query.includes('INSERT INTO user_subscriptions'),
       );
-      expect(insertCall?.[0]).toContain(
-        "VALUES ($1, 'free', 'free', 'active'",
-      );
+      expect(insertCall?.[0]).toContain("VALUES ($1, 'free', 'free', 'active'");
     });
   });
 

@@ -225,19 +225,20 @@ const makeProjectFeatureConfig = (options?: {
   syncSnapshots?: boolean;
   workflowSettingsPreview?: boolean;
   workflowUpdatePr?: boolean;
-}) => ({
-  getOrThrow: jest.fn().mockReturnValue({
-    projectSyncSnapshots: {
-      enabled: options?.syncSnapshots ?? true,
-    },
-    workflowSettingsPreview: {
-      enabled: options?.workflowSettingsPreview ?? false,
-    },
-    workflowUpdatePr: {
-      enabled: options?.workflowUpdatePr ?? false,
-    },
-  }),
-});
+}) =>
+  ({
+    getOrThrow: jest.fn().mockReturnValue({
+      projectSyncSnapshots: {
+        enabled: options?.syncSnapshots ?? true,
+      },
+      workflowSettingsPreview: {
+        enabled: options?.workflowSettingsPreview ?? false,
+      },
+      workflowUpdatePr: {
+        enabled: options?.workflowUpdatePr ?? false,
+      },
+    }),
+  }) as never;
 
 describe('ProjectsService', () => {
   let service: ProjectsService;
@@ -1052,7 +1053,7 @@ jobs:
         id: 'project-1',
         user_id: 'user-1',
       }),
-    };
+    } as unknown as ProjectsRepository;
     const auditEventsService = {
       listProjectEvents: jest.fn().mockResolvedValue({
         enabled: true,
@@ -1072,7 +1073,7 @@ jobs:
       githubService,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService,
+      projectDeploymentProvisioningService as never,
       undefined,
       undefined,
       undefined,
@@ -1082,7 +1083,7 @@ jobs:
       undefined,
       undefined,
       undefined,
-      auditEventsService,
+      auditEventsService as never,
     );
 
     await expect(
@@ -1532,7 +1533,7 @@ jobs:
         created_at: '2026-06-12T00:00:00.000Z',
         updated_at: '2026-06-12T00:00:00.000Z',
       }),
-    };
+    } as unknown as ProjectsRepository;
     const githubWrites = makeGithubService() as unknown as GithubService & {
       createBranch: jest.Mock;
       putFileContent: jest.Mock;
@@ -1549,22 +1550,22 @@ jobs:
       githubWrites,
       projectsRepository,
       makeCiService(),
-      projectDeploymentProvisioningService,
-      overviewRepos.ciTokensRepository,
-      overviewRepos.deploymentTargetsRepository,
-      overviewRepos.envVarsRepository,
-      overviewRepos.workflowHistoryRepository,
-      overviewRepos.dashboardSnapshotsRepository,
+      projectDeploymentProvisioningService as never,
+      overviewRepos.ciTokensRepository as never,
+      overviewRepos.deploymentTargetsRepository as never,
+      overviewRepos.envVarsRepository as never,
+      overviewRepos.workflowHistoryRepository as never,
+      overviewRepos.dashboardSnapshotsRepository as never,
       makeProjectFeatureConfig({
         workflowSettingsPreview: true,
         workflowUpdatePr: true,
       }),
-      overviewRepos.workflowSettingsRepository,
-      overviewRepos.workflowUpdateRequestsRepository,
+      overviewRepos.workflowSettingsRepository as never,
+      overviewRepos.workflowUpdateRequestsRepository as never,
       undefined,
-      auditEventsService,
+      auditEventsService as never,
       undefined,
-      notificationEventsService,
+      notificationEventsService as never,
     ) as ProjectsService & {
       createWorkflowUpdatePullRequest: (
         projectId: string,
