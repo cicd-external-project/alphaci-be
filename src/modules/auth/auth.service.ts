@@ -295,20 +295,7 @@ export class AuthService {
     await this.subscriptionsRepository.ensureDefaultFreeSubscription(
       newUser.id,
     );
-    // Defense-in-depth: ExampleProjectSeederService already swallows its own
-    // errors internally, but this call site also guards against rejection
-    // (e.g. a future bug in the seeder, or a DI/mocking mistake) so that
-    // demo-project seeding can NEVER take down account creation/login.
-    try {
-      await this.exampleProjectSeederService.ensureExampleProjectSeeded(
-        newUser.id,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Example project seeding rejected unexpectedly for user ${newUser.id}: ${(error as Error).message}`,
-      );
-    }
-
+    await this.seedExampleProjectSafelyFor(newUser.id);
     await this.establishSession(request, newUser);
     request.session.githubAccessToken = pending.accessToken;
     delete request.session.pendingArchived;
@@ -329,31 +316,37 @@ export class AuthService {
     code?: string,
     state?: string,
   ): Promise<string> {
-    // Look up and atomically delete the state record from DB.
-    // This is the authoritative source — session state is no longer consulted.
-    const oauthRecord =
-      code && state
-        ? await this.oauthStateRepository.findAndDelete(state)
-        : null;
-
-    // When the state record is missing/expired we have no stored returnTo. Default
-    // to the callback page (not the site root) so the FE renders the invalid_state
-    // error instead of silently dropping the user on the marketing homepage.
-    const returnTo =
-      oauthRecord?.returnTo ?? `${this.config.frontendUrl}/auth/callback`;
-
-    const isInvalidState =
-      !code || !state || oauthRecord?.provider !== 'github';
-
-    if (isInvalidState) {
-      return this.withQuery(returnTo, 'auth', 'invalid_state');
-    }
-
-    if (!this.hasGitHubCredentials()) {
-      return this.withQuery(returnTo, 'auth', 'unavailable');
-    }
+    // Safe fallback used if the DB state lookup itself fails (e.g. transient
+    // connection error). Must be defined before the try so the catch can use it.
+    const fallbackReturnTo = `${this.config.frontendUrl}/auth/callback`;
 
     try {
+      // Look up and atomically delete the state record from DB.
+      // This is the authoritative source — session state is no longer consulted.
+      // NOTE: kept inside the outer try so that a transient DB error here produces
+      // an auth=failed redirect instead of an unhandled 500.
+      const oauthRecord =
+        code && state
+          ? await this.oauthStateRepository.findAndDelete(state)
+          : null;
+
+      // When the state record is missing/expired we have no stored returnTo. Default
+      // to the callback page (not the site root) so the FE renders the invalid_state
+      // error instead of silently dropping the user on the marketing homepage.
+      const returnTo =
+        oauthRecord?.returnTo ?? fallbackReturnTo;
+
+      const isInvalidState =
+        !code || !state || oauthRecord?.provider !== 'github';
+
+      if (isInvalidState) {
+        return this.withQuery(returnTo, 'auth', 'invalid_state');
+      }
+
+      if (!this.hasGitHubCredentials()) {
+        return this.withQuery(returnTo, 'auth', 'unavailable');
+      }
+
       const accountState = await this.resolveAccountState(code);
 
       if (accountState.kind === 'archived') {
@@ -391,20 +384,7 @@ export class AuthService {
         persistedUser.id,
       );
       if (accountState.kind === 'new') {
-        // Best-effort: ExampleProjectSeederService already swallows its own
-        // errors internally and never throws (see
-        // ExampleProjectSeederService.ensureExampleProjectSeeded). This
-        // call-site try/catch is defense-in-depth so that even an
-        // unexpected rejection here can never block login.
-        try {
-          await this.exampleProjectSeederService.ensureExampleProjectSeeded(
-            persistedUser.id,
-          );
-        } catch (error) {
-          this.logger.warn(
-            `Example project seeding rejected unexpectedly for user ${persistedUser.id}: ${(error as Error).message}`,
-          );
-        }
+        await this.seedExampleProjectSafelyFor(persistedUser.id);
       }
       await this.establishSession(request, persistedUser);
       request.session.githubAccessToken = accessToken;
@@ -440,7 +420,17 @@ export class AuthService {
         `OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
         err instanceof Error ? err.stack : undefined,
       );
-      return this.withQuery(returnTo, 'auth', 'failed');
+      return this.withQuery(fallbackReturnTo, 'auth', 'failed');
+    }
+  }
+
+  private async seedExampleProjectSafelyFor(userId: string): Promise<void> {
+    try {
+      await this.exampleProjectSeederService.ensureExampleProjectSeeded(userId);
+    } catch (error) {
+      this.logger.warn(
+        `Example project seeding rejected unexpectedly for user ${userId}: ${(error as Error).message}`,
+      );
     }
   }
 
