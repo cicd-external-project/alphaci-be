@@ -60,6 +60,7 @@ export interface PendingAccountInfo {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly config: AppConfig;
+  private readonly returnToOrigins: Set<string>;
 
   constructor(
     private readonly configService: ConfigService,
@@ -70,6 +71,10 @@ export class AuthService {
     private readonly exampleProjectSeederService: ExampleProjectSeederService,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
+    this.returnToOrigins = this.buildReturnToOrigins(
+      this.config.frontendUrl,
+      this.configService.get<string>('ALLOWED_ORIGINS'),
+    );
   }
 
   async startGitHubAuth(request: Request, returnTo?: string): Promise<string> {
@@ -566,9 +571,8 @@ export class AuthService {
 
     try {
       const parsed = new URL(returnTo);
-      const frontend = new URL(this.config.frontendUrl);
 
-      if (parsed.origin === frontend.origin) {
+      if (this.returnToOrigins.has(parsed.origin)) {
         return parsed.toString();
       }
     } catch {
@@ -576,6 +580,33 @@ export class AuthService {
     }
 
     return this.config.frontendUrl;
+  }
+
+  private buildReturnToOrigins(
+    frontendUrl: string,
+    allowedOrigins?: string,
+  ): Set<string> {
+    const origins = new Set<string>();
+    this.addReturnToOrigin(origins, frontendUrl);
+
+    for (const origin of (allowedOrigins ?? '').split(',')) {
+      this.addReturnToOrigin(origins, origin);
+    }
+
+    return origins;
+  }
+
+  private addReturnToOrigin(origins: Set<string>, value: string): void {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      origins.add(new URL(trimmed).origin);
+    } catch {
+      // Ignore malformed origins; env validation owns operator feedback.
+    }
   }
 
   private async establishSession(

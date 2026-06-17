@@ -1,7 +1,10 @@
 import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import { buildStagedWorkflowBundle } from './staged-workflow.builder';
+import {
+  buildStagedWorkflowBundle,
+  resolvePlatformBaseUrl,
+} from './staged-workflow.builder';
 
 const makeTemplate = (
   stack: WorkflowTemplate['stack'] = 'nestjs',
@@ -36,6 +39,23 @@ interface ParsedWorkflow {
 }
 
 describe('buildStagedWorkflowBundle', () => {
+  it('resolves platform callback URLs from deployment configuration', () => {
+    expect(
+      resolvePlatformBaseUrl({
+        PLATFORM_PUBLIC_URL: 'https://alphaci-api.example.com/api/v1/',
+      }),
+    ).toBe('https://alphaci-api.example.com');
+
+    expect(
+      resolvePlatformBaseUrl({
+        GITHUB_CALLBACK_URL:
+          'https://alphaci-api.example.com/api/v1/auth/github/callback',
+      }),
+    ).toBe('https://alphaci-api.example.com');
+
+    expect(resolvePlatformBaseUrl({})).toBe('http://localhost:4000');
+  });
+
   it('emits the three-stage bundle with unsuffixed names and paths by default', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',

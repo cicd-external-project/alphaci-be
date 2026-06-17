@@ -31,6 +31,11 @@ const fakeFreeSub: SubscriptionState = {
 
 const makeConfig = (withGitHub = true) =>
   ({
+    get: jest.fn((key: string) =>
+      key === 'ALLOWED_ORIGINS'
+        ? 'http://localhost:3000,https://cicd-workflow-hioomva9i-api-center-t.vercel.app'
+        : undefined,
+    ),
     getOrThrow: jest.fn().mockReturnValue({
       frontendUrl: 'http://localhost:3000',
       archivedAccountRetentionDays: 30,
@@ -220,6 +225,22 @@ describe('AuthService', () => {
       expect(oauthStateRepo.save).toHaveBeenCalledWith(
         expect.any(String),
         'http://localhost:3000', // evil.com rejected, fell back
+        'github',
+      );
+    });
+
+    it('accepts absolute returnTo URLs from configured frontend origins', async () => {
+      const { service, oauthStateRepo } = await createService();
+      const req = makeRequest();
+      const returnTo =
+        'https://cicd-workflow-hioomva9i-api-center-t.vercel.app/auth/callback?intent=login';
+
+      await service.startGitHubAuth(req, returnTo);
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(oauthStateRepo.save).toHaveBeenCalledWith(
+        expect.any(String),
+        returnTo,
         'github',
       );
     });
