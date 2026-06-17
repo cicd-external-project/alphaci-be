@@ -16,6 +16,7 @@ import {
   helmetConfigSwagger,
 } from './common/config/security.config.js';
 import type { AppConfig } from './config/app.config.js';
+import { postgresSslConfig } from './modules/database/postgres-ssl.config.js';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
@@ -49,7 +50,7 @@ async function bootstrap(): Promise<void> {
     sessionStore = new PgStore({
       pool: new Pool({
         connectionString: appCfg.supabase.dbUrl,
-        ssl: { rejectUnauthorized: false },
+        ssl: postgresSslConfig(appCfg.supabase.dbUrl, appCfg.supabase.dbCaCert),
       }),
       tableName: 'session',
       createTableIfMissing: true,

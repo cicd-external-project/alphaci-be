@@ -29,6 +29,7 @@ export interface EnvironmentVariables {
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_DB_CA_CERT?: string;
   ALLOWED_ORIGINS: string;
   ENV_PROVISIONING_ENABLED?: string;
   ENV_PROVISIONING_ENCRYPTION_KEY?: string;

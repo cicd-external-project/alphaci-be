@@ -13,6 +13,7 @@ import {
 } from 'pg';
 
 import type { AppConfig } from '../../config/app.config';
+import { postgresSslConfig } from './postgres-ssl.config.js';
 
 const SERVICE_SCHEMA_SEARCH_PATH = [
   'identity',
@@ -43,16 +44,12 @@ export class DatabaseService implements OnModuleDestroy {
       return;
     }
 
-    const isLocal =
-      this.config.supabase.dbUrl.includes('localhost') ||
-      this.config.supabase.dbUrl.includes('127.0.0.1');
-
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
-      // Supabase's pooler cert chain is valid but Node.js doesn't include the
-      // intermediate CA in its default bundle. Supabase docs recommend this for
-      // managed-service connections where the transport is already encrypted.
-      ssl: isLocal ? false : { rejectUnauthorized: false },
+      ssl: postgresSslConfig(
+        this.config.supabase.dbUrl,
+        this.config.supabase.dbCaCert,
+      ),
       max: 10,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,

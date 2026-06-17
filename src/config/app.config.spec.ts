@@ -66,6 +66,8 @@ describe('appConfig factory', () => {
   it('reads environment variables when set', () => {
     process.env['FRONTEND_URL'] = 'https://app.example.com';
     process.env['GITHUB_CLIENT_ID'] = 'gh-id';
+    process.env['SUPABASE_DB_CA_CERT'] =
+      '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----';
     process.env['SUBSCRIPTION_MOCK_ENABLED'] = 'true';
     process.env['SESSION_STORE_DRIVER'] = 'postgres';
     process.env['SESSION_SECURE'] = 'true';
@@ -74,6 +76,9 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('https://app.example.com');
     expect(config.github.clientId).toBe('gh-id');
+    expect(config.supabase.dbCaCert).toBe(
+      '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----',
+    );
     expect(config.subscription.mockEnabled).toBe(true);
     expect(config.session.storeDriver).toBe('postgres');
     expect(config.session.secure).toBe(true);
