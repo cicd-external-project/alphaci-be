@@ -58,6 +58,8 @@ const makeGithubService = () =>
     createBranch: jest.fn().mockResolvedValue(undefined),
     applyBranchProtection: jest.fn().mockResolvedValue(undefined),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
+    setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+    deleteRepo: jest.fn().mockResolvedValue(true),
   }) as unknown as GithubService;
 
 const makeProjectsRepository = () =>
@@ -65,6 +67,8 @@ const makeProjectsRepository = () =>
     create: jest.fn().mockResolvedValue({
       id: 'project-1',
     }),
+    updateStatus: jest.fn().mockResolvedValue(undefined),
+    deleteByIdAndUser: jest.fn().mockResolvedValue(true),
   }) as unknown as ProjectsRepository;
 
 const makeCiService = () =>
@@ -152,9 +156,9 @@ describe('ProjectsService workflow authorization', () => {
     expect(
       (service as unknown as { pushWorkflowFile: jest.Mock }).pushWorkflowFile,
     ).toHaveBeenCalledTimes(3);
-    const setActionsSecret = (
-      githubService as unknown as { setActionsSecret: jest.Mock }
-    ).setActionsSecret;
+    const setActionsSecretStrict = (
+      githubService as unknown as { setActionsSecretStrict: jest.Mock }
+    ).setActionsSecretStrict;
     const issueProjectToken = (
       ciService as unknown as { issueProjectToken: jest.Mock }
     ).issueProjectToken;
@@ -162,7 +166,7 @@ describe('ProjectsService workflow authorization', () => {
       projectsRepository as unknown as { create: jest.Mock }
     ).create;
 
-    expect(setActionsSecret).toHaveBeenCalledWith(
+    expect(setActionsSecretStrict).toHaveBeenCalledWith(
       'gh-token',
       'owner',
       'repo',
