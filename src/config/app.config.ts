@@ -267,7 +267,12 @@ export const appConfig = registerAs('app', (): AppConfig => {
       enabled: env['NOTIFICATIONS_ENABLED'] === 'true',
     },
     supabase: {
-      dbUrl: env['SUPABASE_DB_URL'],
+      // Trim defensively. Every sibling secret is trimmed; this one was not,
+      // so a trailing newline/space pasted into a host's env panel survived
+      // into the connection string and could corrupt the parsed dbname or
+      // password — surfacing as a confusing "password authentication failed"
+      // in one environment but not another with a visually-identical value.
+      dbUrl: env['SUPABASE_DB_URL']?.trim(),
       ...(env['SUPABASE_DB_CA_CERT']?.trim()
         ? { dbCaCert: env['SUPABASE_DB_CA_CERT'].trim() }
         : {}),

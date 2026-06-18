@@ -565,9 +565,26 @@ export class AuthService {
   }
 
   private withQuery(url: string, key: string, value: string): string {
-    const parsed = new URL(url);
-    parsed.searchParams.set(key, value);
-    return parsed.toString();
+    // This runs on the OAuth *failure* path (e.g. the DB rejected our
+    // credentials), so it must never throw — otherwise a handled error becomes
+    // an unhandled 500. `url` derives from FRONTEND_URL, which can be
+    // misconfigured per environment (e.g. missing the scheme), making
+    // `new URL()` throw. Fall back to the configured frontend, then to a bare
+    // relative path, so the user always lands on a real error page.
+    for (const candidate of [url, this.config.frontendUrl]) {
+      try {
+        const parsed = new URL(candidate);
+        parsed.searchParams.set(key, value);
+        return parsed.toString();
+      } catch {
+        // try the next candidate
+      }
+    }
+
+    this.logger.error(
+      `withQuery: could not build a valid URL from FRONTEND_URL ("${this.config.frontendUrl}"). Check the FRONTEND_URL env var in this environment.`,
+    );
+    return `/?${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
   }
 
   private normalizeReturnTo(returnTo?: string): string {
