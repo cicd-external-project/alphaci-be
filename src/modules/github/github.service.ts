@@ -474,6 +474,47 @@ export class GithubService {
     };
   }
 
+  /**
+   * Best-effort repository deletion, used to compensate a provisioning failure
+   * so a half-created repo is not left orphaned (which would 422 on retry).
+   * Never throws: deletion requires the `delete_repo` OAuth scope, which may be
+   * absent — failures are logged and swallowed so they cannot mask the original
+   * provisioning error. Returns true only when GitHub confirmed the deletion.
+   */
+  async deleteRepo(
+    accessToken: string,
+    owner: string,
+    repo: string,
+  ): Promise<boolean> {
+    try {
+      const response = await this.fetchWithRetry(
+        `https://api.github.com/repos/${owner}/${repo}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
+        },
+      );
+
+      if (response.status === 204) {
+        return true;
+      }
+
+      this.logger.warn(
+        `Compensating repo delete for ${owner}/${repo} returned ${String(response.status)}; manual cleanup may be required`,
+      );
+      return false;
+    } catch (error) {
+      this.logger.warn(
+        `Compensating repo delete for ${owner}/${repo} failed: ${(error as Error).message}`,
+      );
+      return false;
+    }
+  }
+
   async createBranch(
     accessToken: string,
     owner: string,

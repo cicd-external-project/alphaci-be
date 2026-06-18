@@ -62,6 +62,8 @@ const makeGithubService = () =>
     }),
     applyBranchProtection: jest.fn().mockResolvedValue(undefined),
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
+    setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
+    deleteRepo: jest.fn().mockResolvedValue(true),
   }) as unknown as GithubService;
 
 const makeProjectsRepository = () =>
@@ -69,6 +71,8 @@ const makeProjectsRepository = () =>
     create: jest.fn().mockResolvedValue({
       id: 'project-1',
     }),
+    updateStatus: jest.fn().mockResolvedValue(undefined),
+    deleteByIdAndUser: jest.fn().mockResolvedValue(true),
     listByUser: jest.fn().mockResolvedValue([]),
   }) as unknown as ProjectsRepository;
 
