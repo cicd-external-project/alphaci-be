@@ -422,123 +422,153 @@ export class ProjectsService {
       });
 
     const repoFullName = `${ownerLogin}/${repoName}`;
-
-    // 3.5 Push scaffold + README to main so all downstream branches inherit them
-    await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
-      projectName: dto.serviceName,
-      stack: dto.projectTypeId,
-      repoShape,
-      ...(dto.tests?.['docker'] !== undefined && {
-        includeDocker: dto.tests['docker'],
-      }),
-    });
-
-    // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
-    // uat inherit the workflow files — GitHub Actions reads the YAML from the
-    // branch being pushed to, so it must exist on those branches.
     const workflowPath =
       workflowFiles[0]?.path ?? `.github/workflows/${outputFileName}`;
-    const { commitSha, commitUrl } = await this.pushWorkflowFiles(
-      provisioningToken,
-      ownerLogin,
-      repoName,
-      workflowFiles,
-    );
 
-    // 4. Create uat and test branches from main (scaffold + workflow already present)
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(
-        provisioningToken,
-        ownerLogin,
-        repoName,
-        branch,
-        'main',
-      );
-    }
-
-    // 5. Apply branch protection to all three branches
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(
-        provisioningToken,
-        ownerLogin,
-        repoName,
-        branch,
-      );
-    }
-
-    // 7. Persist
-    const row = await this.projectsRepository.create({
-      userId,
-      workspaceId: await this.resolveDefaultWorkspaceId(userId),
-      repoFullName,
-      templateId,
-      serviceName: dto.serviceName,
-      workflowPath,
-      status: 'provisioned',
-      githubCommitSha: commitSha,
-      githubCommitUrl: commitUrl,
-      repoUrl,
-      visibility: dto.visibility,
-      repoShape,
-      projectTypeId: dto.projectTypeId,
-      workflowRecipeId: dto.workflowRecipeId ?? null,
-      projectOptions: {
-        ...(dto.tests ? { tests: dto.tests } : {}),
-        workflowFiles: this.workflowFileMetadata(workflowFiles),
-      },
-    });
-
-    const ciToken = await this.ciService.issueProjectToken(row.id);
-    await this.githubService.setActionsSecret(
-      provisioningToken,
-      ownerLogin,
-      repoName,
-      'CI_TOKEN',
-      ciToken.token,
-    );
-    await this.githubService.setActionsSecret(
-      provisioningToken,
-      ownerLogin,
-      repoName,
-      'CI_REPORT_URL',
-      CI_REPORT_URL,
-    );
-
-    const deploymentProvisioning =
-      await this.projectDeploymentProvisioningService.provisionForProject({
-        projectId: row.id,
-        userId,
-        repoFullName,
-        githubAccessToken: provisioningToken,
-        request: dto.deploymentProvisioning,
+    // Once the repo exists, wrap the remaining steps so a mid-flow failure
+    // compensates by deleting the half-created repo + DB row instead of leaving
+    // an orphan that would 422 on the next attempt.
+    let row: ProvisionedProjectRow | undefined;
+    let provisioningComplete = false;
+    try {
+      // 3.5 Push scaffold + README to main so all downstream branches inherit them
+      await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
+        projectName: dto.serviceName,
+        stack: dto.projectTypeId,
+        repoShape,
+        ...(dto.tests?.['docker'] !== undefined && {
+          includeDocker: dto.tests['docker'],
+        }),
       });
 
-    await this.recordProductEvent({
-      userId,
-      projectId: row.id,
-      eventCode: 'project_created',
-      title: 'Project created',
-      body: `${repoFullName} is now tracked by FlowCI.`,
-      metadata: {
+      // 4. Persist the project, issue the CI token, and install the Actions
+      // secrets BEFORE any workflow YAML exists. The access-gate workflow runs
+      // the instant a workflow file is pushed (and again on branch creation),
+      // so the secrets must already be present or that first run fails for lack
+      // of CI_TOKEN. Secrets are installed strictly so a token without
+      // `secrets:write` aborts provisioning here rather than producing a repo
+      // whose pipelines can never authenticate.
+      row = await this.projectsRepository.create({
+        userId,
+        workspaceId: await this.resolveDefaultWorkspaceId(userId),
         repoFullName,
+        templateId,
+        serviceName: dto.serviceName,
+        workflowPath,
+        status: 'provisioned',
+        repoUrl,
+        visibility: dto.visibility,
         repoShape,
         projectTypeId: dto.projectTypeId,
-      },
-    });
+        workflowRecipeId: dto.workflowRecipeId ?? null,
+        projectOptions: {
+          ...(dto.tests ? { tests: dto.tests } : {}),
+          workflowFiles: this.workflowFileMetadata(workflowFiles),
+        },
+      });
 
-    return {
-      id: row.id,
-      repoFullName,
-      repoUrl,
-      status: 'provisioned',
-      workflowPath,
-      workflowFiles: this.workflowFileMetadata(workflowFiles),
-      githubCommitSha: commitSha,
-      githubCommitUrl: commitUrl,
-      projectTypeId: dto.projectTypeId,
-      workflowRecipeId: dto.workflowRecipeId ?? '',
-      deploymentProvisioning,
-    };
+      const ciToken = await this.ciService.issueProjectToken(row.id);
+      await this.githubService.setActionsSecretStrict(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        'CI_TOKEN',
+        ciToken.token,
+      );
+      await this.githubService.setActionsSecretStrict(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
+      );
+
+      // 5. Push workflow YAML to main now that the secrets exist, then record
+      // the resulting commit on the project row.
+      const { commitSha, commitUrl } = await this.pushWorkflowFiles(
+        provisioningToken,
+        ownerLogin,
+        repoName,
+        workflowFiles,
+      );
+      await this.projectsRepository.updateStatus(
+        row.id,
+        'provisioned',
+        commitSha,
+        commitUrl,
+      );
+
+      // 6. Create uat and test branches from main (scaffold + workflow + secrets present)
+      for (const branch of ['uat', 'test'] as const) {
+        await this.githubService.createBranch(
+          provisioningToken,
+          ownerLogin,
+          repoName,
+          branch,
+          'main',
+        );
+      }
+
+      // 7. Apply branch protection to all three branches
+      for (const branch of ['test', 'uat', 'main'] as const) {
+        await this.githubService.applyBranchProtection(
+          provisioningToken,
+          ownerLogin,
+          repoName,
+          branch,
+        );
+      }
+
+      // Repo is now fully usable; failures past this point must not delete it.
+      provisioningComplete = true;
+
+      const deploymentProvisioning =
+        await this.projectDeploymentProvisioningService.provisionForProject({
+          projectId: row.id,
+          userId,
+          repoFullName,
+          githubAccessToken: provisioningToken,
+          request: dto.deploymentProvisioning,
+        });
+
+      await this.recordProductEvent({
+        userId,
+        projectId: row.id,
+        eventCode: 'project_created',
+        title: 'Project created',
+        body: `${repoFullName} is now tracked by FlowCI.`,
+        metadata: {
+          repoFullName,
+          repoShape,
+          projectTypeId: dto.projectTypeId,
+        },
+      });
+
+      return {
+        id: row.id,
+        repoFullName,
+        repoUrl,
+        status: 'provisioned',
+        workflowPath,
+        workflowFiles: this.workflowFileMetadata(workflowFiles),
+        githubCommitSha: commitSha,
+        githubCommitUrl: commitUrl,
+        projectTypeId: dto.projectTypeId,
+        workflowRecipeId: dto.workflowRecipeId ?? '',
+        deploymentProvisioning,
+      };
+    } catch (error) {
+      if (!provisioningComplete) {
+        await this.compensateFailedProvision(
+          provisioningToken,
+          ownerLogin,
+          repoName,
+          row?.id,
+          userId,
+        );
+      }
+      throw error;
+    }
   }
 
   // ─── POST /projects (microservices shape) ─────────────────────────────────
@@ -620,200 +650,226 @@ export class ProjectsService {
       });
 
     const repoFullName = `${ownerLogin}/${repoName}`;
-
-    // 4. Push starter files to main so all subsequent branches inherit them
-    await this.pushStarterFiles(accessToken, ownerLogin, repoName, {
-      projectName: dto.repoName,
-      stack: backend.projectTypeId,
-      repoShape: 'microservices',
-      ...(dto.tests?.['docker'] !== undefined && {
-        includeDocker: dto.tests['docker'],
-      }),
-      backendServiceName: backend.serviceName,
-      frontendStack: frontend.projectTypeId,
-      frontendServiceName: frontend.serviceName,
-    });
-
-    // 5. Push backend workflow file to main
     const backendWorkflowPath =
       backendWorkflowFiles[0]?.path ??
       `.github/workflows/${backendOutputFileName}`;
-    const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
-      await this.pushWorkflowFiles(
-        accessToken,
-        ownerLogin,
-        repoName,
-        backendWorkflowFiles,
-      );
-
-    // 6. Push frontend workflow file to main (wrapped: failure should not block backend)
     const frontendWorkflowPath =
       frontendWorkflowFiles[0]?.path ??
       `.github/workflows/${frontendOutputFileName}`;
     const additionalWorkflowPaths: string[] = [];
-    let frontendPushResult:
-      | { commitSha: string; commitUrl: string | null }
-      | undefined;
 
+    let backendRow: ProvisionedProjectRow | undefined;
+    let provisioningComplete = false;
     try {
-      frontendPushResult = await this.pushWorkflowFiles(
-        accessToken,
-        ownerLogin,
-        repoName,
-        frontendWorkflowFiles,
-      );
-      additionalWorkflowPaths.push(
-        ...frontendWorkflowFiles.map((file) => file.path),
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Microservices project: frontend workflow push failed: ${String(err)}`,
-      );
-    }
+      // 4. Push starter files to main so all subsequent branches inherit them
+      await this.pushStarterFiles(accessToken, ownerLogin, repoName, {
+        projectName: dto.repoName,
+        stack: backend.projectTypeId,
+        repoShape: 'microservices',
+        ...(dto.tests?.['docker'] !== undefined && {
+          includeDocker: dto.tests['docker'],
+        }),
+        backendServiceName: backend.serviceName,
+        frontendStack: frontend.projectTypeId,
+        frontendServiceName: frontend.serviceName,
+      });
 
-    // 7. Create uat and test branches from main (now contains starter files + both workflows)
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(
-        accessToken,
-        ownerLogin,
-        repoName,
-        branch,
-        'main',
-      );
-    }
-
-    // 8. Apply branch protection to all three branches once
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(
-        accessToken,
-        ownerLogin,
-        repoName,
-        branch,
-      );
-    }
-
-    // 9. Save backend DB row
-    const backendRow = await this.projectsRepository.create({
-      userId,
-      workspaceId: await this.resolveDefaultWorkspaceId(userId),
-      repoFullName,
-      templateId: backendTemplateId,
-      serviceName: backend.serviceName,
-      workflowPath: backendWorkflowPath,
-      status: 'provisioned',
-      githubCommitSha: backendCommitSha,
-      githubCommitUrl: backendCommitUrl,
-      repoUrl,
-      visibility: dto.visibility,
-      repoShape: normalizeRepoShape(dto.repoShape),
-      projectTypeId: backend.projectTypeId,
-      workflowRecipeId: backend.workflowRecipeId ?? null,
-      projectOptions: {
-        ...(dto.tests ? { tests: dto.tests } : {}),
-        workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
-      },
-    });
-
-    const ciToken = await this.ciService.issueProjectToken(backendRow.id);
-    await this.githubService.setActionsSecret(
-      accessToken,
-      ownerLogin,
-      repoName,
-      'CI_TOKEN',
-      ciToken.token,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      ownerLogin,
-      repoName,
-      'CI_REPORT_URL',
-      CI_REPORT_URL,
-    );
-
-    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
-      await this.projectDeploymentProvisioningService.provisionForProject({
-        projectId: backendRow.id,
+      // 5. Persist the backend row, issue the CI token, and install the shared
+      // repo Actions secrets BEFORE pushing any workflow YAML — both pipeline
+      // chains authenticate with the same repo-level CI_TOKEN, and the
+      // access-gate runs as soon as a workflow file is pushed.
+      backendRow = await this.projectsRepository.create({
         userId,
+        workspaceId: await this.resolveDefaultWorkspaceId(userId),
         repoFullName,
-        githubAccessToken: accessToken,
-        request: this.filterDeploymentProvisioningRequest(
-          dto.deploymentProvisioning,
-          ['backend'],
-        ),
-      }),
-    ];
+        templateId: backendTemplateId,
+        serviceName: backend.serviceName,
+        workflowPath: backendWorkflowPath,
+        status: 'provisioned',
+        repoUrl,
+        visibility: dto.visibility,
+        repoShape: normalizeRepoShape(dto.repoShape),
+        projectTypeId: backend.projectTypeId,
+        workflowRecipeId: backend.workflowRecipeId ?? null,
+        projectOptions: {
+          ...(dto.tests ? { tests: dto.tests } : {}),
+          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+        },
+      });
 
-    // 10. Save frontend DB row if the push succeeded
-    if (frontendPushResult !== undefined) {
+      const ciToken = await this.ciService.issueProjectToken(backendRow.id);
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        ownerLogin,
+        repoName,
+        'CI_TOKEN',
+        ciToken.token,
+      );
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        ownerLogin,
+        repoName,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
+      );
+
+      // 6. Push backend workflow file to main, then record the commit.
+      const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
+        await this.pushWorkflowFiles(
+          accessToken,
+          ownerLogin,
+          repoName,
+          backendWorkflowFiles,
+        );
+      await this.projectsRepository.updateStatus(
+        backendRow.id,
+        'provisioned',
+        backendCommitSha,
+        backendCommitUrl,
+      );
+
+      // 7. Push frontend workflow file to main (wrapped: failure should not block backend)
+      let frontendPushResult:
+        | { commitSha: string; commitUrl: string | null }
+        | undefined;
       try {
-        const frontendRow = await this.projectsRepository.create({
-          userId,
-          workspaceId: await this.resolveDefaultWorkspaceId(userId),
-          repoFullName,
-          templateId: frontendTemplateId,
-          serviceName: frontend.serviceName,
-          workflowPath: frontendWorkflowPath,
-          status: 'provisioned',
-          githubCommitSha: frontendPushResult.commitSha,
-          githubCommitUrl: frontendPushResult.commitUrl,
-          repoUrl,
-          visibility: dto.visibility,
-          repoShape: normalizeRepoShape(dto.repoShape),
-          projectTypeId: frontend.projectTypeId,
-          workflowRecipeId: frontend.workflowRecipeId ?? null,
-          projectOptions: {
-            workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
-          },
-        });
-
-        deploymentProvisioningResults.push(
-          await this.projectDeploymentProvisioningService.provisionForProject({
-            projectId: frontendRow.id,
-            userId,
-            repoFullName,
-            githubAccessToken: accessToken,
-            request: this.filterDeploymentProvisioningRequest(
-              dto.deploymentProvisioning,
-              ['frontend'],
-            ),
-          }),
+        frontendPushResult = await this.pushWorkflowFiles(
+          accessToken,
+          ownerLogin,
+          repoName,
+          frontendWorkflowFiles,
+        );
+        additionalWorkflowPaths.push(
+          ...frontendWorkflowFiles.map((file) => file.path),
         );
       } catch (err) {
         this.logger.warn(
-          `Microservices project: frontend DB row save failed: ${String(err)}`,
+          `Microservices project: frontend workflow push failed: ${String(err)}`,
         );
       }
-    }
 
-    await this.recordProductEvent({
-      userId,
-      projectId: backendRow.id,
-      eventCode: 'project_created',
-      title: 'Project created',
-      body: `${repoFullName} is now tracked by FlowCI.`,
-      metadata: {
+      // 8. Create uat and test branches from main (starter files + workflows + secrets present)
+      for (const branch of ['uat', 'test'] as const) {
+        await this.githubService.createBranch(
+          accessToken,
+          ownerLogin,
+          repoName,
+          branch,
+          'main',
+        );
+      }
+
+      // 9. Apply branch protection to all three branches once
+      for (const branch of ['test', 'uat', 'main'] as const) {
+        await this.githubService.applyBranchProtection(
+          accessToken,
+          ownerLogin,
+          repoName,
+          branch,
+        );
+      }
+
+      // Repo is now fully usable; failures past this point must not delete it.
+      provisioningComplete = true;
+
+      const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
+        await this.projectDeploymentProvisioningService.provisionForProject({
+          projectId: backendRow.id,
+          userId,
+          repoFullName,
+          githubAccessToken: accessToken,
+          request: this.filterDeploymentProvisioningRequest(
+            dto.deploymentProvisioning,
+            ['backend'],
+          ),
+        }),
+      ];
+
+      // 10. Save frontend DB row if the push succeeded
+      if (frontendPushResult !== undefined) {
+        try {
+          const frontendRow = await this.projectsRepository.create({
+            userId,
+            workspaceId: await this.resolveDefaultWorkspaceId(userId),
+            repoFullName,
+            templateId: frontendTemplateId,
+            serviceName: frontend.serviceName,
+            workflowPath: frontendWorkflowPath,
+            status: 'provisioned',
+            githubCommitSha: frontendPushResult.commitSha,
+            githubCommitUrl: frontendPushResult.commitUrl,
+            repoUrl,
+            visibility: dto.visibility,
+            repoShape: normalizeRepoShape(dto.repoShape),
+            projectTypeId: frontend.projectTypeId,
+            workflowRecipeId: frontend.workflowRecipeId ?? null,
+            projectOptions: {
+              workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+            },
+          });
+
+          deploymentProvisioningResults.push(
+            await this.projectDeploymentProvisioningService.provisionForProject(
+              {
+                projectId: frontendRow.id,
+                userId,
+                repoFullName,
+                githubAccessToken: accessToken,
+                request: this.filterDeploymentProvisioningRequest(
+                  dto.deploymentProvisioning,
+                  ['frontend'],
+                ),
+              },
+            ),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Microservices project: frontend DB row save failed: ${String(err)}`,
+          );
+        }
+      }
+
+      await this.recordProductEvent({
+        userId,
+        projectId: backendRow.id,
+        eventCode: 'project_created',
+        title: 'Project created',
+        body: `${repoFullName} is now tracked by FlowCI.`,
+        metadata: {
+          repoFullName,
+          repoShape: 'microservices',
+          projectTypeId: backend.projectTypeId,
+        },
+      });
+
+      return {
+        id: backendRow.id,
         repoFullName,
-        repoShape: 'microservices',
+        repoUrl,
+        status: 'provisioned',
+        workflowPath: backendWorkflowPath,
+        workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+        githubCommitSha: backendCommitSha,
+        githubCommitUrl: backendCommitUrl,
         projectTypeId: backend.projectTypeId,
-      },
-    });
-
-    return {
-      id: backendRow.id,
-      repoFullName,
-      repoUrl,
-      status: 'provisioned',
-      workflowPath: backendWorkflowPath,
-      workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
-      githubCommitSha: backendCommitSha,
-      githubCommitUrl: backendCommitUrl,
-      projectTypeId: backend.projectTypeId,
-      workflowRecipeId: backend.workflowRecipeId ?? '',
-      additionalWorkflowPaths,
-      deploymentProvisioning: this.combineDeploymentProvisioningResults(
-        deploymentProvisioningResults,
-      ),
-    };
+        workflowRecipeId: backend.workflowRecipeId ?? '',
+        additionalWorkflowPaths,
+        deploymentProvisioning: this.combineDeploymentProvisioningResults(
+          deploymentProvisioningResults,
+        ),
+      };
+    } catch (error) {
+      if (!provisioningComplete) {
+        await this.compensateFailedProvision(
+          accessToken,
+          ownerLogin,
+          repoName,
+          backendRow?.id,
+          userId,
+        );
+      }
+      throw error;
+    }
   }
 
   // ─── POST /projects/setup ──────────────────────────────────────────────────
@@ -850,17 +906,13 @@ export class ProjectsService {
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
 
-    // 3. Push workflow file to the existing repo's default branch (main)
+    // 3. Persist the project, issue the CI token, and install the Actions
+    // secrets BEFORE pushing the workflow file so the access-gate's first run
+    // on the existing repo can authenticate. Secrets are installed strictly so
+    // a token without `secrets:write` aborts setup with a clear error.
     const workflowPath =
       workflowFiles[0]?.path ?? `.github/workflows/${outputFileName}`;
-    const { commitSha, commitUrl } = await this.pushWorkflowFiles(
-      accessToken,
-      owner,
-      repo,
-      workflowFiles,
-    );
 
-    // 4. Persist
     const row = await this.projectsRepository.create({
       userId,
       workspaceId: await this.resolveDefaultWorkspaceId(userId),
@@ -869,28 +921,56 @@ export class ProjectsService {
       serviceName: dto.serviceName,
       workflowPath,
       status: 'provisioned',
-      githubCommitSha: commitSha,
-      githubCommitUrl: commitUrl,
       projectOptions: {
         workflowFiles: this.workflowFileMetadata(workflowFiles),
       },
     });
 
-    const ciToken = await this.ciService.issueProjectToken(row.id);
-    await this.githubService.setActionsSecret(
-      accessToken,
-      owner,
-      repo,
-      'CI_TOKEN',
-      ciToken.token,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      owner,
-      repo,
-      'CI_REPORT_URL',
-      CI_REPORT_URL,
-    );
+    let commitSha = '';
+    let commitUrl: string | null = null;
+    try {
+      const ciToken = await this.ciService.issueProjectToken(row.id);
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        owner,
+        repo,
+        'CI_TOKEN',
+        ciToken.token,
+      );
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        owner,
+        repo,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
+      );
+
+      // 4. Push workflow file to the existing repo's default branch (main) now
+      // that the secrets exist, then record the commit.
+      ({ commitSha, commitUrl } = await this.pushWorkflowFiles(
+        accessToken,
+        owner,
+        repo,
+        workflowFiles,
+      ));
+      await this.projectsRepository.updateStatus(
+        row.id,
+        'provisioned',
+        commitSha,
+        commitUrl,
+      );
+    } catch (error) {
+      // The repo is the user's own existing repo — never delete it; just remove
+      // the half-created tracking row so a retry starts clean.
+      try {
+        await this.projectsRepository.deleteByIdAndUser(row.id, userId);
+      } catch (cleanupError) {
+        this.logger.warn(
+          `setupProject: failed to delete project row ${row.id}: ${String(cleanupError)}`,
+        );
+      }
+      throw error;
+    }
 
     const deploymentProvisioning =
       await this.projectDeploymentProvisioningService.provisionForProject({
@@ -2058,84 +2138,116 @@ export class ProjectsService {
     });
 
     const beRepoFullName = `${ownerLogin}/${actualBeRepoName}`;
-
-    await this.pushStarterFiles(accessToken, ownerLogin, actualBeRepoName, {
-      projectName: backend.serviceName || actualBeRepoName,
-      stack: backend.projectTypeId,
-      repoShape: 'standalone',
-      ...(dto.tests?.['docker'] !== undefined && {
-        includeDocker: dto.tests['docker'],
-      }),
-    });
-
     const backendWorkflowPath =
       backendWorkflowFiles[0]?.path ??
       `.github/workflows/${backendOutputFileName}`;
-    const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
-      await this.pushWorkflowFiles(
+
+    let backendRow: ProvisionedProjectRow | undefined;
+    let backendCommitSha = '';
+    let backendCommitUrl: string | null = null;
+    let backendProvisioningComplete = false;
+    try {
+      await this.pushStarterFiles(accessToken, ownerLogin, actualBeRepoName, {
+        projectName: backend.serviceName || actualBeRepoName,
+        stack: backend.projectTypeId,
+        repoShape: 'standalone',
+        ...(dto.tests?.['docker'] !== undefined && {
+          includeDocker: dto.tests['docker'],
+        }),
+      });
+
+      // Persist + token + secrets before the workflow push so the first
+      // access-gate run can authenticate (see createProject for rationale).
+      backendRow = await this.projectsRepository.create({
+        userId,
+        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        repoFullName: beRepoFullName,
+        templateId: backendTemplateId,
+        serviceName: backend.serviceName,
+        workflowPath: backendWorkflowPath,
+        status: 'provisioned',
+        repoUrl: beRepoUrl,
+        visibility: dto.visibility,
+        repoShape: normalizeRepoShape(dto.repoShape),
+        projectTypeId: backend.projectTypeId,
+        workflowRecipeId: backend.workflowRecipeId ?? null,
+        projectOptions: {
+          ...(dto.tests ? { tests: dto.tests } : {}),
+          workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
+        },
+      });
+
+      const backendCiToken = await this.ciService.issueProjectToken(
+        backendRow.id,
+      );
+      await this.githubService.setActionsSecretStrict(
         accessToken,
         ownerLogin,
         actualBeRepoName,
-        backendWorkflowFiles,
+        'CI_TOKEN',
+        backendCiToken.token,
+      );
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        ownerLogin,
+        actualBeRepoName,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
       );
 
-    for (const branch of ['uat', 'test'] as const) {
-      await this.githubService.createBranch(
-        accessToken,
-        ownerLogin,
-        actualBeRepoName,
-        branch,
-        'main',
+      ({ commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
+        await this.pushWorkflowFiles(
+          accessToken,
+          ownerLogin,
+          actualBeRepoName,
+          backendWorkflowFiles,
+        ));
+      await this.projectsRepository.updateStatus(
+        backendRow.id,
+        'provisioned',
+        backendCommitSha,
+        backendCommitUrl,
       );
+
+      for (const branch of ['uat', 'test'] as const) {
+        await this.githubService.createBranch(
+          accessToken,
+          ownerLogin,
+          actualBeRepoName,
+          branch,
+          'main',
+        );
+      }
+
+      for (const branch of ['test', 'uat', 'main'] as const) {
+        await this.githubService.applyBranchProtection(
+          accessToken,
+          ownerLogin,
+          actualBeRepoName,
+          branch,
+        );
+      }
+
+      backendProvisioningComplete = true;
+    } catch (error) {
+      if (!backendProvisioningComplete) {
+        await this.compensateFailedProvision(
+          accessToken,
+          ownerLogin,
+          actualBeRepoName,
+          backendRow?.id,
+          userId,
+        );
+      }
+      throw error;
     }
 
-    for (const branch of ['test', 'uat', 'main'] as const) {
-      await this.githubService.applyBranchProtection(
-        accessToken,
-        ownerLogin,
-        actualBeRepoName,
-        branch,
+    if (!backendRow) {
+      // Unreachable: a backend failure is rethrown from the catch above.
+      throw new UnprocessableEntityException(
+        'Backend repository provisioning did not complete',
       );
     }
-
-    const backendRow = await this.projectsRepository.create({
-      userId,
-      workspaceId: await this.resolveDefaultWorkspaceId(userId),
-      repoFullName: beRepoFullName,
-      templateId: backendTemplateId,
-      serviceName: backend.serviceName,
-      workflowPath: backendWorkflowPath,
-      status: 'provisioned',
-      githubCommitSha: backendCommitSha,
-      githubCommitUrl: backendCommitUrl,
-      repoUrl: beRepoUrl,
-      visibility: dto.visibility,
-      repoShape: normalizeRepoShape(dto.repoShape),
-      projectTypeId: backend.projectTypeId,
-      workflowRecipeId: backend.workflowRecipeId ?? null,
-      projectOptions: {
-        ...(dto.tests ? { tests: dto.tests } : {}),
-        workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
-      },
-    });
-
-    const backendCiToken = await this.ciService.issueProjectToken(
-      backendRow.id,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      ownerLogin,
-      actualBeRepoName,
-      'CI_TOKEN',
-      backendCiToken.token,
-    );
-    await this.githubService.setActionsSecret(
-      accessToken,
-      ownerLogin,
-      actualBeRepoName,
-      'CI_REPORT_URL',
-      CI_REPORT_URL,
-    );
 
     // ── Frontend repository (non-fatal on failure) ──────────────────────────
 
@@ -2154,6 +2266,9 @@ export class ProjectsService {
 
     let feRepoFullName: string | undefined;
     let feRepoUrl: string | undefined;
+    let feRepoCreated: { owner: string; repo: string } | undefined;
+    let feRow: ProvisionedProjectRow | undefined;
+    let feProvisioningComplete = false;
 
     try {
       const frontendTemplateId = this.resolveTemplateId(
@@ -2189,6 +2304,7 @@ export class ProjectsService {
         private: dto.visibility === 'private',
       });
 
+      feRepoCreated = { owner: feOwnerLogin, repo: actualFeRepoName };
       feRepoFullName = `${feOwnerLogin}/${actualFeRepoName}`;
       feRepoUrl = resolvedFeRepoUrl;
 
@@ -2204,6 +2320,41 @@ export class ProjectsService {
       const frontendWorkflowPath =
         frontendWorkflowFiles[0]?.path ??
         `.github/workflows/${frontendOutputFileName}`;
+
+      feRow = await this.projectsRepository.create({
+        userId,
+        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        repoFullName: feRepoFullName,
+        templateId: frontendTemplateId,
+        serviceName: frontend.serviceName,
+        workflowPath: frontendWorkflowPath,
+        status: 'provisioned',
+        repoUrl: feRepoUrl,
+        visibility: dto.visibility,
+        repoShape: normalizeRepoShape(dto.repoShape),
+        projectTypeId: frontend.projectTypeId,
+        workflowRecipeId: frontend.workflowRecipeId ?? null,
+        projectOptions: {
+          workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
+        },
+      });
+
+      const frontendCiToken = await this.ciService.issueProjectToken(feRow.id);
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        feOwnerLogin,
+        actualFeRepoName,
+        'CI_TOKEN',
+        frontendCiToken.token,
+      );
+      await this.githubService.setActionsSecretStrict(
+        accessToken,
+        feOwnerLogin,
+        actualFeRepoName,
+        'CI_REPORT_URL',
+        CI_REPORT_URL,
+      );
+
       const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
         await this.pushWorkflowFiles(
           accessToken,
@@ -2211,6 +2362,12 @@ export class ProjectsService {
           actualFeRepoName,
           frontendWorkflowFiles,
         );
+      await this.projectsRepository.updateStatus(
+        feRow.id,
+        'provisioned',
+        frontendCommitSha,
+        frontendCommitUrl,
+      );
 
       for (const branch of ['uat', 'test'] as const) {
         await this.githubService.createBranch(
@@ -2231,47 +2388,11 @@ export class ProjectsService {
         );
       }
 
-      const frontendRow = await this.projectsRepository.create({
-        userId,
-        workspaceId: await this.resolveDefaultWorkspaceId(userId),
-        repoFullName: feRepoFullName,
-        templateId: frontendTemplateId,
-        serviceName: frontend.serviceName,
-        workflowPath: frontendWorkflowPath,
-        status: 'provisioned',
-        githubCommitSha: frontendCommitSha,
-        githubCommitUrl: frontendCommitUrl,
-        repoUrl: feRepoUrl,
-        visibility: dto.visibility,
-        repoShape: normalizeRepoShape(dto.repoShape),
-        projectTypeId: frontend.projectTypeId,
-        workflowRecipeId: frontend.workflowRecipeId ?? null,
-        projectOptions: {
-          workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
-        },
-      });
-
-      const frontendCiToken = await this.ciService.issueProjectToken(
-        frontendRow.id,
-      );
-      await this.githubService.setActionsSecret(
-        accessToken,
-        feOwnerLogin,
-        actualFeRepoName,
-        'CI_TOKEN',
-        frontendCiToken.token,
-      );
-      await this.githubService.setActionsSecret(
-        accessToken,
-        feOwnerLogin,
-        actualFeRepoName,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
-      );
+      feProvisioningComplete = true;
 
       deploymentProvisioningResults.push(
         await this.projectDeploymentProvisioningService.provisionForProject({
-          projectId: frontendRow.id,
+          projectId: feRow.id,
           userId,
           repoFullName: feRepoFullName,
           githubAccessToken: accessToken,
@@ -2285,6 +2406,19 @@ export class ProjectsService {
       this.logger.warn(
         `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
       );
+      // Roll back a half-created frontend repo so a retry can reuse its name;
+      // the backend repo is fully provisioned and is still returned.
+      if (!feProvisioningComplete && feRepoCreated) {
+        await this.compensateFailedProvision(
+          accessToken,
+          feRepoCreated.owner,
+          feRepoCreated.repo,
+          feRow?.id,
+          userId,
+        );
+        feRepoFullName = undefined;
+        feRepoUrl = undefined;
+      }
     }
 
     return {
@@ -2431,6 +2565,31 @@ export class ProjectsService {
   ): Promise<string | null> {
     const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
     return workspaces?.items[0]?.id ?? null;
+  }
+
+  /**
+   * Best-effort cleanup after a provisioning failure: removes the half-created
+   * DB row and the orphaned GitHub repo so a retry with the same name can
+   * succeed. Never throws — compensation failures are logged so they cannot
+   * mask the original provisioning error.
+   */
+  private async compensateFailedProvision(
+    accessToken: string,
+    owner: string,
+    repo: string,
+    projectId: string | undefined,
+    userId: string,
+  ): Promise<void> {
+    if (projectId) {
+      try {
+        await this.projectsRepository.deleteByIdAndUser(projectId, userId);
+      } catch (error) {
+        this.logger.warn(
+          `Compensation: failed to delete project row ${projectId}: ${String(error)}`,
+        );
+      }
+    }
+    await this.githubService.deleteRepo(accessToken, owner, repo);
   }
 
   private async assertWithinQuota(
