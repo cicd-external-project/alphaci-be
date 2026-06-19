@@ -203,20 +203,20 @@ describe('GithubController', () => {
         repoUrl: 'https://github.com/tone/orders-api',
         cloneUrl: 'https://github.com/tone/orders-api.git',
         defaultBranch: 'main',
-        branchesCreated: ['main', 'uat', 'test'],
+        branchesCreated: ['main', 'develop', 'uat', 'test'],
       });
 
       expect(service.createRepo).toHaveBeenCalledWith('gh-token', {
         repoName: 'orders-api',
         private: true,
       });
-      expect(service.createBranch).toHaveBeenCalledTimes(2);
+      expect(service.createBranch).toHaveBeenCalledTimes(3);
       expect(service.createBranch).toHaveBeenNthCalledWith(
         1,
         'gh-token',
         'tone',
         'orders-api',
-        'uat',
+        'develop',
         'main',
       );
       expect(service.createBranch).toHaveBeenNthCalledWith(
@@ -224,10 +224,18 @@ describe('GithubController', () => {
         'gh-token',
         'tone',
         'orders-api',
+        'uat',
+        'main',
+      );
+      expect(service.createBranch).toHaveBeenNthCalledWith(
+        3,
+        'gh-token',
+        'tone',
+        'orders-api',
         'test',
         'main',
       );
-      expect(service.applyBranchProtection).toHaveBeenCalledTimes(3);
+      expect(service.applyBranchProtection).toHaveBeenCalledTimes(4);
     });
   });
 });
