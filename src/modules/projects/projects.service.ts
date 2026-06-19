@@ -498,8 +498,10 @@ export class ProjectsService {
         commitUrl,
       );
 
-      // 6. Create uat and test branches from main (scaffold + workflow + secrets present)
-      for (const branch of ['uat', 'test'] as const) {
+      // 6. Create develop, uat and test branches from main (scaffold +
+      // workflow + secrets present). `develop` is a protected staging branch;
+      // no CI runs on it (pipeline triggers stay test/uat/main only).
+      for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
           provisioningToken,
           ownerLogin,
@@ -509,8 +511,8 @@ export class ProjectsService {
         );
       }
 
-      // 7. Apply branch protection to all three branches
-      for (const branch of ['test', 'uat', 'main'] as const) {
+      // 7. Apply branch protection to all four long-lived branches
+      for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
           provisioningToken,
           ownerLogin,
@@ -748,8 +750,10 @@ export class ProjectsService {
         );
       }
 
-      // 8. Create uat and test branches from main (starter files + workflows + secrets present)
-      for (const branch of ['uat', 'test'] as const) {
+      // 8. Create develop, uat and test branches from main (starter files +
+      // workflows + secrets present). `develop` is a protected staging branch;
+      // no CI runs on it (pipeline triggers stay test/uat/main only).
+      for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
           accessToken,
           ownerLogin,
@@ -759,8 +763,8 @@ export class ProjectsService {
         );
       }
 
-      // 9. Apply branch protection to all three branches once
-      for (const branch of ['test', 'uat', 'main'] as const) {
+      // 9. Apply branch protection to all four long-lived branches once
+      for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
           accessToken,
           ownerLogin,
@@ -2050,15 +2054,16 @@ export class ProjectsService {
       '',
       '## Branch strategy',
       '',
-      '| Branch | Purpose |',
-      '|--------|---------|',
-      '| main   | Stable baseline — protected |',
-      '| uat    | Pre-production gate — protected |',
-      '| test   | Integration target — protected |',
+      '| Branch  | Purpose |',
+      '|---------|---------|',
+      '| main    | Stable baseline — protected |',
+      '| uat     | Pre-production gate — protected |',
+      '| test    | Integration target — protected |',
+      '| develop | Staging/integration branch — protected, no CI pipeline |',
       '',
       '## CI/CD',
       '',
-      'Workflow files live in `.github/workflows/`. Push to `test` to trigger your first run.',
+      'Workflow files live in `.github/workflows/`. The CI pipeline runs on `test`, `uat`, and `main` only; `develop` is a protected staging branch with no pipeline. Push to `test` to trigger your first run.',
       '',
       '## Getting started',
       '',
@@ -2209,7 +2214,9 @@ export class ProjectsService {
         backendCommitUrl,
       );
 
-      for (const branch of ['uat', 'test'] as const) {
+      // `develop` is created and protected like the rest, but no CI runs on
+      // it (pipeline triggers stay test/uat/main only).
+      for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
           accessToken,
           ownerLogin,
@@ -2219,7 +2226,7 @@ export class ProjectsService {
         );
       }
 
-      for (const branch of ['test', 'uat', 'main'] as const) {
+      for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
           accessToken,
           ownerLogin,
@@ -2369,7 +2376,9 @@ export class ProjectsService {
         frontendCommitUrl,
       );
 
-      for (const branch of ['uat', 'test'] as const) {
+      // `develop` is created and protected like the rest, but no CI runs on
+      // it (pipeline triggers stay test/uat/main only).
+      for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
           accessToken,
           feOwnerLogin,
@@ -2379,7 +2388,7 @@ export class ProjectsService {
         );
       }
 
-      for (const branch of ['test', 'uat', 'main'] as const) {
+      for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
           accessToken,
           feOwnerLogin,
