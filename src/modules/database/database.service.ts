@@ -44,12 +44,29 @@ export class DatabaseService implements OnModuleDestroy {
       return;
     }
 
+    this.logConnectionFingerprint(this.config.supabase.dbUrl);
+
+    const sslConfig = postgresSslConfig(
+      this.config.supabase.dbUrl,
+      this.config.supabase.dbCaCert,
+    );
+
+    // Make the TLS posture visible at boot. The "verify against system CA
+    // bundle" mode is the fragile one: it only works if Supabase's cert chain
+    // is in Node's default bundle. If a future connection starts failing with a
+    // TLS error (e.g. UNABLE_TO_VERIFY_LEAF_SIGNATURE), this log line tells you
+    // the pool was verifying without a pinned CA — set SUPABASE_DB_CA_CERT.
+    const sslMode =
+      sslConfig === false
+        ? 'disabled (local database)'
+        : typeof sslConfig === 'object'
+          ? 'verify with pinned CA (SUPABASE_DB_CA_CERT)'
+          : 'verify against system CA bundle (no SUPABASE_DB_CA_CERT set)';
+    this.logger.log(`Postgres pool initialising; TLS mode: ${sslMode}`);
+
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
-      ssl: postgresSslConfig(
-        this.config.supabase.dbUrl,
-        this.config.supabase.dbCaCert,
-      ),
+      ssl: sslConfig,
       max: 10,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,
@@ -78,6 +95,35 @@ export class DatabaseService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Logs the STRUCTURE of the connection string at boot — host, port, user,
+   * database, and password *length* — but never the password itself. A direct
+   * Postgres connection validates the exact password bytes via SCRAM, so a
+   * "password authentication failed" in one environment but not another means
+   * the bytes differ even when the env values look identical. Comparing this
+   * line across environments makes the real difference (a different password
+   * length, an unexpected url-encoding, or an unparseable URL) obvious.
+   */
+  private logConnectionFingerprint(dbUrl: string): void {
+    try {
+      const u = new URL(dbUrl);
+      const rawPwLen = u.password.length;
+      const decodedPwLen = decodeURIComponent(u.password).length;
+      this.logger.log(
+        `Postgres target: host=${u.hostname} port=${u.port || '(default)'} ` +
+          `user=${u.username} db=${u.pathname.replace(/^\//, '') || '(default)'} ` +
+          `passwordLength=${decodedPwLen}` +
+          (rawPwLen !== decodedPwLen ? ` (url-encoded; raw=${rawPwLen})` : ''),
+      );
+    } catch {
+      this.logger.error(
+        'SUPABASE_DB_URL is not a parseable connection URL. Check for stray ' +
+          'whitespace, a missing scheme (postgres://), or unencoded special ' +
+          'characters in the password.',
+      );
+    }
+  }
+
   isEnabled(): boolean {
     return this.pool !== null;
   }
@@ -97,16 +143,62 @@ export class DatabaseService implements OnModuleDestroy {
       // single retry transparently acquires a fresh connection. We retry only
       // for connection-level failures — never for query/constraint errors,
       // which would be wrong to re-run.
-      if (!this.isRetryableConnectionError(error)) {
-        throw error;
+      if (this.isRetryableConnectionError(error)) {
+        this.logger.warn(
+          `Postgres query hit a stale connection; retrying once: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        try {
+          return await pool.query<T>(text, values);
+        } catch (retryError) {
+          throw this.classifyDbError(retryError);
+        }
       }
-      this.logger.warn(
-        `Postgres query hit a stale connection; retrying once: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return await pool.query<T>(text, values);
+      throw this.classifyDbError(error);
     }
+  }
+
+  /**
+   * Maps low-level pg failures to clearer, actionable errors. Infrastructure
+   * failures — the DB rejecting our credentials, or being unreachable — become
+   * a 503 (retryable, honest "infra is down") instead of an opaque 500 that
+   * reads like an application crash. Genuine SQL errors (syntax, constraint,
+   * etc.) are returned untouched so real bugs are never masked as 503s.
+   */
+  private classifyDbError(error: unknown): Error {
+    const code = this.errorCode(error);
+
+    // 28P01 invalid_password / 28000 invalid_authorization_specification.
+    // The DB rejected our credentials — this is a secret/connection problem,
+    // never an application bug. Surfacing it explicitly turns the otherwise
+    // confusing "500 on /auth/github/start" into a one-line root cause.
+    if (code === '28P01' || code === '28000') {
+      this.logger.error(
+        `Database rejected credentials (SQLSTATE ${code}). This is a credential/connection problem, not an application bug — verify SUPABASE_DB_URL's user/password against the live Supabase project (e.g. after a password rotation or a deploy with a stale env var).`,
+      );
+      return new ServiceUnavailableException(
+        'Database authentication failed. The service cannot reach its database.',
+      );
+    }
+
+    if (this.isRetryableConnectionError(error)) {
+      this.logger.error(
+        `Database unreachable (${code || 'transport error'}); returning 503.`,
+      );
+      return new ServiceUnavailableException(
+        'Database temporarily unavailable. Please retry.',
+      );
+    }
+
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  /** Extracts a pg SQLSTATE or Node socket error code, or '' if absent. */
+  private errorCode(error: unknown): string {
+    return typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
   }
 
   /**
@@ -115,10 +207,7 @@ export class DatabaseService implements OnModuleDestroy {
    * went away). Deliberately excludes SQL errors (syntax, constraint, etc.).
    */
   private isRetryableConnectionError(error: unknown): boolean {
-    const code =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code)
-        : '';
+    const code = this.errorCode(error);
     // Postgres connection-failure SQLSTATEs + Node socket error codes.
     const retryableCodes = new Set([
       '08000', // connection_exception
