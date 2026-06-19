@@ -184,7 +184,7 @@ describe('DatabaseService', () => {
     expect(mockPoolQuery).toHaveBeenCalledTimes(1);
   });
 
-  it('propagates the error if the retry also fails', async () => {
+  it('surfaces a 503 if the connection retry also fails', async () => {
     const staleError = Object.assign(
       new Error('server closed the connection'),
       {
@@ -199,9 +199,32 @@ describe('DatabaseService', () => {
       makeConfigService('postgres://user:pass@db.example.com:5432/db'),
     );
 
-    await expect(service.query('SELECT 1')).rejects.toThrow(
-      'server closed the connection',
+    // A transport failure that survives the single retry is infrastructure,
+    // not an application bug — it becomes a retryable 503, not an opaque 500.
+    await expect(service.query('SELECT 1')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
     );
     expect(mockPoolQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps a credential rejection (28P01) to a 503, not a 500', async () => {
+    // The exact failure seen on /auth/github/start: the DB rejecting our
+    // password. This is a credential/connection problem, so the service must
+    // not retry (a bad password never recovers) and must surface a 503.
+    const authError = Object.assign(
+      new Error('password authentication failed for user "postgres"'),
+      { code: '28P01' },
+    );
+    mockPoolQuery.mockRejectedValueOnce(authError);
+
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    await expect(service.query('INSERT ...')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    // No retry: a rejected credential will be rejected again.
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
   });
 });
