@@ -144,10 +144,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       callbackUrl:
         env['GITHUB_CALLBACK_URL'] ??
         'http://localhost:4000/api/v1/auth/github/callback',
-      // The product creates repositories (needs the full `repo` scope) and pushes
-      // workflow files under .github/workflows (needs `workflow`). A read-only
-      // default would let repo creation fail with a confusing GitHub 404.
-      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow',
+      scope: env['GITHUB_SCOPE'] ?? 'read:user user:email',
       appId: env['GITHUB_APP_ID'] ?? '',
       appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
       appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
