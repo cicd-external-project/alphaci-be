@@ -561,6 +561,9 @@ describe('GithubService', () => {
     it.each([
       [403, 'GitHub rejected repo creation (403).'],
       [401, 'GitHub rejected repo creation (401).'],
+      // GitHub returns a bare 404 for insufficient-scope repo creation, so it is
+      // surfaced as the same actionable "include the 'repo' scope" message.
+      [404, 'GitHub rejected repo creation (404).'],
       [422, 'Repository already exists or name is invalid:'],
       [500, 'GitHub repo creation failed (500):'],
     ])(
