@@ -443,14 +443,7 @@ export class GithubService {
 
     if (!response.ok) {
       const body = await response.text();
-      // GitHub answers insufficient-scope writes on POST /user/repos with a bare
-      // 404 ({"message":"Not Found"}) rather than 403 — the endpoint always exists,
-      // so a 404 here means the token lacks the `repo` scope, not a missing resource.
-      if (
-        response.status === 403 ||
-        response.status === 401 ||
-        response.status === 404
-      ) {
+      if (response.status === 403 || response.status === 401) {
         throw new ForbiddenException(
           `GitHub rejected repo creation (${String(response.status)}). ` +
             `Ensure your OAuth token includes the 'repo' scope, then sign out and sign back in.`,
