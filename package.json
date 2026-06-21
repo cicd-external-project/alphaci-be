@@ -23,19 +23,21 @@
     "dummy:show": "node ./scripts/show-dummy-account.cjs"
   },
   "dependencies": {
-    "@apicenter/sdk": "npm:@implementsprint/sdk@^1.0.3",
-    "@implementsprint/sdk": "^1.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.4.3",
+    "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.100.1",
     "axios": "^1.16.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "connect-pg-simple": "^10.0.0",
     "express-session": "^1.19.0",
     "helmet": "^8.1.0",
+    "js-yaml": "^4.1.0",
+    "libsodium-wrappers": "^0.8.4",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
@@ -46,6 +48,7 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
+    "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.19.0",
     "@types/helmet": "^0.0.48",
@@ -74,7 +77,8 @@
     "lodash": "4.18.1",
     "picomatch": "^4.0.4",
     "path-to-regexp": "^8.4.0",
-    "fast-uri": "^3.1.2"
+    "fast-uri": "^3.1.2",
+    "multer": "^2.2.0"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -88,8 +92,7 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
-      "^(\\.{1,2}/.*)\\.js$": "$1",
-      "^@implementsprint/sdk$": "<rootDir>/__mocks__/implementsprint-sdk.ts"
+      "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
@@ -97,7 +100,10 @@
     "coveragePathIgnorePatterns": [
       "/node_modules/",
       "src/main.ts",
-      "\\.module\\.ts$"
+      "src/scripts/",
+      "\\.module\\.ts$",
+      "\\.types\\.ts$",
+      "/dto/"
     ],
     "coverageDirectory": "../coverage",
     "coverageReporters": [

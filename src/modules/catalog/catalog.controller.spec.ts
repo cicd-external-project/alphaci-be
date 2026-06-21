@@ -34,9 +34,13 @@ describe('CatalogController', () => {
       controllers: [CatalogController],
       providers: [{ provide: CatalogService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
-      .overrideGuard(require('../../common/guards/subscription.guard.js').SubscriptionGuard)
+      .overrideGuard(
+        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 

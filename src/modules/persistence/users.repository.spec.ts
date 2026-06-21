@@ -9,6 +9,7 @@ const fakeRow = {
   display_name: 'Test User',
   email: 'test@example.com',
   avatar_url: 'https://example.com/avatar.png',
+  onboarding_completed_at: null as string | null,
 };
 
 const makeDatabaseService = (row = fakeRow) =>
@@ -23,10 +24,7 @@ describe('UsersRepository', () => {
   beforeEach(async () => {
     db = makeDatabaseService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        UsersRepository,
-        { provide: DatabaseService, useValue: db },
-      ],
+      providers: [UsersRepository, { provide: DatabaseService, useValue: db }],
     }).compile();
 
     repo = module.get(UsersRepository);
@@ -124,6 +122,121 @@ describe('UsersRepository', () => {
       expect(result).not.toBeNull();
       expect('email' in result!).toBe(false);
       expect('avatarUrl' in result!).toBe(false);
+    });
+  });
+
+  describe('archiveById', () => {
+    it('executes UPDATE with archived_at = NOW() and does not throw', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      await expect(repo.archiveById('user-uuid-1')).resolves.toBeUndefined();
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('archived_at = NOW()'),
+        ['user-uuid-1'],
+      );
+    });
+  });
+
+  describe('findByGithubUserIdIncludingArchived', () => {
+    it('returns null when no row found', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      const result = await repo.findByGithubUserIdIncludingArchived('gh-999');
+      expect(result).toBeNull();
+    });
+
+    it('returns an ArchivedUserLookup with archivedAt null for active rows', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'user-uuid-1',
+            login: 'testuser',
+            archived_at: null,
+            github_user_id: 'gh-123',
+          },
+        ],
+      });
+      const result = await repo.findByGithubUserIdIncludingArchived('gh-123');
+      expect(result).toMatchObject({
+        id: 'user-uuid-1',
+        login: 'testuser',
+        archivedAt: null,
+        githubUserId: 'gh-123',
+      });
+    });
+
+    it('returns an ArchivedUserLookup with archivedAt set for archived rows', async () => {
+      const archivedAt = '2026-05-01T00:00:00Z';
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'user-uuid-1',
+            login: 'testuser',
+            archived_at: archivedAt,
+            github_user_id: 'gh-123',
+          },
+        ],
+      });
+      const result = await repo.findByGithubUserIdIncludingArchived('gh-123');
+      expect(result?.archivedAt).toBe(archivedAt);
+    });
+  });
+
+  describe('restoreByGithubUserId', () => {
+    it('returns a SessionUser when restore succeeds', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ ...fakeRow }],
+      });
+      const result = await repo.restoreByGithubUserId('gh-123');
+      expect(result.id).toBe('user-uuid-1');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('archived_at   = NULL'),
+        ['gh-123'],
+      );
+    });
+
+    it('throws when no row is returned', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      await expect(repo.restoreByGithubUserId('gh-missing')).rejects.toThrow(
+        'Restore found no matching archived row',
+      );
+    });
+  });
+
+  describe('hardDeleteByGithubUserId', () => {
+    it('executes DELETE by github_user_id', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      await expect(
+        repo.hardDeleteByGithubUserId('gh-123'),
+      ).resolves.toBeUndefined();
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'DELETE FROM app_users WHERE github_user_id = $1',
+        ),
+        ['gh-123'],
+      );
+    });
+  });
+
+  describe('purgeExpiredArchived', () => {
+    it('returns the count from the DB function', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({
+        rows: [{ count: '7' }],
+      });
+      const count = await repo.purgeExpiredArchived(30);
+      expect(count).toBe(7);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('purge_expired_archived_accounts($1)'),
+        [30],
+      );
+    });
+
+    it('returns 0 when the DB function returns no rows', async () => {
+      (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+      const count = await repo.purgeExpiredArchived(30);
+      expect(count).toBe(0);
     });
   });
 });
