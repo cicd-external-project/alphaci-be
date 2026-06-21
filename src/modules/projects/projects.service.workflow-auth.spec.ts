@@ -50,6 +50,7 @@ const makeCatalogService = () =>
 const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue(null),
+    getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/owner/repo',
       ownerLogin: 'owner',

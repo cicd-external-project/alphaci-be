@@ -318,6 +318,20 @@ export class GithubService {
   }
 
   /**
+   * Returns the account login of the first GitHub App installation linked to
+   * the given user, or undefined when no installation is linked.
+   */
+  async getInstallationOwnerLogin(userId: string): Promise<string | undefined> {
+    if (!this.githubInstallationsRepository) return undefined;
+    const installations =
+      await this.githubInstallationsRepository.findByUserId(userId);
+    const installation =
+      installations.find((item) => item.repositorySelection === 'all') ??
+      installations[0];
+    return installation?.accountLogin ?? undefined;
+  }
+
+  /**
    * Returns true if the repository exists and the token has access to it.
    * Returns false on 404 (deleted or never existed) or 403/401 (no access).
    * Throws on unexpected non-2xx/4xx statuses (5xx, network errors).
@@ -415,6 +429,7 @@ export class GithubService {
   async createRepo(
     accessToken: string,
     dto: CreateRepoDto,
+    ownerLogin?: string,
   ): Promise<{
     repoUrl: string;
     cloneUrl: string;
@@ -454,6 +469,9 @@ export class GithubService {
           `Repository already exists or name is invalid: ${body}`,
         );
       }
+      if (response.status === 404 && ownerLogin) {
+        return this.createRepoForOrg(accessToken, dto, ownerLogin);
+      }
       if (response.status === 404) {
         throw new BadGatewayException(
           `GitHub repo creation failed (404): ${body}. ` +
@@ -462,6 +480,58 @@ export class GithubService {
             `Re-authenticate via GitHub OAuth to obtain a user token.`,
         );
       }
+      throw new BadGatewayException(
+        `GitHub repo creation failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const repo = (await response.json()) as {
+      html_url: string;
+      clone_url: string;
+      owner: { login: string };
+      name: string;
+    };
+
+    return {
+      repoUrl: repo.html_url,
+      cloneUrl: repo.clone_url,
+      ownerLogin: repo.owner.login,
+      repoName: repo.name,
+    };
+  }
+
+  private async createRepoForOrg(
+    accessToken: string,
+    dto: CreateRepoDto,
+    orgLogin: string,
+  ): Promise<{
+    repoUrl: string;
+    cloneUrl: string;
+    ownerLogin: string;
+    repoName: string;
+  }> {
+    const response = await this.fetchWithRetry(
+      `https://api.github.com/orgs/${orgLogin}/repos`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: dto.repoName,
+          description: dto.description ?? '',
+          private: dto.private,
+          auto_init: true,
+          default_branch: 'main',
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
       throw new BadGatewayException(
         `GitHub repo creation failed (${String(response.status)}): ${body}`,
       );
