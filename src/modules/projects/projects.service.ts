@@ -362,6 +362,8 @@ export class ProjectsService {
       userId,
       accessToken,
     );
+    const provisioningOwnerLogin =
+      await this.githubService.getInstallationOwnerLogin(userId);
 
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
@@ -372,6 +374,7 @@ export class ProjectsService {
         userId,
         userLogin,
         provisioningToken,
+        provisioningOwnerLogin,
         dto,
       );
     }
@@ -381,6 +384,7 @@ export class ProjectsService {
         userId,
         userLogin,
         provisioningToken,
+        provisioningOwnerLogin,
         dto,
       );
     }
@@ -416,10 +420,14 @@ export class ProjectsService {
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
     const { repoUrl, ownerLogin, repoName } =
-      await this.githubService.createRepo(provisioningToken, {
-        repoName: dto.repoName,
-        private: dto.visibility === 'private',
-      });
+      await this.githubService.createRepo(
+        provisioningToken,
+        {
+          repoName: dto.repoName,
+          private: dto.visibility === 'private',
+        },
+        provisioningOwnerLogin,
+      );
 
     const repoFullName = `${ownerLogin}/${repoName}`;
     const workflowPath =
@@ -579,6 +587,7 @@ export class ProjectsService {
     userId: string,
     _userLogin: string,
     accessToken: string,
+    provisioningOwnerLogin: string | undefined,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     if (!dto.microservicesConfig) {
@@ -646,10 +655,14 @@ export class ProjectsService {
 
     // 3. Create the GitHub repository once
     const { repoUrl, ownerLogin, repoName } =
-      await this.githubService.createRepo(accessToken, {
-        repoName: dto.repoName,
-        private: dto.visibility === 'private',
-      });
+      await this.githubService.createRepo(
+        accessToken,
+        {
+          repoName: dto.repoName,
+          private: dto.visibility === 'private',
+        },
+        provisioningOwnerLogin,
+      );
 
     const repoFullName = `${ownerLogin}/${repoName}`;
     const backendWorkflowPath =
@@ -2088,6 +2101,7 @@ export class ProjectsService {
     userId: string,
     _userLogin: string,
     accessToken: string,
+    provisioningOwnerLogin: string | undefined,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     if (!dto.multiRepoConfig) {
@@ -2137,10 +2151,14 @@ export class ProjectsService {
       repoUrl: beRepoUrl,
       ownerLogin,
       repoName: actualBeRepoName,
-    } = await this.githubService.createRepo(accessToken, {
-      repoName: beRepoName,
-      private: dto.visibility === 'private',
-    });
+    } = await this.githubService.createRepo(
+      accessToken,
+      {
+        repoName: beRepoName,
+        private: dto.visibility === 'private',
+      },
+      provisioningOwnerLogin,
+    );
 
     const beRepoFullName = `${ownerLogin}/${actualBeRepoName}`;
     const backendWorkflowPath =
@@ -2306,10 +2324,14 @@ export class ProjectsService {
         repoUrl: resolvedFeRepoUrl,
         ownerLogin: feOwnerLogin,
         repoName: actualFeRepoName,
-      } = await this.githubService.createRepo(accessToken, {
-        repoName: feRepoName,
-        private: dto.visibility === 'private',
-      });
+      } = await this.githubService.createRepo(
+        accessToken,
+        {
+          repoName: feRepoName,
+          private: dto.visibility === 'private',
+        },
+        provisioningOwnerLogin,
+      );
 
       feRepoCreated = { owner: feOwnerLogin, repo: actualFeRepoName };
       feRepoFullName = `${feOwnerLogin}/${actualFeRepoName}`;
