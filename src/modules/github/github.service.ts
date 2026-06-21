@@ -454,6 +454,14 @@ export class GithubService {
           `Repository already exists or name is invalid: ${body}`,
         );
       }
+      if (response.status === 404) {
+        throw new BadGatewayException(
+          `GitHub repo creation failed (404): ${body}. ` +
+            `This usually means the access token is an App installation token that cannot target /user/repos ` +
+            `(e.g. the App is installed on an organisation, not a personal account). ` +
+            `Re-authenticate via GitHub OAuth to obtain a user token.`,
+        );
+      }
       throw new BadGatewayException(
         `GitHub repo creation failed (${String(response.status)}): ${body}`,
       );
