@@ -39,6 +39,7 @@ const makeCatalogService = () =>
 const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
+    getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/tone/orders-api',
       cloneUrl: 'https://github.com/tone/orders-api.git',
@@ -327,6 +328,7 @@ jobs:
     expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
       'oauth-token',
       expect.objectContaining({ repoName: 'orders-api' }),
+      undefined,
     );
   });
 
@@ -538,6 +540,7 @@ jobs:
     expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
       'oauth-token',
       expect.any(Object),
+      undefined,
     );
   });
 
@@ -836,11 +839,13 @@ jobs:
       1,
       'oauth-token',
       expect.objectContaining({ repoName: 'orders-be' }),
+      undefined,
     );
     expect(githubServiceMock.createRepo).toHaveBeenNthCalledWith(
       2,
       'oauth-token',
       expect.objectContaining({ repoName: 'orders-fe' }),
+      undefined,
     );
     expect(result.secondaryRepoFullName).toBeDefined();
   });
