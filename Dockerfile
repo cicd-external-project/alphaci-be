@@ -66,6 +66,7 @@ COPY --chown=nestjs:nodejs --from=builder /app/dist ./dist
 
 # Bake templates into the image — copied from the cloned repo in stage 1
 COPY --chown=nestjs:nodejs --from=builder /tmp/cicd-workflow/workflow-templates ./templates/workflow-templates
+COPY --chown=nestjs:nodejs --from=builder /tmp/cicd-workflow/catalog ./templates/catalog
 
 USER nestjs
 
