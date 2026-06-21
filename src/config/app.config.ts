@@ -144,7 +144,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       callbackUrl:
         env['GITHUB_CALLBACK_URL'] ??
         'http://localhost:4000/api/v1/auth/github/callback',
-      scope: env['GITHUB_SCOPE'] ?? 'read:user user:email',
+      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow',
       appId: env['GITHUB_APP_ID'] ?? '',
       appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
       appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
