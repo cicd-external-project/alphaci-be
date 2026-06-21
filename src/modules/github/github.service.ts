@@ -458,6 +458,14 @@ export class GithubService {
 
     if (!response.ok) {
       const body = await response.text();
+      const oauthScopes = (response.headers?.get('x-oauth-scopes') ?? '')
+        .split(',')
+        .map((scope) => scope.trim())
+        .filter(Boolean);
+      const canCreateRepo =
+        oauthScopes.includes('repo') ||
+        (!dto.private && oauthScopes.includes('public_repo'));
+
       if (response.status === 403 || response.status === 401) {
         throw new ForbiddenException(
           `GitHub rejected repo creation (${String(response.status)}). ` +
@@ -467,6 +475,18 @@ export class GithubService {
       if (response.status === 422) {
         throw new UnprocessableEntityException(
           `Repository already exists or name is invalid: ${body}`,
+        );
+      }
+      if (
+        response.status === 404 &&
+        oauthScopes.length > 0 &&
+        !canCreateRepo
+      ) {
+        throw new ForbiddenException(
+          `GitHub rejected repo creation (404). The current OAuth token grants ` +
+            `[${oauthScopes.join(', ')}] but repository creation requires ` +
+            `${dto.private ? "the full 'repo' scope" : "'repo' or 'public_repo'"}. ` +
+            `Sign out of this environment and sign back in with GitHub to refresh the token.`,
         );
       }
       if (response.status === 404 && ownerLogin) {
