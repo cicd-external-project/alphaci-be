@@ -1531,6 +1531,9 @@ export class ProjectsService {
     userId: string,
     oauthAccessToken: string | null | undefined,
   ): Promise<string> {
+    // Repository creation for personal accounts requires a user OAuth token.
+    // GitHub App installation tokens cannot call POST /user/repos, so only use
+    // one as a fallback when the session has no OAuth token.
     if (oauthAccessToken) {
       return oauthAccessToken;
     }

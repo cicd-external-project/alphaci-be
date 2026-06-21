@@ -581,6 +581,30 @@ describe('GithubService', () => {
       },
     );
 
+    it('explains when a stale OAuth token lacks repository creation scope', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        headers: {
+          get: jest
+            .fn()
+            .mockReturnValue('read:org, read:user, repo:status, workflow'),
+        },
+        text: async () => '{"message":"Not Found"}',
+      } as unknown as Response);
+
+      await expect(
+        service.createRepo(
+          'under-scoped-oauth-token',
+          { repoName: 'orders-api', private: true },
+          'tone',
+        ),
+      ).rejects.toThrow(
+        "repository creation requires the full 'repo' scope. Sign out of this environment and sign back in",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('creates a branch from an existing source branch ref', async () => {
       fetchMock
         .mockResolvedValueOnce({
