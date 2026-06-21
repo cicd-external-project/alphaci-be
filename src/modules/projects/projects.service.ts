@@ -1518,15 +1518,15 @@ export class ProjectsService {
     userId: string,
     oauthAccessToken: string | null | undefined,
   ): Promise<string> {
+    if (oauthAccessToken) {
+      return oauthAccessToken;
+    }
+
     const installationToken =
       await this.githubService.getInstallationAccessTokenForUser(userId);
 
     if (installationToken) {
       return installationToken;
-    }
-
-    if (oauthAccessToken) {
-      return oauthAccessToken;
     }
 
     throw new UnauthorizedException(

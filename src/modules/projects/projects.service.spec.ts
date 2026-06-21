@@ -309,7 +309,7 @@ jobs:
     jest.restoreAllMocks();
   });
 
-  it('prefers a linked GitHub App installation token for project provisioning', async () => {
+  it('prefers the OAuth token over a linked GitHub App installation token for project provisioning', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-api',
       visibility: 'private',
@@ -323,9 +323,9 @@ jobs:
 
     expect(
       githubServiceMock.getInstallationAccessTokenForUser,
-    ).toHaveBeenCalledWith('user-1');
+    ).not.toHaveBeenCalled();
     expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
-      'app-token',
+      'oauth-token',
       expect.objectContaining({ repoName: 'orders-api' }),
     );
   });
@@ -722,7 +722,7 @@ jobs:
       projectId: 'project-1',
       userId: 'user-1',
       repoFullName: 'tone/orders-api',
-      githubAccessToken: 'app-token',
+      githubAccessToken: 'oauth-token',
       request: {
         enabled: true,
         targets: [
@@ -834,12 +834,12 @@ jobs:
     expect(githubServiceMock.createRepo).toHaveBeenCalledTimes(2);
     expect(githubServiceMock.createRepo).toHaveBeenNthCalledWith(
       1,
-      'app-token',
+      'oauth-token',
       expect.objectContaining({ repoName: 'orders-be' }),
     );
     expect(githubServiceMock.createRepo).toHaveBeenNthCalledWith(
       2,
-      'app-token',
+      'oauth-token',
       expect.objectContaining({ repoName: 'orders-fe' }),
     );
     expect(result.secondaryRepoFullName).toBeDefined();
