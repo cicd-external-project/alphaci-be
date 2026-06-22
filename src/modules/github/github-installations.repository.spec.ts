@@ -14,6 +14,7 @@ describe('GithubInstallationsRepository', () => {
         user_id: '11111111-1111-1111-1111-111111111111',
         account_login: 'cicd-external-project',
         account_id: 98765,
+        account_type: 'Organization',
         repository_selection: 'selected',
         repos_linked: 2,
         created_at: '2026-06-09T00:00:00.000Z',
@@ -26,6 +27,7 @@ describe('GithubInstallationsRepository', () => {
       12345,
       'cicd-external-project',
       98765,
+      'Organization',
       'selected',
       2,
     );
@@ -39,6 +41,7 @@ describe('GithubInstallationsRepository', () => {
         '11111111-1111-1111-1111-111111111111',
         'cicd-external-project',
         98765,
+        'Organization',
         'selected',
         2,
       ],
@@ -48,6 +51,7 @@ describe('GithubInstallationsRepository', () => {
       userId: '11111111-1111-1111-1111-111111111111',
       accountLogin: 'cicd-external-project',
       accountId: 98765,
+      accountType: 'Organization',
       repositorySelection: 'selected',
       reposLinked: 2,
     });

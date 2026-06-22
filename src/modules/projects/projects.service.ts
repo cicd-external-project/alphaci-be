@@ -358,12 +358,11 @@ export class ProjectsService {
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
     await this.assertWithinQuota(userId, 'projects', 1, null);
-    const provisioningToken = await this.resolveProvisioningToken(
-      userId,
-      accessToken,
-    );
-    const provisioningOwnerLogin =
-      await this.githubService.getInstallationOwnerLogin(userId);
+    const {
+      repositoryCreationToken,
+      provisioningToken,
+      provisioningOwnerLogin,
+    } = await this.resolveRepositoryProvisioning(userId, accessToken, dto);
 
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
@@ -373,6 +372,7 @@ export class ProjectsService {
       return this.createMicroservicesProject(
         userId,
         userLogin,
+        repositoryCreationToken,
         provisioningToken,
         provisioningOwnerLogin,
         dto,
@@ -383,6 +383,7 @@ export class ProjectsService {
       return this.createMultiRepoProject(
         userId,
         userLogin,
+        repositoryCreationToken,
         provisioningToken,
         provisioningOwnerLogin,
         dto,
@@ -421,7 +422,7 @@ export class ProjectsService {
     // 3. Create the GitHub repository (auto_init: true creates main branch)
     const { repoUrl, ownerLogin, repoName } =
       await this.githubService.createRepo(
-        provisioningToken,
+        repositoryCreationToken,
         {
           repoName: dto.repoName,
           private: dto.visibility === 'private',
@@ -470,6 +471,7 @@ export class ProjectsService {
         projectTypeId: dto.projectTypeId,
         workflowRecipeId: dto.workflowRecipeId ?? null,
         projectOptions: {
+          ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
           workflowFiles: this.workflowFileMetadata(workflowFiles),
         },
@@ -586,7 +588,8 @@ export class ProjectsService {
   private async createMicroservicesProject(
     userId: string,
     _userLogin: string,
-    accessToken: string,
+    repositoryCreationToken: string,
+    provisioningToken: string,
     provisioningOwnerLogin: string | undefined,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
@@ -656,7 +659,7 @@ export class ProjectsService {
     // 3. Create the GitHub repository once
     const { repoUrl, ownerLogin, repoName } =
       await this.githubService.createRepo(
-        accessToken,
+        repositoryCreationToken,
         {
           repoName: dto.repoName,
           private: dto.visibility === 'private',
@@ -677,7 +680,7 @@ export class ProjectsService {
     let provisioningComplete = false;
     try {
       // 4. Push starter files to main so all subsequent branches inherit them
-      await this.pushStarterFiles(accessToken, ownerLogin, repoName, {
+      await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
         projectName: dto.repoName,
         stack: backend.projectTypeId,
         repoShape: 'microservices',
@@ -707,6 +710,7 @@ export class ProjectsService {
         projectTypeId: backend.projectTypeId,
         workflowRecipeId: backend.workflowRecipeId ?? null,
         projectOptions: {
+          ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
           workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
         },
@@ -714,14 +718,14 @@ export class ProjectsService {
 
       const ciToken = await this.ciService.issueProjectToken(backendRow.id);
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         ownerLogin,
         repoName,
         'CI_TOKEN',
         ciToken.token,
       );
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         ownerLogin,
         repoName,
         'CI_REPORT_URL',
@@ -731,7 +735,7 @@ export class ProjectsService {
       // 6. Push backend workflow file to main, then record the commit.
       const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
         await this.pushWorkflowFiles(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           repoName,
           backendWorkflowFiles,
@@ -749,7 +753,7 @@ export class ProjectsService {
         | undefined;
       try {
         frontendPushResult = await this.pushWorkflowFiles(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           repoName,
           frontendWorkflowFiles,
@@ -768,7 +772,7 @@ export class ProjectsService {
       // no CI runs on it (pipeline triggers stay test/uat/main only).
       for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           repoName,
           branch,
@@ -779,7 +783,7 @@ export class ProjectsService {
       // 9. Apply branch protection to all four long-lived branches once
       for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           repoName,
           branch,
@@ -794,7 +798,7 @@ export class ProjectsService {
           projectId: backendRow.id,
           userId,
           repoFullName,
-          githubAccessToken: accessToken,
+          githubAccessToken: provisioningToken,
           request: this.filterDeploymentProvisioningRequest(
             dto.deploymentProvisioning,
             ['backend'],
@@ -821,6 +825,7 @@ export class ProjectsService {
             projectTypeId: frontend.projectTypeId,
             workflowRecipeId: frontend.workflowRecipeId ?? null,
             projectOptions: {
+              ...this.repositoryOwnershipMetadata(dto, ownerLogin),
               workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
             },
           });
@@ -831,7 +836,7 @@ export class ProjectsService {
                 projectId: frontendRow.id,
                 userId,
                 repoFullName,
-                githubAccessToken: accessToken,
+                githubAccessToken: provisioningToken,
                 request: this.filterDeploymentProvisioningRequest(
                   dto.deploymentProvisioning,
                   ['frontend'],
@@ -878,7 +883,7 @@ export class ProjectsService {
     } catch (error) {
       if (!provisioningComplete) {
         await this.compensateFailedProvision(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           repoName,
           backendRow?.id,
@@ -1550,6 +1555,76 @@ export class ProjectsService {
     );
   }
 
+  private async resolveRepositoryProvisioning(
+    userId: string,
+    oauthAccessToken: string | null | undefined,
+    dto: CreateProjectDto,
+  ): Promise<{
+    repositoryCreationToken: string;
+    provisioningToken: string;
+    provisioningOwnerLogin: string | undefined;
+  }> {
+    const ownerType = dto.ownerType ?? 'personal';
+
+    if (ownerType === 'organization') {
+      if (!dto.installationId) {
+        throw new UnprocessableEntityException(
+          'installationId is required when creating a repository in an organization.',
+        );
+      }
+      if (!oauthAccessToken) {
+        throw new UnauthorizedException(
+          'A GitHub OAuth token with the repo scope is required to create a repository in an organization. Sign out and sign back in with GitHub.',
+        );
+      }
+
+      const context =
+        await this.githubService.getOrganizationProvisioningContext(
+          userId,
+          dto.installationId,
+        );
+      // GitHub does not allow a server-to-server installation token to create
+      // an organization repository. Use the signed-in user's OAuth token for
+      // POST /orgs/{org}/repos, then use the selected installation token for
+      // repository contents, branches, secrets, and protection settings.
+      return {
+        repositoryCreationToken: oauthAccessToken,
+        provisioningToken: context.accessToken,
+        provisioningOwnerLogin: context.ownerLogin,
+      };
+    }
+
+    if (dto.installationId) {
+      throw new UnprocessableEntityException(
+        'installationId can only be used with an organization repository owner.',
+      );
+    }
+    if (!oauthAccessToken) {
+      throw new UnauthorizedException(
+        'A GitHub OAuth token is required to create a personal repository. Sign out and sign back in with GitHub.',
+      );
+    }
+
+    return {
+      repositoryCreationToken: oauthAccessToken,
+      provisioningToken: oauthAccessToken,
+      provisioningOwnerLogin: undefined,
+    };
+  }
+
+  private repositoryOwnershipMetadata(
+    dto: CreateProjectDto,
+    ownerLogin: string,
+  ): Record<string, unknown> {
+    return {
+      repositoryOwner: {
+        type: dto.ownerType ?? 'personal',
+        login: ownerLogin,
+        installationId: dto.installationId ?? null,
+      },
+    };
+  }
+
   private resolveTemplateId(
     projectTypeId: string,
     workflowRecipeId?: string,
@@ -2103,7 +2178,8 @@ export class ProjectsService {
   private async createMultiRepoProject(
     userId: string,
     _userLogin: string,
-    accessToken: string,
+    repositoryCreationToken: string,
+    provisioningToken: string,
     provisioningOwnerLogin: string | undefined,
     dto: CreateProjectDto,
   ): Promise<CreateProjectResponse> {
@@ -2155,7 +2231,7 @@ export class ProjectsService {
       ownerLogin,
       repoName: actualBeRepoName,
     } = await this.githubService.createRepo(
-      accessToken,
+      repositoryCreationToken,
       {
         repoName: beRepoName,
         private: dto.visibility === 'private',
@@ -2173,14 +2249,19 @@ export class ProjectsService {
     let backendCommitUrl: string | null = null;
     let backendProvisioningComplete = false;
     try {
-      await this.pushStarterFiles(accessToken, ownerLogin, actualBeRepoName, {
-        projectName: backend.serviceName || actualBeRepoName,
-        stack: backend.projectTypeId,
-        repoShape: 'standalone',
-        ...(dto.tests?.['docker'] !== undefined && {
-          includeDocker: dto.tests['docker'],
-        }),
-      });
+      await this.pushStarterFiles(
+        provisioningToken,
+        ownerLogin,
+        actualBeRepoName,
+        {
+          projectName: backend.serviceName || actualBeRepoName,
+          stack: backend.projectTypeId,
+          repoShape: 'standalone',
+          ...(dto.tests?.['docker'] !== undefined && {
+            includeDocker: dto.tests['docker'],
+          }),
+        },
+      );
 
       // Persist + token + secrets before the workflow push so the first
       // access-gate run can authenticate (see createProject for rationale).
@@ -2198,6 +2279,7 @@ export class ProjectsService {
         projectTypeId: backend.projectTypeId,
         workflowRecipeId: backend.workflowRecipeId ?? null,
         projectOptions: {
+          ...this.repositoryOwnershipMetadata(dto, ownerLogin),
           ...(dto.tests ? { tests: dto.tests } : {}),
           workflowFiles: this.workflowFileMetadata(backendWorkflowFiles),
         },
@@ -2207,14 +2289,14 @@ export class ProjectsService {
         backendRow.id,
       );
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         ownerLogin,
         actualBeRepoName,
         'CI_TOKEN',
         backendCiToken.token,
       );
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         ownerLogin,
         actualBeRepoName,
         'CI_REPORT_URL',
@@ -2223,7 +2305,7 @@ export class ProjectsService {
 
       ({ commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
         await this.pushWorkflowFiles(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           actualBeRepoName,
           backendWorkflowFiles,
@@ -2239,7 +2321,7 @@ export class ProjectsService {
       // it (pipeline triggers stay test/uat/main only).
       for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           actualBeRepoName,
           branch,
@@ -2249,7 +2331,7 @@ export class ProjectsService {
 
       for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           actualBeRepoName,
           branch,
@@ -2260,7 +2342,7 @@ export class ProjectsService {
     } catch (error) {
       if (!backendProvisioningComplete) {
         await this.compensateFailedProvision(
-          accessToken,
+          provisioningToken,
           ownerLogin,
           actualBeRepoName,
           backendRow?.id,
@@ -2284,7 +2366,7 @@ export class ProjectsService {
         projectId: backendRow.id,
         userId,
         repoFullName: beRepoFullName,
-        githubAccessToken: accessToken,
+        githubAccessToken: provisioningToken,
         request: this.filterDeploymentProvisioningRequest(
           dto.deploymentProvisioning,
           ['backend'],
@@ -2328,7 +2410,7 @@ export class ProjectsService {
         ownerLogin: feOwnerLogin,
         repoName: actualFeRepoName,
       } = await this.githubService.createRepo(
-        accessToken,
+        repositoryCreationToken,
         {
           repoName: feRepoName,
           private: dto.visibility === 'private',
@@ -2340,14 +2422,19 @@ export class ProjectsService {
       feRepoFullName = `${feOwnerLogin}/${actualFeRepoName}`;
       feRepoUrl = resolvedFeRepoUrl;
 
-      await this.pushStarterFiles(accessToken, feOwnerLogin, actualFeRepoName, {
-        projectName: frontend.serviceName || actualFeRepoName,
-        stack: frontend.projectTypeId,
-        repoShape: 'standalone',
-        ...(dto.tests?.['docker'] !== undefined && {
-          includeDocker: dto.tests['docker'],
-        }),
-      });
+      await this.pushStarterFiles(
+        provisioningToken,
+        feOwnerLogin,
+        actualFeRepoName,
+        {
+          projectName: frontend.serviceName || actualFeRepoName,
+          stack: frontend.projectTypeId,
+          repoShape: 'standalone',
+          ...(dto.tests?.['docker'] !== undefined && {
+            includeDocker: dto.tests['docker'],
+          }),
+        },
+      );
 
       const frontendWorkflowPath =
         frontendWorkflowFiles[0]?.path ??
@@ -2367,20 +2454,21 @@ export class ProjectsService {
         projectTypeId: frontend.projectTypeId,
         workflowRecipeId: frontend.workflowRecipeId ?? null,
         projectOptions: {
+          ...this.repositoryOwnershipMetadata(dto, feOwnerLogin),
           workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
         },
       });
 
       const frontendCiToken = await this.ciService.issueProjectToken(feRow.id);
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         feOwnerLogin,
         actualFeRepoName,
         'CI_TOKEN',
         frontendCiToken.token,
       );
       await this.githubService.setActionsSecretStrict(
-        accessToken,
+        provisioningToken,
         feOwnerLogin,
         actualFeRepoName,
         'CI_REPORT_URL',
@@ -2389,7 +2477,7 @@ export class ProjectsService {
 
       const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
         await this.pushWorkflowFiles(
-          accessToken,
+          provisioningToken,
           feOwnerLogin,
           actualFeRepoName,
           frontendWorkflowFiles,
@@ -2405,7 +2493,7 @@ export class ProjectsService {
       // it (pipeline triggers stay test/uat/main only).
       for (const branch of ['develop', 'uat', 'test'] as const) {
         await this.githubService.createBranch(
-          accessToken,
+          provisioningToken,
           feOwnerLogin,
           actualFeRepoName,
           branch,
@@ -2415,7 +2503,7 @@ export class ProjectsService {
 
       for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
         await this.githubService.applyBranchProtection(
-          accessToken,
+          provisioningToken,
           feOwnerLogin,
           actualFeRepoName,
           branch,
@@ -2429,7 +2517,7 @@ export class ProjectsService {
           projectId: feRow.id,
           userId,
           repoFullName: feRepoFullName,
-          githubAccessToken: accessToken,
+          githubAccessToken: provisioningToken,
           request: this.filterDeploymentProvisioningRequest(
             dto.deploymentProvisioning,
             ['frontend'],
@@ -2444,7 +2532,7 @@ export class ProjectsService {
       // the backend repo is fully provisioned and is still returned.
       if (!feProvisioningComplete && feRepoCreated) {
         await this.compensateFailedProvision(
-          accessToken,
+          provisioningToken,
           feRepoCreated.owner,
           feRepoCreated.repo,
           feRow?.id,
