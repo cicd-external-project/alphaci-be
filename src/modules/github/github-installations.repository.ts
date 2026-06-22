@@ -7,6 +7,7 @@ interface GithubInstallationRow {
   user_id: string;
   account_login: string | null;
   account_id: number | null;
+  account_type: 'Organization' | 'User' | null;
   repository_selection: 'all' | 'selected';
   repos_linked: number;
   created_at: string;
@@ -22,6 +23,7 @@ export interface GithubInstallation {
   userId: string;
   accountLogin: string | null;
   accountId: number | null;
+  accountType: 'Organization' | 'User' | null;
   repositorySelection: 'all' | 'selected';
   reposLinked: number;
 }
@@ -46,6 +48,7 @@ export class GithubInstallationsRepository {
     installationId: number,
     accountLogin: string | null,
     accountId: number | null,
+    accountType: 'Organization' | 'User' | null,
     repositorySelection: 'all' | 'selected',
     reposLinked: number,
   ): Promise<GithubInstallation> {
@@ -56,13 +59,15 @@ export class GithubInstallationsRepository {
           user_id,
           account_login,
           account_id,
+          account_type,
           repository_selection
         )
-        VALUES ($1, $2::uuid, $3, $4, $5)
+        VALUES ($1, $2::uuid, $3, $4, $5, $6)
         ON CONFLICT (user_id, installation_id)
         DO UPDATE SET
           account_login        = EXCLUDED.account_login,
           account_id           = EXCLUDED.account_id,
+          account_type         = EXCLUDED.account_type,
           repository_selection = EXCLUDED.repository_selection,
           updated_at           = NOW()
         RETURNING
@@ -70,8 +75,9 @@ export class GithubInstallationsRepository {
           user_id::text,
           account_login,
           account_id,
+          account_type,
           repository_selection,
-          $6::integer AS repos_linked,
+          $7::integer AS repos_linked,
           created_at;
       `,
       [
@@ -79,6 +85,7 @@ export class GithubInstallationsRepository {
         userId,
         accountLogin,
         accountId,
+        accountType,
         repositorySelection,
         reposLinked,
       ],
@@ -98,6 +105,7 @@ export class GithubInstallationsRepository {
           a.user_id::text,
           a.account_login,
           a.account_id,
+          a.account_type,
           a.repository_selection,
           (
             SELECT COUNT(*)::integer
@@ -116,6 +124,17 @@ export class GithubInstallationsRepository {
     );
 
     return result.rows.map((row) => this.toInstallation(row));
+  }
+
+  async findByUserIdAndInstallationId(
+    userId: string,
+    installationId: number,
+  ): Promise<GithubInstallation | null> {
+    const installations = await this.findByUserId(userId);
+    return (
+      installations.find((item) => item.installationId === installationId) ??
+      null
+    );
   }
 
   /** Return all repos linked to installations belonging to the given user. */
@@ -191,12 +210,64 @@ export class GithubInstallationsRepository {
     );
   }
 
+  async setSuspended(
+    installationId: number,
+    suspended: boolean,
+  ): Promise<void> {
+    await this.databaseService.query(
+      `UPDATE github_app.github_installation_accounts
+       SET suspended_at = CASE WHEN $2 THEN NOW() ELSE NULL END,
+           updated_at = NOW()
+       WHERE installation_id = $1;`,
+      [installationId, suspended],
+    );
+  }
+
+  async deleteInstallation(installationId: number): Promise<void> {
+    await this.databaseService.query(
+      'DELETE FROM github_app.github_installation_accounts WHERE installation_id = $1;',
+      [installationId],
+    );
+  }
+
+  async beginWebhookDelivery(
+    deliveryId: string,
+    eventName: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query<{ delivery_id: string }>(
+      `INSERT INTO github_app.webhook_deliveries (delivery_id, event_name, status)
+       VALUES ($1, $2, 'processing')
+       ON CONFLICT (delivery_id) DO NOTHING
+       RETURNING delivery_id;`,
+      [deliveryId, eventName],
+    );
+    return (result.rowCount ?? result.rows.length) > 0;
+  }
+
+  async completeWebhookDelivery(deliveryId: string): Promise<void> {
+    await this.databaseService.query(
+      `UPDATE github_app.webhook_deliveries
+       SET status = 'processed', processed_at = NOW()
+       WHERE delivery_id = $1;`,
+      [deliveryId],
+    );
+  }
+
+  async releaseWebhookDelivery(deliveryId: string): Promise<void> {
+    await this.databaseService.query(
+      `DELETE FROM github_app.webhook_deliveries
+       WHERE delivery_id = $1 AND status = 'processing';`,
+      [deliveryId],
+    );
+  }
+
   private toInstallation(row: GithubInstallationRow): GithubInstallation {
     return {
       installationId: row.installation_id,
       userId: row.user_id,
       accountLogin: row.account_login,
       accountId: row.account_id,
+      accountType: row.account_type,
       repositorySelection: row.repository_selection,
       reposLinked: row.repos_linked,
     };

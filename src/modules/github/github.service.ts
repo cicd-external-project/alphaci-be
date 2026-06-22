@@ -1,4 +1,4 @@
-import { createSign } from 'node:crypto';
+import { createHmac, createSign, timingSafeEqual } from 'node:crypto';
 
 import {
   BadGatewayException,
@@ -7,6 +7,7 @@ import {
   Logger,
   Optional,
   UnprocessableEntityException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import sodium from 'libsodium-wrappers';
@@ -34,6 +35,7 @@ interface GitHubInstallationMetadataResponse {
   account?: {
     login?: string | null;
     id?: number | null;
+    type?: 'Organization' | 'User' | null;
   };
   repository_selection?: 'all' | 'selected';
 }
@@ -75,6 +77,7 @@ export class GithubService {
   private readonly appId: string;
   private readonly appSlug: string;
   private readonly appPrivateKey: string;
+  private readonly appWebhookSecret: string;
 
   constructor(
     @Optional() private readonly configService: ConfigService | null,
@@ -85,6 +88,7 @@ export class GithubService {
     this.appId = config?.github.appId ?? '';
     this.appSlug = config?.github.appSlug ?? 'my-github-app';
     this.appPrivateKey = config?.github.appPrivateKey ?? '';
+    this.appWebhookSecret = config?.github.appWebhookSecret ?? '';
   }
 
   getAppInstallUrl(): string {
@@ -242,12 +246,14 @@ export class GithubService {
     let repositorySelection: 'all' | 'selected' = 'selected';
     let accountLogin: string | null = null;
     let accountId: number | null = null;
+    let accountType: 'Organization' | 'User' | null = null;
     let repoFullNames: string[] = [];
 
     try {
       const metadata = await this.fetchInstallationMetadata(installationId);
       accountLogin = metadata.account?.login ?? null;
       accountId = metadata.account?.id ?? null;
+      accountType = metadata.account?.type ?? null;
       repositorySelection = metadata.repository_selection ?? 'selected';
 
       const installationToken =
@@ -268,6 +274,7 @@ export class GithubService {
           installationId,
           accountLogin,
           accountId,
+          accountType,
           repositorySelection,
           reposLinked,
         );
@@ -308,12 +315,125 @@ export class GithubService {
   ): Promise<GithubInstallation[]> {
     if (!this.githubInstallationsRepository) return [];
     try {
-      return await this.githubInstallationsRepository.findByUserId(userId);
+      let installations =
+        await this.githubInstallationsRepository.findByUserId(userId);
+      const missingAccountType = installations.filter(
+        (installation) => !installation.accountType,
+      );
+      if (missingAccountType.length > 0) {
+        await Promise.all(
+          missingAccountType.map((installation) =>
+            this.linkInstallation(userId, installation.installationId),
+          ),
+        );
+        installations =
+          await this.githubInstallationsRepository.findByUserId(userId);
+      }
+      return installations;
     } catch (error) {
       this.logger.warn(
         `Could not fetch installations for user ${userId}: ${(error as Error).message}`,
       );
       return [];
+    }
+  }
+
+  async handleWebhook(
+    signature: string | undefined,
+    eventName: string | undefined,
+    deliveryId: string | undefined,
+    rawBody: Buffer | undefined,
+    payload: unknown,
+  ): Promise<{ accepted: boolean; duplicate?: boolean }> {
+    if (!this.appWebhookSecret) {
+      throw new UnauthorizedException(
+        'GitHub webhook secret is not configured.',
+      );
+    }
+    if (!signature || !eventName || !deliveryId || !rawBody) {
+      throw new UnauthorizedException(
+        'Missing GitHub webhook headers or raw body.',
+      );
+    }
+
+    const expected = `sha256=${createHmac('sha256', this.appWebhookSecret)
+      .update(rawBody)
+      .digest('hex')}`;
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expected);
+    if (
+      signatureBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(signatureBuffer, expectedBuffer)
+    ) {
+      throw new UnauthorizedException('Invalid GitHub webhook signature.');
+    }
+
+    if (!this.githubInstallationsRepository) {
+      return { accepted: true };
+    }
+    const claimed =
+      await this.githubInstallationsRepository.beginWebhookDelivery(
+        deliveryId,
+        eventName,
+      );
+    if (!claimed) {
+      return { accepted: true, duplicate: true };
+    }
+
+    try {
+      await this.processWebhookEvent(eventName, payload);
+      await this.githubInstallationsRepository.completeWebhookDelivery(
+        deliveryId,
+      );
+      return { accepted: true };
+    } catch (error) {
+      await this.githubInstallationsRepository.releaseWebhookDelivery(
+        deliveryId,
+      );
+      throw error;
+    }
+  }
+
+  private async processWebhookEvent(
+    eventName: string,
+    payload: unknown,
+  ): Promise<void> {
+    if (!payload || typeof payload !== 'object') return;
+    const body = payload as Record<string, unknown>;
+    const installation = body['installation'];
+    if (!installation || typeof installation !== 'object') return;
+    const installationId = Number(
+      (installation as Record<string, unknown>)['id'],
+    );
+    if (!Number.isInteger(installationId) || installationId < 1) return;
+
+    if (eventName === 'installation') {
+      const action = body['action'];
+      if (action === 'deleted') {
+        await this.githubInstallationsRepository?.deleteInstallation(
+          installationId,
+        );
+      } else if (action === 'suspend') {
+        await this.githubInstallationsRepository?.setSuspended(
+          installationId,
+          true,
+        );
+      } else if (action === 'unsuspend') {
+        await this.githubInstallationsRepository?.setSuspended(
+          installationId,
+          false,
+        );
+      }
+      return;
+    }
+
+    if (eventName === 'installation_repositories') {
+      const token = await this.createInstallationAccessToken(installationId);
+      const repos = await this.fetchInstallationRepositories(token);
+      await this.githubInstallationsRepository?.replaceRepos(
+        installationId,
+        repos,
+      );
     }
   }
 
@@ -329,6 +449,57 @@ export class GithubService {
       installations.find((item) => item.repositorySelection === 'all') ??
       installations[0];
     return installation?.accountLogin ?? undefined;
+  }
+
+  async getOrganizationProvisioningContext(
+    userId: string,
+    installationId: number,
+  ): Promise<{ accessToken: string; ownerLogin: string }> {
+    if (!this.githubInstallationsRepository) {
+      throw new ForbiddenException('GitHub App installations are unavailable.');
+    }
+
+    let installation =
+      await this.githubInstallationsRepository.findByUserIdAndInstallationId(
+        userId,
+        installationId,
+      );
+
+    if (!installation) {
+      throw new ForbiddenException(
+        'The selected GitHub App installation is not linked to this account.',
+      );
+    }
+
+    if (!installation.accountType) {
+      await this.linkInstallation(userId, installationId);
+      installation =
+        await this.githubInstallationsRepository.findByUserIdAndInstallationId(
+          userId,
+          installationId,
+        );
+    }
+
+    if (installation?.accountType !== 'Organization') {
+      throw new ForbiddenException(
+        'The selected GitHub App installation does not belong to an organization.',
+      );
+    }
+    if (installation.repositorySelection !== 'all') {
+      throw new ForbiddenException(
+        'Organization repository creation requires GitHub App access to all repositories.',
+      );
+    }
+    if (!installation.accountLogin) {
+      throw new ForbiddenException(
+        'The selected GitHub App installation has no organization login.',
+      );
+    }
+
+    return {
+      accessToken: await this.createInstallationAccessToken(installationId),
+      ownerLogin: installation.accountLogin,
+    };
   }
 
   /**
@@ -436,6 +607,10 @@ export class GithubService {
     ownerLogin: string;
     repoName: string;
   }> {
+    if (ownerLogin) {
+      return this.createRepoForOrg(accessToken, dto, ownerLogin);
+    }
+
     const response = await this.fetchWithRetry(
       'https://api.github.com/user/repos',
       {
@@ -477,20 +652,13 @@ export class GithubService {
           `Repository already exists or name is invalid: ${body}`,
         );
       }
-      if (
-        response.status === 404 &&
-        oauthScopes.length > 0 &&
-        !canCreateRepo
-      ) {
+      if (response.status === 404 && oauthScopes.length > 0 && !canCreateRepo) {
         throw new ForbiddenException(
           `GitHub rejected repo creation (404). The current OAuth token grants ` +
             `[${oauthScopes.join(', ')}] but repository creation requires ` +
             `${dto.private ? "the full 'repo' scope" : "'repo' or 'public_repo'"}. ` +
             `Sign out of this environment and sign back in with GitHub to refresh the token.`,
         );
-      }
-      if (response.status === 404 && ownerLogin) {
-        return this.createRepoForOrg(accessToken, dto, ownerLogin);
       }
       if (response.status === 404) {
         throw new BadGatewayException(
@@ -552,6 +720,22 @@ export class GithubService {
 
     if (!response.ok) {
       const body = await response.text();
+      if (response.status === 401 || response.status === 403) {
+        throw new ForbiddenException(
+          `GitHub denied repository creation in organization ${orgLogin} (${String(response.status)}). ` +
+            "Confirm the signed-in user's OAuth token has the 'repo' scope and that the user and organization policy allow repository creation.",
+        );
+      }
+      if (response.status === 404) {
+        throw new ForbiddenException(
+          `GitHub organization ${orgLogin} is unavailable to the signed-in user or OAuth token. Sign out and sign back in with GitHub, then confirm the user belongs to the organization.`,
+        );
+      }
+      if (response.status === 422) {
+        throw new UnprocessableEntityException(
+          `Repository already exists in ${orgLogin} or the name is invalid: ${body}`,
+        );
+      }
       throw new BadGatewayException(
         `GitHub repo creation failed (${String(response.status)}): ${body}`,
       );

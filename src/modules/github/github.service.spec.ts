@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHmac, generateKeyPairSync } from 'node:crypto';
 
 import type { ConfigService } from '@nestjs/config';
 
@@ -114,6 +114,7 @@ const makeInstallationsRepository = () =>
       userId: 'user-1',
       accountLogin: 'tone',
       accountId: 99,
+      accountType: 'Organization',
       repositorySelection: 'all',
       reposLinked: 2,
     }),
@@ -124,11 +125,26 @@ const makeInstallationsRepository = () =>
         userId: 'user-1',
         accountLogin: 'tone',
         accountId: 99,
+        accountType: 'Organization',
         repositorySelection: 'all',
         reposLinked: 2,
       },
     ]),
+    findByUserIdAndInstallationId: jest.fn().mockResolvedValue({
+      installationId: 12345,
+      userId: 'user-1',
+      accountLogin: 'tone',
+      accountId: 99,
+      accountType: 'Organization',
+      repositorySelection: 'all',
+      reposLinked: 2,
+    }),
     findReposByUserId: jest.fn().mockResolvedValue([]),
+    beginWebhookDelivery: jest.fn().mockResolvedValue(true),
+    completeWebhookDelivery: jest.fn().mockResolvedValue(undefined),
+    releaseWebhookDelivery: jest.fn().mockResolvedValue(undefined),
+    setSuspended: jest.fn().mockResolvedValue(undefined),
+    deleteInstallation: jest.fn().mockResolvedValue(undefined),
   }) as unknown as GithubInstallationsRepository;
 
 describe('GithubService', () => {
@@ -243,7 +259,7 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
-            account: { login: 'tone', id: 99 },
+            account: { login: 'tone', id: 99, type: 'Organization' },
             repository_selection: 'all',
           }),
         } as unknown as Response)
@@ -268,6 +284,7 @@ describe('GithubService', () => {
         12345,
         'tone',
         99,
+        'Organization',
         'all',
         2,
       );
@@ -317,6 +334,65 @@ describe('GithubService', () => {
       await expect(
         service.getInstallationAccessTokenForUser('user-1'),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe('organization provisioning', () => {
+    it('uses the explicitly selected linked organization installation', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'organization-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContext('user-1', 12345),
+      ).resolves.toEqual({
+        accessToken: 'organization-token',
+        ownerLogin: 'tone',
+      });
+    });
+  });
+
+  describe('GitHub webhooks', () => {
+    it('verifies the signature and suspends a linked installation', async () => {
+      const payload = {
+        action: 'suspend',
+        installation: { id: 12345 },
+      };
+      const rawBody = Buffer.from(JSON.stringify(payload));
+      const signature = `sha256=${createHmac('sha256', 'webhook-secret')
+        .update(rawBody)
+        .digest('hex')}`;
+
+      await expect(
+        service.handleWebhook(
+          signature,
+          'installation',
+          'delivery-1',
+          rawBody,
+          payload,
+        ),
+      ).resolves.toEqual({ accepted: true });
+
+      expect(installationsRepository.setSuspended).toHaveBeenCalledWith(
+        12345,
+        true,
+      );
+      expect(
+        installationsRepository.completeWebhookDelivery,
+      ).toHaveBeenCalledWith('delivery-1');
+    });
+
+    it('rejects an invalid webhook signature', async () => {
+      await expect(
+        service.handleWebhook(
+          'sha256=invalid',
+          'installation',
+          'delivery-2',
+          Buffer.from('{}'),
+          {},
+        ),
+      ).rejects.toThrow('Invalid GitHub webhook signature');
     });
   });
 
@@ -594,15 +670,37 @@ describe('GithubService', () => {
       } as unknown as Response);
 
       await expect(
-        service.createRepo(
-          'under-scoped-oauth-token',
-          { repoName: 'orders-api', private: true },
-          'tone',
-        ),
+        service.createRepo('under-scoped-oauth-token', {
+          repoName: 'orders-api',
+          private: true,
+        }),
       ).rejects.toThrow(
         "repository creation requires the full 'repo' scope. Sign out of this environment and sign back in",
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates an organization repository with a user OAuth token when an owner is selected', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/tone/orders-api',
+          clone_url: 'https://github.com/tone/orders-api.git',
+          owner: { login: 'tone' },
+          name: 'orders-api',
+        }),
+      } as unknown as Response);
+
+      await service.createRepo(
+        'oauth-user-token',
+        { repoName: 'orders-api', private: true },
+        'tone',
+      );
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/tone/repos',
+        expect.objectContaining({ method: 'POST' }),
+      );
     });
 
     it('creates a branch from an existing source branch ref', async () => {

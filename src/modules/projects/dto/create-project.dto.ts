@@ -5,6 +5,7 @@ import {
   IsInt,
   IsObject,
   IsOptional,
+  IsPositive,
   IsString,
   Max,
   MaxLength,
@@ -234,6 +235,15 @@ export class CreateProjectDto {
 
   @IsIn(['private', 'public'])
   visibility!: 'private' | 'public';
+
+  @IsOptional()
+  @IsIn(['personal', 'organization'])
+  ownerType?: 'personal' | 'organization';
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  installationId?: number;
 
   // Catalog IDs ('mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
   // are both accepted; the service normalizes via normalizeRepoShape().

@@ -40,6 +40,10 @@ const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
     getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
+    getOrganizationProvisioningContext: jest.fn().mockResolvedValue({
+      accessToken: 'installation-token',
+      ownerLogin: 'tone',
+    }),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/tone/orders-api',
       cloneUrl: 'https://github.com/tone/orders-api.git',
@@ -250,7 +254,9 @@ describe('ProjectsService', () => {
   let githubService: GithubService;
   let githubServiceMock: {
     getInstallationAccessTokenForUser: jest.Mock;
+    getOrganizationProvisioningContext: jest.Mock;
     createRepo: jest.Mock;
+    setActionsSecretStrict: jest.Mock;
   };
   let projectDeploymentProvisioningService: {
     provisionForProject: jest.Mock;
@@ -271,7 +277,9 @@ jobs:
     githubService = makeGithubService();
     githubServiceMock = githubService as unknown as {
       getInstallationAccessTokenForUser: jest.Mock;
+      getOrganizationProvisioningContext: jest.Mock;
       createRepo: jest.Mock;
+      setActionsSecretStrict: jest.Mock;
     };
     projectDeploymentProvisioningService = {
       provisionForProject: jest.fn().mockResolvedValue({
@@ -330,6 +338,54 @@ jobs:
       expect.objectContaining({ repoName: 'orders-api' }),
       undefined,
     );
+  });
+
+  it('uses OAuth to create an organization repository and the installation token to configure it', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      ownerType: 'organization',
+      installationId: 12345,
+    });
+
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).toHaveBeenCalledWith('user-1', 12345);
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'oauth-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'tone',
+    );
+    expect(githubServiceMock.setActionsSecretStrict).toHaveBeenCalledWith(
+      'installation-token',
+      'tone',
+      'orders-api',
+      'CI_TOKEN',
+      'flowci-token',
+    );
+  });
+
+  it('rejects organization repository creation without a user OAuth token', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', null, {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        ownerType: 'organization',
+        installationId: 12345,
+      }),
+    ).rejects.toThrow(
+      'A GitHub OAuth token with the repo scope is required to create a repository in an organization.',
+    );
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
   });
 
   it('records audit and notification events after project creation', async () => {

@@ -50,6 +50,7 @@ export class GithubController {
       installationId: inst.installationId,
       accountLogin: inst.accountLogin,
       accountId: inst.accountId,
+      accountType: inst.accountType,
       repositorySelection: inst.repositorySelection,
     }));
     return { accounts };
