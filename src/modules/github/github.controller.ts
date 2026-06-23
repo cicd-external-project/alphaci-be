@@ -16,7 +16,10 @@ export class GithubController {
   /** GET /github/app/install-url — returns the GitHub App installation URL */
   @Get('app/install-url')
   getAppInstallUrl() {
-    return { installUrl: this.githubService.getAppInstallUrl() };
+    return {
+      installUrl: this.githubService.getAppInstallUrl(),
+      appSlug: this.githubService.getAppSlug(),
+    };
   }
 
   /** POST /github/installations — link a GitHub App installation to the current user */

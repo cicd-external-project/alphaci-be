@@ -31,6 +31,7 @@ const makeGithubService = () =>
     getAppInstallUrl: jest
       .fn()
       .mockReturnValue('https://github.com/apps/flowci/installations/new'),
+    getAppSlug: jest.fn().mockReturnValue('flowci'),
     linkInstallation: jest.fn().mockResolvedValue({
       reposLinked: 3,
       repositorySelection: 'selected',
@@ -82,6 +83,7 @@ describe('GithubController', () => {
   it('returns the GitHub App installation URL', () => {
     expect(controller.getAppInstallUrl()).toEqual({
       installUrl: 'https://github.com/apps/flowci/installations/new',
+      appSlug: 'flowci',
     });
   });
 

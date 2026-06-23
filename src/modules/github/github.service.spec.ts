@@ -172,6 +172,20 @@ describe('GithubService', () => {
       );
     });
 
+    it('rejects install URL generation when the App slug is missing', () => {
+      const unconfigured = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, appSlug: '' },
+        }),
+        installationsRepository,
+      );
+
+      expect(() => unconfigured.getAppInstallUrl()).toThrow(
+        'GitHub App installation is not configured',
+      );
+    });
+
     it('throws when app credentials are missing for JWT creation', () => {
       const unconfigured = new GithubService(
         makeConfigService({

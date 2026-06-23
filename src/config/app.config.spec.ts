@@ -107,6 +107,13 @@ describe('appConfig factory', () => {
     expect(config.github.appPrivateKey).toBe('line1\nline2');
   });
 
+  it('does not use the placeholder GitHub App slug in production', () => {
+    process.env['NODE_ENV'] = 'production';
+    delete process.env['GITHUB_APP_SLUG'];
+
+    expect(appConfig().github.appSlug).toBe('');
+  });
+
   it('uses storeDriver memory when SESSION_STORE_DRIVER is not postgres', () => {
     process.env['SESSION_STORE_DRIVER'] = 'redis';
 
