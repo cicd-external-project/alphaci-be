@@ -124,6 +124,7 @@ export interface AppConfig {
 
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
+  const isProduction = env['NODE_ENV'] === 'production';
 
   const seededPlans: Record<string, SubscriptionPlan> = {};
   try {
@@ -146,7 +147,8 @@ export const appConfig = registerAs('app', (): AppConfig => {
         'http://localhost:4000/api/v1/auth/github/callback',
       scope: env['GITHUB_SCOPE'] ?? 'repo,workflow',
       appId: env['GITHUB_APP_ID'] ?? '',
-      appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
+      appSlug:
+        env['GITHUB_APP_SLUG']?.trim() || (isProduction ? '' : 'my-github-app'),
       appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
         /\\n/g,
         '\n',

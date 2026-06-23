@@ -4,6 +4,7 @@ import {
   BadGatewayException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   Optional,
   UnprocessableEntityException,
@@ -86,13 +87,22 @@ export class GithubService {
   ) {
     const config = this.configService?.get<AppConfig>('app');
     this.appId = config?.github.appId ?? '';
-    this.appSlug = config?.github.appSlug ?? 'my-github-app';
+    this.appSlug = config?.github.appSlug?.trim() ?? '';
     this.appPrivateKey = config?.github.appPrivateKey ?? '';
     this.appWebhookSecret = config?.github.appWebhookSecret ?? '';
   }
 
   getAppInstallUrl(): string {
+    if (!this.appSlug) {
+      throw new InternalServerErrorException(
+        'GitHub App installation is not configured. Set GITHUB_APP_SLUG and restart the service.',
+      );
+    }
     return `https://github.com/apps/${this.appSlug}/installations/new`;
+  }
+
+  getAppSlug(): string {
+    return this.appSlug;
   }
 
   /**

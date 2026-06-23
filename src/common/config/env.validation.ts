@@ -204,6 +204,37 @@ function validateEnvProvisioningConfig(env: RawEnv): void {
   }
 }
 
+function validateProductionGithubAppConfig(env: RawEnv): void {
+  if (env['NODE_ENV'] !== 'production') return;
+
+  const appId = requireString(env, 'GITHUB_APP_ID');
+  const appSlug = requireString(env, 'GITHUB_APP_SLUG');
+  const privateKey = requireString(env, 'GITHUB_APP_PRIVATE_KEY').replace(
+    /\\n/g,
+    '\n',
+  );
+
+  if (!/^\d+$/.test(appId)) {
+    throw new Error('[env] GITHUB_APP_ID must contain digits only.');
+  }
+  if (
+    appSlug === 'my-github-app' ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/.test(appSlug)
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_SLUG must be the real GitHub App slug, not the placeholder my-github-app.',
+    );
+  }
+  if (
+    !privateKey.includes('-----BEGIN') ||
+    !privateKey.includes('PRIVATE KEY-----')
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_PRIVATE_KEY must contain a PEM-encoded private key.',
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Exported validate function
 // ---------------------------------------------------------------------------
@@ -288,6 +319,7 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // rather than a hard crash at startup.
   requireString(env, 'GITHUB_CLIENT_ID');
   requireString(env, 'GITHUB_CLIENT_SECRET');
+  validateProductionGithubAppConfig(env);
 
   // --- Optional ---
   const ENABLE_SWAGGER =
