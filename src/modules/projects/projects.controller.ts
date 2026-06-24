@@ -72,19 +72,16 @@ export class ProjectsController {
   @Post('setup')
   @UseGuards(SessionAuthGuard, SubscriptionGuard)
   async setupProject(@Req() req: Request, @Body() body: SetupProjectDto) {
-    const accessToken = req.session.githubAccessToken;
-    if (!accessToken) {
-      throw new UnauthorizedException(
-        'GitHub access token not found. Re-authenticate via GitHub OAuth.',
-      );
-    }
-
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
 
-    return this.projectsService.setupProject(userId, accessToken, body);
+    return this.projectsService.setupProject(
+      userId,
+      req.session.githubAccessToken ?? null,
+      body,
+    );
   }
 
   /**

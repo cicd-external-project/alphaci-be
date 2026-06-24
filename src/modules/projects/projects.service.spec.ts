@@ -39,6 +39,9 @@ const makeCatalogService = () =>
 const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
+    getInstallationAccessTokenForUserRepo: jest
+      .fn()
+      .mockResolvedValue('app-token'),
     getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
     getOrganizationProvisioningContext: jest.fn().mockResolvedValue({
       accessToken: 'installation-token',
@@ -254,6 +257,7 @@ describe('ProjectsService', () => {
   let githubService: GithubService;
   let githubServiceMock: {
     getInstallationAccessTokenForUser: jest.Mock;
+    getInstallationAccessTokenForUserRepo: jest.Mock;
     getOrganizationProvisioningContext: jest.Mock;
     createRepo: jest.Mock;
     setActionsSecretStrict: jest.Mock;
@@ -277,6 +281,7 @@ jobs:
     githubService = makeGithubService();
     githubServiceMock = githubService as unknown as {
       getInstallationAccessTokenForUser: jest.Mock;
+      getInstallationAccessTokenForUserRepo: jest.Mock;
       getOrganizationProvisioningContext: jest.Mock;
       createRepo: jest.Mock;
       setActionsSecretStrict: jest.Mock;
@@ -753,6 +758,33 @@ jobs:
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+  });
+
+  it('uses a linked GitHub App installation token for existing private repo setup', async () => {
+    await service.setupProject('user-1', null, {
+      repoFullName: 'tone/orders-api',
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    expect(
+      githubServiceMock.getInstallationAccessTokenForUserRepo,
+    ).toHaveBeenCalledWith('user-1', 'tone/orders-api');
+    expect(githubServiceMock.setActionsSecretStrict).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      'CI_TOKEN',
+      'flowci-token',
+    );
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        githubAccessToken: 'app-token',
+        repoFullName: 'tone/orders-api',
+      }),
+    );
   });
 
   it('provisions deployment targets after the GitHub project row exists', async () => {

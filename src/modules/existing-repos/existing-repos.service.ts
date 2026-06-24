@@ -42,8 +42,12 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: DiscoverExistingRepoDto,
   ): Promise<ExistingRepoDiscoveryResponse> {
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    const token = await this.resolveProvisioningToken(
+      userId,
+      oauthAccessToken,
+      dto.repoFullName,
+    );
     const baseBranch = dto.baseBranch ?? 'main';
     const packageJson = await this.githubService.getFileContent(
       token,
@@ -69,8 +73,12 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: SetupExistingRepoPrDto,
   ): Promise<ExistingRepoSetupPullRequestResponse> {
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    const token = await this.resolveProvisioningToken(
+      userId,
+      oauthAccessToken,
+      dto.repoFullName,
+    );
     const baseBranch = dto.baseBranch ?? 'main';
     const workflowRecipeId = dto.workflowRecipeId ?? 'standard';
     const templateId = this.resolveTemplateId(
@@ -133,9 +141,13 @@ export class ExistingReposService {
   private async resolveProvisioningToken(
     userId: string,
     oauthAccessToken: string | null | undefined,
+    repoFullName: string,
   ): Promise<string> {
     const installationToken =
-      await this.githubService.getInstallationAccessTokenForUser(userId);
+      await this.githubService.getInstallationAccessTokenForUserRepo(
+        userId,
+        repoFullName,
+      );
 
     if (installationToken) {
       return installationToken;
