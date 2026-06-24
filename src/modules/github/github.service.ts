@@ -93,16 +93,20 @@ export class GithubService {
   }
 
   getAppInstallUrl(): string {
-    if (!this.appSlug) {
+    const appSlug = this.getAppSlug();
+    if (!appSlug) {
       throw new InternalServerErrorException(
         'GitHub App installation is not configured. Set GITHUB_APP_SLUG and restart the service.',
       );
     }
-    return `https://github.com/apps/${this.appSlug}/installations/new`;
+    return `https://github.com/apps/${appSlug}/installations/new`;
   }
 
   getAppSlug(): string {
-    return this.appSlug;
+    return (
+      this.configService?.get<AppConfig>('app')?.github.appSlug?.trim() ??
+      this.appSlug
+    );
   }
 
   /**
@@ -173,7 +177,11 @@ export class GithubService {
   }
 
   createAppJwt(nowSeconds = Math.floor(Date.now() / 1000)): string {
-    if (!this.appId || !this.appPrivateKey) {
+    const githubConfig = this.configService?.get<AppConfig>('app')?.github;
+    const appId = githubConfig?.appId ?? this.appId;
+    const appPrivateKey = githubConfig?.appPrivateKey ?? this.appPrivateKey;
+
+    if (!appId || !appPrivateKey) {
       throw new UnprocessableEntityException(
         'GitHub App credentials are not configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.',
       );
@@ -183,12 +191,12 @@ export class GithubService {
     const payload = this.base64UrlJson({
       iat: nowSeconds - 60,
       exp: nowSeconds + 540,
-      iss: this.appId,
+      iss: appId,
     });
     const unsigned = `${header}.${payload}`;
     const signature = createSign('RSA-SHA256')
       .update(unsigned)
-      .sign(this.appPrivateKey, 'base64url');
+      .sign(appPrivateKey, 'base64url');
 
     return `${unsigned}.${signature}`;
   }
@@ -403,7 +411,10 @@ export class GithubService {
     rawBody: Buffer | undefined,
     payload: unknown,
   ): Promise<{ accepted: boolean; duplicate?: boolean }> {
-    if (!this.appWebhookSecret) {
+    const appWebhookSecret =
+      this.configService?.get<AppConfig>('app')?.github.appWebhookSecret ??
+      this.appWebhookSecret;
+    if (!appWebhookSecret) {
       throw new UnauthorizedException(
         'GitHub webhook secret is not configured.',
       );
@@ -414,7 +425,7 @@ export class GithubService {
       );
     }
 
-    const expected = `sha256=${createHmac('sha256', this.appWebhookSecret)
+    const expected = `sha256=${createHmac('sha256', appWebhookSecret)
       .update(rawBody)
       .digest('hex')}`;
     const signatureBuffer = Buffer.from(signature);
