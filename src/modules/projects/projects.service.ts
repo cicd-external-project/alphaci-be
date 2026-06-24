@@ -898,7 +898,7 @@ export class ProjectsService {
 
   async setupProject(
     userId: string,
-    accessToken: string,
+    oauthAccessToken: string | null | undefined,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
     const deploymentSlots = this.resolveSingleRepoDeploymentSlots(
@@ -927,6 +927,11 @@ export class ProjectsService {
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    const accessToken = await this.resolveSetupProvisioningToken(
+      userId,
+      oauthAccessToken,
+      dto.repoFullName,
+    );
 
     // 3. Persist the project, issue the CI token, and install the Actions
     // secrets BEFORE pushing the workflow file so the access-gate's first run
@@ -1548,6 +1553,30 @@ export class ProjectsService {
 
     if (installationToken) {
       return installationToken;
+    }
+
+    throw new UnauthorizedException(
+      'No usable GitHub token found. Link the GitHub App installation or re-authenticate via GitHub OAuth.',
+    );
+  }
+
+  private async resolveSetupProvisioningToken(
+    userId: string,
+    oauthAccessToken: string | null | undefined,
+    repoFullName: string,
+  ): Promise<string> {
+    const installationToken =
+      await this.githubService.getInstallationAccessTokenForUserRepo(
+        userId,
+        repoFullName,
+      );
+
+    if (installationToken) {
+      return installationToken;
+    }
+
+    if (oauthAccessToken) {
+      return oauthAccessToken;
     }
 
     throw new UnauthorizedException(

@@ -573,14 +573,20 @@ describe('ProjectsController', () => {
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  it('throws when setting up a project without a GitHub OAuth token', async () => {
-    await expect(
-      controller.setupProject(makeRequest(fakeUser, undefined), {
+  it('allows setup without a GitHub OAuth token so the service can use a GitHub App token', async () => {
+    await controller.setupProject(makeRequest(fakeUser, undefined), {
+      repoFullName: 'testuser/orders-api',
+      templateId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(service.setupProject).toHaveBeenCalledWith(
+      'user-1',
+      null,
+      expect.objectContaining({
         repoFullName: 'testuser/orders-api',
-        templateId: 'backend-api-ci',
-        serviceName: 'orders-api',
       }),
-    ).rejects.toThrow(UnauthorizedException);
+    );
   });
 
   it('falls back to the default list limit when limit is invalid', async () => {

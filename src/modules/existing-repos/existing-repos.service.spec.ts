@@ -13,6 +13,9 @@ const mockedReadFile = readFile as jest.MockedFunction<typeof readFile>;
 const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
+    getInstallationAccessTokenForUserRepo: jest
+      .fn()
+      .mockResolvedValue('app-token'),
     getFileContent: jest.fn().mockResolvedValue(
       JSON.stringify({
         dependencies: { next: '16.0.0' },
@@ -79,8 +82,8 @@ jobs:
     });
 
     expect(
-      githubService.getInstallationAccessTokenForUser,
-    ).toHaveBeenCalledWith('user-1');
+      githubService.getInstallationAccessTokenForUserRepo,
+    ).toHaveBeenCalledWith('user-1', 'tone/app');
     expect(githubService.getFileContent).toHaveBeenCalledWith(
       'app-token',
       'tone',
@@ -169,7 +172,7 @@ jobs:
 
   it('falls back to the OAuth token when no app installation token exists', async () => {
     (
-      githubService.getInstallationAccessTokenForUser as jest.Mock
+      githubService.getInstallationAccessTokenForUserRepo as jest.Mock
     ).mockResolvedValueOnce(null);
 
     await service.discover('user-1', 'oauth-token', {
@@ -187,7 +190,7 @@ jobs:
 
   it('rejects discovery when no GitHub token source is available', async () => {
     (
-      githubService.getInstallationAccessTokenForUser as jest.Mock
+      githubService.getInstallationAccessTokenForUserRepo as jest.Mock
     ).mockResolvedValueOnce(null);
 
     await expect(

@@ -351,6 +351,82 @@ describe('GithubService', () => {
     });
   });
 
+  describe('getInstallationAccessTokenForUserRepo', () => {
+    it('uses an all-repositories installation for the requested owner', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'owner-installation-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo('user-1', 'tone/api'),
+      ).resolves.toBe('owner-installation-token');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/app/installations/12345/access_tokens',
+        expect.any(Object),
+      );
+    });
+
+    it('uses the selected-repository installation that contains the requested repo', async () => {
+      (installationsRepository.findByUserId as jest.Mock).mockResolvedValueOnce(
+        [
+          {
+            installationId: 111,
+            userId: 'user-1',
+            accountLogin: 'other',
+            accountId: 100,
+            accountType: 'Organization',
+            repositorySelection: 'selected',
+            reposLinked: 1,
+          },
+          {
+            installationId: 222,
+            userId: 'user-1',
+            accountLogin: 'tone',
+            accountId: 99,
+            accountType: 'Organization',
+            repositorySelection: 'selected',
+            reposLinked: 1,
+          },
+        ],
+      );
+      (
+        installationsRepository.findReposByUserId as jest.Mock
+      ).mockResolvedValueOnce([
+        { installationId: 111, repoFullName: 'other/api' },
+        { installationId: 222, repoFullName: 'tone/private-api' },
+      ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'selected-installation-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo(
+          'user-1',
+          'tone/private-api',
+        ),
+      ).resolves.toBe('selected-installation-token');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/app/installations/222/access_tokens',
+        expect.any(Object),
+      );
+    });
+
+    it('returns null when no linked installation covers the requested repo', async () => {
+      (
+        installationsRepository.findReposByUserId as jest.Mock
+      ).mockResolvedValueOnce([]);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo('user-1', 'other/api'),
+      ).resolves.toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('organization provisioning', () => {
     it('uses the explicitly selected linked organization installation', async () => {
       fetchMock.mockResolvedValueOnce({

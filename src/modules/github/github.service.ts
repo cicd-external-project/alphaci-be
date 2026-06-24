@@ -248,6 +248,54 @@ export class GithubService {
     }
   }
 
+  async getInstallationAccessTokenForUserRepo(
+    userId: string,
+    repoFullName: string,
+  ): Promise<string | null> {
+    if (!this.githubInstallationsRepository) return null;
+
+    const [owner] = repoFullName.split('/');
+    if (!owner) return null;
+
+    const installations =
+      await this.githubInstallationsRepository.findByUserId(userId);
+    if (installations.length === 0) return null;
+
+    const linkedRepos =
+      await this.githubInstallationsRepository.findReposByUserId(userId);
+    const normalizedRepoFullName = repoFullName.toLowerCase();
+    const normalizedOwner = owner.toLowerCase();
+
+    const selectedRepoInstallationId = linkedRepos.find(
+      (repo) => repo.repoFullName.toLowerCase() === normalizedRepoFullName,
+    )?.installationId;
+
+    const installation =
+      (selectedRepoInstallationId
+        ? installations.find(
+            (item) => item.installationId === selectedRepoInstallationId,
+          )
+        : undefined) ??
+      installations.find(
+        (item) =>
+          item.repositorySelection === 'all' &&
+          item.accountLogin?.toLowerCase() === normalizedOwner,
+      );
+
+    if (!installation) return null;
+
+    try {
+      return await this.createInstallationAccessToken(
+        installation.installationId,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not create installation token for ${repoFullName} and user ${userId}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   async linkInstallation(
     userId: string,
     installationId: number,
