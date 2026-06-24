@@ -172,6 +172,26 @@ describe('GithubService', () => {
       );
     });
 
+    it('reads the app slug from ConfigService when building the install URL', () => {
+      const configService = makeConfigService({
+        ...appConfig,
+        github: { ...appConfig.github, appSlug: '' },
+      });
+      const dynamicService = new GithubService(
+        configService,
+        installationsRepository,
+      );
+
+      (configService.get as jest.Mock).mockReturnValue({
+        ...appConfig,
+        github: { ...appConfig.github, appSlug: 'alphaci-test' },
+      });
+
+      expect(dynamicService.getAppInstallUrl()).toBe(
+        'https://github.com/apps/alphaci-test/installations/new',
+      );
+    });
+
     it('rejects install URL generation when the App slug is missing', () => {
       const unconfigured = new GithubService(
         makeConfigService({
