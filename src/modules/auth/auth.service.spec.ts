@@ -301,7 +301,9 @@ describe('AuthService', () => {
 
     it('returns auth=failed (not a 500) when the DB save throws', async () => {
       const { service } = await createService(true, {
-        save: jest.fn().mockRejectedValue(new Error('connection terminated unexpectedly')),
+        save: jest
+          .fn()
+          .mockRejectedValue(new Error('connection terminated unexpectedly')),
       });
       const req = makeRequest();
       const url = await service.startGitHubAuth(req);
