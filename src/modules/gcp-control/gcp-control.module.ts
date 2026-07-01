@@ -1,12 +1,28 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../database/database.module';
+import { FakeGcpRuntimeAdapter } from './fake-gcp-runtime.adapter';
 import { GcpProviderCapabilitiesService } from './gcp-provider-capabilities.service';
+import { GcpProvisioningOrchestratorService } from './gcp-provisioning-orchestrator.service';
+import { GCP_RUNTIME_ADAPTER } from './gcp-runtime.adapter';
 import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
 
 @Module({
   imports: [DatabaseModule],
-  providers: [GcpProviderCapabilitiesService, ProvisioningJobsRepository],
-  exports: [GcpProviderCapabilitiesService, ProvisioningJobsRepository],
+  providers: [
+    GcpProviderCapabilitiesService,
+    ProvisioningJobsRepository,
+    GcpProvisioningOrchestratorService,
+    {
+      provide: GCP_RUNTIME_ADAPTER,
+      useClass: FakeGcpRuntimeAdapter,
+    },
+  ],
+  exports: [
+    GcpProviderCapabilitiesService,
+    ProvisioningJobsRepository,
+    GcpProvisioningOrchestratorService,
+    GCP_RUNTIME_ADAPTER,
+  ],
 })
 export class GcpControlModule {}
