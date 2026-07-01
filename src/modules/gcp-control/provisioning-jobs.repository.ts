@@ -71,6 +71,42 @@ export class ProvisioningJobsRepository {
     return this.singleRow(result.rows[0], 'provisioning job create');
   }
 
+  async findById(id: string): Promise<ProvisioningJobSummary | null> {
+    this.assertRequiredString(id, 'id');
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        SELECT *
+        FROM gcp_operations.provisioning_jobs
+        WHERE id = $1
+        LIMIT 1;
+      `,
+      [id],
+    );
+
+    const row = result.rows[0];
+    return row ? this.toSummary(row) : null;
+  }
+
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+  ): Promise<ProvisioningJobSummary | null> {
+    this.assertRequiredString(idempotencyKey, 'idempotencyKey');
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        SELECT *
+        FROM gcp_operations.provisioning_jobs
+        WHERE idempotency_key = $1
+        LIMIT 1;
+      `,
+      [idempotencyKey],
+    );
+
+    const row = result.rows[0];
+    return row ? this.toSummary(row) : null;
+  }
+
   async claimNextJob(
     workerId: string,
     jobTypes: GcpProvisioningJobType[],
@@ -144,6 +180,107 @@ export class ProvisioningJobsRepository {
     );
 
     return this.singleRow(result.rows[0], 'provisioning job retryable failure');
+  }
+
+  async markSucceeded(
+    id: string,
+    resultPayload: Record<string, unknown>,
+  ): Promise<ProvisioningJobSummary> {
+    this.assertRequiredString(id, 'id');
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        UPDATE gcp_operations.provisioning_jobs
+        SET
+          status = 'succeeded',
+          payload = payload || $2::jsonb,
+          safe_error_code = NULL,
+          safe_error_message = NULL,
+          next_retry_at = NULL,
+          locked_by = NULL,
+          locked_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [id, JSON.stringify({ result: resultPayload })],
+    );
+
+    return this.singleRow(result.rows[0], 'provisioning job succeeded');
+  }
+
+  async markTerminalFailure(
+    id: string,
+    error: Pick<SafeProvisioningError, 'code' | 'safeMessage'>,
+  ): Promise<ProvisioningJobSummary> {
+    this.assertRequiredString(id, 'id');
+    this.assertRequiredString(error.code, 'error.code');
+    this.assertRequiredString(error.safeMessage, 'error.safeMessage');
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        UPDATE gcp_operations.provisioning_jobs
+        SET
+          status = 'failed',
+          safe_error_code = $2,
+          safe_error_message = $3,
+          next_retry_at = NULL,
+          locked_by = NULL,
+          locked_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [id, error.code, error.safeMessage],
+    );
+
+    return this.singleRow(result.rows[0], 'provisioning job terminal failure');
+  }
+
+  async requestCancel(
+    id: string,
+    actor: string,
+  ): Promise<ProvisioningJobSummary> {
+    this.assertRequiredString(id, 'id');
+    this.assertRequiredString(actor, 'actor');
+    const cancelReason = `cancel_requested_by:${actor}`;
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        UPDATE gcp_operations.provisioning_jobs
+        SET
+          status = 'canceled',
+          dead_letter_reason = $2,
+          next_retry_at = NULL,
+          locked_by = NULL,
+          locked_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [id, cancelReason],
+    );
+
+    return this.singleRow(result.rows[0], 'provisioning job cancel');
+  }
+
+  async releaseLock(id: string): Promise<ProvisioningJobSummary> {
+    this.assertRequiredString(id, 'id');
+
+    const result = await this.databaseService.query<ProvisioningJobRow>(
+      `
+        UPDATE gcp_operations.provisioning_jobs
+        SET
+          locked_by = NULL,
+          locked_at = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [id],
+    );
+
+    return this.singleRow(result.rows[0], 'provisioning job release lock');
   }
 
   private assertRequiredString(value: string, label: string): void {

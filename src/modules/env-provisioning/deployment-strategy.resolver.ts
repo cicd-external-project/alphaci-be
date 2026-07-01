@@ -7,16 +7,35 @@ import type {
   RenderDeployMethod,
 } from './env-provisioning.types';
 
-export interface ResolveDeploymentStrategyInput {
+export type GcpDeploymentStrategy = 'gcp_cloud_run';
+
+export interface ResolveLegacyDeploymentStrategyInput {
   provider: EnvProvider;
   ownershipMode: EnvOwnershipMode;
   action?: 'create' | 'register_existing';
   renderDeployMethod?: RenderDeployMethod | undefined;
 }
 
+export interface ResolveGcpDeploymentStrategyInput {
+  provider: 'gcp';
+  ownershipMode: EnvOwnershipMode;
+}
+
+export type ResolveDeploymentStrategyInput =
+  | ResolveLegacyDeploymentStrategyInput
+  | ResolveGcpDeploymentStrategyInput;
+
 @Injectable()
 export class DeploymentStrategyResolver {
-  resolve(input: ResolveDeploymentStrategyInput): DeploymentStrategy {
+  resolve(input: ResolveLegacyDeploymentStrategyInput): DeploymentStrategy;
+  resolve(input: ResolveGcpDeploymentStrategyInput): GcpDeploymentStrategy;
+  resolve(
+    input: ResolveDeploymentStrategyInput,
+  ): DeploymentStrategy | GcpDeploymentStrategy {
+    if (input.provider === 'gcp') {
+      return 'gcp_cloud_run';
+    }
+
     if (input.provider === 'vercel') {
       return 'vercel_ci_pushed';
     }

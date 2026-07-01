@@ -3,6 +3,15 @@ import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 describe('DeploymentStrategyResolver', () => {
   const resolver = new DeploymentStrategyResolver();
 
+  it('uses Cloud Run strategy for GCP targets', () => {
+    expect(
+      resolver.resolve({
+        provider: 'gcp',
+        ownershipMode: 'flowci_managed',
+      }),
+    ).toBe('gcp_cloud_run');
+  });
+
   it('uses CI-pushed deployments for FlowCI-managed Vercel targets', () => {
     expect(
       resolver.resolve({
