@@ -126,7 +126,6 @@ export class DomainsRepository {
     return this.toSummary(row);
   }
 
-
   private toDnsInstructions(
     value: Record<string, unknown> | null,
   ): DnsInstructions {
@@ -166,6 +165,3 @@ export class DomainsRepository {
     };
   }
 }
-
-
-

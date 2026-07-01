@@ -2,7 +2,9 @@ import { GcpProvisioningOrchestratorService } from './gcp-provisioning-orchestra
 import { FakeGcpRuntimeAdapter } from './fake-gcp-runtime.adapter';
 import type { ProvisioningJobSummary } from './gcp-control.types';
 
-function makeJob(overrides: Partial<ProvisioningJobSummary> = {}): ProvisioningJobSummary {
+function makeJob(
+  overrides: Partial<ProvisioningJobSummary> = {},
+): ProvisioningJobSummary {
   return {
     id: 'job-1',
     jobType: 'provision_target',
@@ -38,24 +40,31 @@ describe('GcpProvisioningOrchestratorService', () => {
     jest.clearAllMocks();
     repository.findByIdempotencyKey.mockResolvedValue(null);
     repository.createJob.mockResolvedValue(makeJob());
-    repository.markSucceeded.mockImplementation((id: string, payload: Record<string, unknown>) =>
-      Promise.resolve(makeJob({ id, status: 'succeeded', payload: { result: payload } })),
+    repository.markSucceeded.mockImplementation(
+      (id: string, payload: Record<string, unknown>) =>
+        Promise.resolve(
+          makeJob({ id, status: 'succeeded', payload: { result: payload } }),
+        ),
     );
-    repository.markRetryableFailure.mockImplementation((id: string, error: { code: string; safeMessage: string }) =>
-      Promise.resolve(
-        makeJob({
-          id,
-          status: 'failed',
-          safeErrorCode: error.code,
-          safeErrorMessage: error.safeMessage,
-        }),
-      ),
+    repository.markRetryableFailure.mockImplementation(
+      (id: string, error: { code: string; safeMessage: string }) =>
+        Promise.resolve(
+          makeJob({
+            id,
+            status: 'failed',
+            safeErrorCode: error.code,
+            safeErrorMessage: error.safeMessage,
+          }),
+        ),
     );
   });
 
   it('provisions a shared runtime target through the fake adapter and stores safe outputs', async () => {
     const adapter = new FakeGcpRuntimeAdapter();
-    const service = new GcpProvisioningOrchestratorService(repository as never, adapter);
+    const service = new GcpProvisioningOrchestratorService(
+      repository as never,
+      adapter,
+    );
 
     const result = await service.provisionTarget({
       workspaceId: 'workspace-1',
@@ -85,7 +94,8 @@ describe('GcpProvisioningOrchestratorService', () => {
       'job-1',
       expect.objectContaining({
         gcpProjectId: 'alphaci-shared-dev',
-        artifactRegistryRepository: 'asia-southeast1-docker.pkg.dev/alphaci-shared-dev/alphaci',
+        artifactRegistryRepository:
+          'asia-southeast1-docker.pkg.dev/alphaci-shared-dev/alphaci',
         serviceUrl: 'https://alpha-demo-dev-uc.a.run.app',
         correlationId: 'corr-1',
       }),
@@ -121,7 +131,10 @@ describe('GcpProvisioningOrchestratorService', () => {
       }),
     );
     const adapter = new FakeGcpRuntimeAdapter();
-    const service = new GcpProvisioningOrchestratorService(repository as never, adapter);
+    const service = new GcpProvisioningOrchestratorService(
+      repository as never,
+      adapter,
+    );
 
     const result = await service.provisionTarget({
       workspaceId: 'workspace-1',
@@ -149,7 +162,10 @@ describe('GcpProvisioningOrchestratorService', () => {
 
   it('records dedicated project intent without adapter calls until approval is granted', async () => {
     const adapter = new FakeGcpRuntimeAdapter();
-    const service = new GcpProvisioningOrchestratorService(repository as never, adapter);
+    const service = new GcpProvisioningOrchestratorService(
+      repository as never,
+      adapter,
+    );
 
     const result = await service.provisionTarget({
       workspaceId: 'workspace-1',
@@ -193,7 +209,10 @@ describe('GcpProvisioningOrchestratorService', () => {
       errorCode: 'GCP_CLOUD_RUN_DEPLOY_FAILED',
       safeMessage: 'Cloud Run service could not be prepared',
     });
-    const service = new GcpProvisioningOrchestratorService(repository as never, adapter);
+    const service = new GcpProvisioningOrchestratorService(
+      repository as never,
+      adapter,
+    );
 
     const result = await service.provisionTarget({
       workspaceId: 'workspace-1',
@@ -214,7 +233,9 @@ describe('GcpProvisioningOrchestratorService', () => {
       safeMessage: 'Cloud Run service could not be prepared',
       nextRetryAt: expect.any(String),
     });
-    expect(JSON.stringify(repository.markRetryableFailure.mock.calls)).not.toContain('private_key');
+    expect(
+      JSON.stringify(repository.markRetryableFailure.mock.calls),
+    ).not.toContain('private_key');
     expect(result).toEqual(
       expect.objectContaining({
         status: 'failed',

@@ -35,23 +35,30 @@ describe('DomainsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repository.findActiveDomainByHostname.mockResolvedValue(null);
-    repository.createDomainRecord.mockImplementation((input: Record<string, unknown>) =>
-      Promise.resolve(makeRecord({ hostname: input.hostname, kind: input.kind })),
+    repository.createDomainRecord.mockImplementation(
+      (input: Record<string, unknown>) =>
+        Promise.resolve(
+          makeRecord({ hostname: input.hostname, kind: input.kind }),
+        ),
     );
-    repository.updateVerificationResult.mockImplementation((input: Record<string, unknown>) =>
-      Promise.resolve(
-        makeRecord({
-          id: input.domainId,
-          certificateStatus: input.certificateStatus,
-          dnsInstructions: input.dnsInstructions,
-          lastVerifiedAt: input.lastVerifiedAt,
-        }),
-      ),
+    repository.updateVerificationResult.mockImplementation(
+      (input: Record<string, unknown>) =>
+        Promise.resolve(
+          makeRecord({
+            id: input.domainId,
+            certificateStatus: input.certificateStatus,
+            dnsInstructions: input.dnsInstructions,
+            lastVerifiedAt: input.lastVerifiedAt,
+          }),
+        ),
     );
   });
 
   it('reserves a dev managed subdomain under the configured base domain', async () => {
-    const service = new DomainsService(repository as never, new FakeDomainVerifier());
+    const service = new DomainsService(
+      repository as never,
+      new FakeDomainVerifier(),
+    );
 
     await service.reserveManagedDomain({
       deploymentTargetId: 'target-1',
@@ -73,7 +80,10 @@ describe('DomainsService', () => {
   });
 
   it('reserves a prod managed subdomain without the prod suffix', async () => {
-    const service = new DomainsService(repository as never, new FakeDomainVerifier());
+    const service = new DomainsService(
+      repository as never,
+      new FakeDomainVerifier(),
+    );
 
     await service.reserveManagedDomain({
       deploymentTargetId: 'target-1',
@@ -90,7 +100,10 @@ describe('DomainsService', () => {
   });
 
   it('reserves custom domains as pending verification records', async () => {
-    const service = new DomainsService(repository as never, new FakeDomainVerifier());
+    const service = new DomainsService(
+      repository as never,
+      new FakeDomainVerifier(),
+    );
 
     await service.reserveCustomDomain({
       deploymentTargetId: 'target-1',
@@ -114,9 +127,15 @@ describe('DomainsService', () => {
 
   it('does not attach one custom domain to two active projects', async () => {
     repository.findActiveDomainByHostname.mockResolvedValueOnce(
-      makeRecord({ deploymentTargetId: 'target-other', hostname: 'api.customer.test' }),
+      makeRecord({
+        deploymentTargetId: 'target-other',
+        hostname: 'api.customer.test',
+      }),
     );
-    const service = new DomainsService(repository as never, new FakeDomainVerifier());
+    const service = new DomainsService(
+      repository as never,
+      new FakeDomainVerifier(),
+    );
 
     await expect(
       service.reserveCustomDomain({

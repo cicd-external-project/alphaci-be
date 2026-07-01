@@ -2,7 +2,12 @@ import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
-import { DomainsService, type ReserveCustomDomainInput, type ReserveManagedDomainInput, type VerifyDomainInput } from './domains.service';
+import {
+  DomainsService,
+  type ReserveCustomDomainInput,
+  type ReserveManagedDomainInput,
+  type VerifyDomainInput,
+} from './domains.service';
 
 @Controller('runtime-domains')
 @UseGuards(SessionAuthGuard, SubscriptionGuard)

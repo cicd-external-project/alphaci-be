@@ -10,8 +10,12 @@ describe('DomainsController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service.reserveManagedDomain.mockResolvedValue({ id: 'managed-domain' } as never);
-    service.reserveCustomDomain.mockResolvedValue({ id: 'custom-domain' } as never);
+    service.reserveManagedDomain.mockResolvedValue({
+      id: 'managed-domain',
+    } as never);
+    service.reserveCustomDomain.mockResolvedValue({
+      id: 'custom-domain',
+    } as never);
     service.verifyDomain.mockResolvedValue({ id: 'verified-domain' } as never);
   });
 

@@ -473,4 +473,50 @@ describe('buildStagedWorkflowBundle', () => {
       "(needs.deploy-render.result == 'success' || needs.deploy-render.result == 'skipped')",
     );
   });
+  it('generates a bounded GCP pull request preview deploy job when previews are enabled', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      servicePath: 'backend',
+      deploymentTargets: [
+        {
+          slot: 'backend',
+          provider: 'gcp',
+          deploymentStrategy: 'gcp_cloud_run',
+          rootDirectory: 'backend',
+          imageName: 'orders-api',
+          gcpProjectId: 'alphaci-runtime',
+          gcpRegion: 'asia-southeast1',
+          workloadIdentityProvider:
+            'projects/123/locations/global/workloadIdentityPools/github/providers/github',
+          deployerServiceAccount:
+            'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com',
+          runtimeServiceAccount:
+            'orders-api-runtime@alphaci-runtime.iam.gserviceaccount.com',
+          artifactRegistryRepository: 'alphaci-services',
+          cloudRunServiceName: 'orders-api-dev',
+          allowPreview: true,
+        },
+      ],
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const previewDeploy = pkg.jobs['deploy-gcp-preview-backend'];
+
+    expect(previewDeploy?.needs).toEqual(['build']);
+    expect(previewDeploy?.if).toContain("workflow_run.event == 'pull_request'");
+    expect(previewDeploy?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/gcp-cloud-run-deploy.yml@v1',
+    );
+    expect(previewDeploy?.with).toEqual(
+      expect.objectContaining({
+        environment: 'preview',
+        'cloud-run-service-name':
+          'orders-api-dev-pr-${{ github.event.workflow_run.pull_requests[0].number }}',
+        'image-name':
+          'orders-api-pr-${{ github.event.workflow_run.pull_requests[0].number }}',
+        'allow-preview': true,
+      }),
+    );
+  });
 });

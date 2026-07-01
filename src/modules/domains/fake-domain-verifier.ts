@@ -15,6 +15,7 @@ export class FakeDomainVerifier implements DomainVerifier {
   async verify(
     input: DomainVerificationInput,
   ): Promise<DomainVerificationResult> {
+    await Promise.resolve();
     const mode = this.options.mode ?? 'matched';
     const name = input.hostname;
     const dnsInstructions = {

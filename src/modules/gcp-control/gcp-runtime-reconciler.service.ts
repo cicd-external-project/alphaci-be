@@ -98,16 +98,19 @@ export class GcpRuntimeReconcilerService {
       deploymentStatus,
       safeErrorCode: safeError.code,
       safeErrorMessage: safeError.safeMessage,
-      ...(retryableJob?.nextRetryAt ? { nextRetryAt: retryableJob.nextRetryAt } : {}),
+      ...(retryableJob?.nextRetryAt
+        ? { nextRetryAt: retryableJob.nextRetryAt }
+        : {}),
       ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     };
   }
 
   private async findRetryableJob(target: GcpDeploymentTargetSummary) {
     const idempotencyKey = `${target.workspaceId}:${target.projectId}:${target.id}:${target.environment}`;
-    const job = await this.provisioningJobsRepository.findByIdempotencyKey(
-      idempotencyKey,
-    );
+    const job =
+      await this.provisioningJobsRepository.findByIdempotencyKey(
+        idempotencyKey,
+      );
 
     if (job?.status === 'failed' && job.nextRetryAt) {
       return job;

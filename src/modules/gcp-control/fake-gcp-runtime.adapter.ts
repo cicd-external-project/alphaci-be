@@ -38,6 +38,7 @@ export class FakeGcpRuntimeAdapter implements GcpRuntimeAdapter {
 
   async ensureProject(input: EnsureProjectInput): Promise<EnsureProjectResult> {
     this.record('ensureProject', input);
+    await Promise.resolve();
     return {
       gcpProjectId: input.gcpProjectId,
       region: input.region,
@@ -50,6 +51,7 @@ export class FakeGcpRuntimeAdapter implements GcpRuntimeAdapter {
     input: EnsureArtifactRegistryInput,
   ): Promise<EnsureArtifactRegistryResult> {
     this.record('ensureArtifactRegistry', input);
+    await Promise.resolve();
     return {
       gcpProjectId: input.gcpProjectId,
       region: input.region,
@@ -64,6 +66,7 @@ export class FakeGcpRuntimeAdapter implements GcpRuntimeAdapter {
     input: EnsureRuntimeServiceAccountInput,
   ): Promise<EnsureRuntimeServiceAccountResult> {
     this.record('ensureRuntimeServiceAccount', input);
+    await Promise.resolve();
     return {
       gcpProjectId: input.gcpProjectId,
       resourceName: `projects/${input.gcpProjectId}/serviceAccounts/${input.serviceName}@${input.gcpProjectId}.iam.gserviceaccount.com`,
@@ -76,6 +79,7 @@ export class FakeGcpRuntimeAdapter implements GcpRuntimeAdapter {
     input: EnsureCloudRunServiceInput,
   ): Promise<EnsureCloudRunServiceResult> {
     this.record('ensureCloudRunService', input);
+    await Promise.resolve();
     return {
       gcpProjectId: input.gcpProjectId,
       region: input.region,
@@ -91,6 +95,7 @@ export class FakeGcpRuntimeAdapter implements GcpRuntimeAdapter {
     input: GetCloudRunServiceInput,
   ): Promise<GetCloudRunServiceResult> {
     this.record('getCloudRunService', input);
+    await Promise.resolve();
     return {
       gcpProjectId: input.gcpProjectId,
       region: input.region,

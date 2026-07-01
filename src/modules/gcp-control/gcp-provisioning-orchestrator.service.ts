@@ -1,7 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { ProvisioningJobsRepository } from './provisioning-jobs.repository';
-import type { ProvisioningJobSummary, SafeProvisioningError } from './gcp-control.types';
+import type {
+  ProvisioningJobSummary,
+  SafeProvisioningError,
+} from './gcp-control.types';
 import {
   GCP_RUNTIME_ADAPTER,
   GcpRuntimeAdapterError,
@@ -31,7 +34,11 @@ export interface ProvisionGcpRuntimeTargetInput {
 
 export interface ProvisionGcpRuntimeTargetResult {
   jobId: string;
-  status: 'succeeded' | 'pending_approval' | 'failed' | ProvisioningJobSummary['status'];
+  status:
+    | 'succeeded'
+    | 'pending_approval'
+    | 'failed'
+    | ProvisioningJobSummary['status'];
   runtimePlacement: GcpRuntimePlacement;
   gcpProjectId?: string;
   serviceUrl?: string;
@@ -100,7 +107,9 @@ export class GcpProvisioningOrchestratorService {
         ...(resultPayload.gcpProjectId
           ? { gcpProjectId: resultPayload.gcpProjectId }
           : {}),
-        ...(resultPayload.serviceUrl ? { serviceUrl: resultPayload.serviceUrl } : {}),
+        ...(resultPayload.serviceUrl
+          ? { serviceUrl: resultPayload.serviceUrl }
+          : {}),
         ...(input.correlationId ? { correlationId: input.correlationId } : {}),
       };
     } catch (error) {
@@ -142,11 +151,12 @@ export class GcpProvisioningOrchestratorService {
       repository: input.artifactRegistryRepository,
       labels,
     });
-    const serviceAccount = await this.runtimeAdapter.ensureRuntimeServiceAccount({
-      gcpProjectId,
-      serviceName: input.serviceName,
-      labels,
-    });
+    const serviceAccount =
+      await this.runtimeAdapter.ensureRuntimeServiceAccount({
+        gcpProjectId,
+        serviceName: input.serviceName,
+        labels,
+      });
     const cloudRun = await this.runtimeAdapter.ensureCloudRunService({
       gcpProjectId,
       region: input.region,

@@ -102,7 +102,9 @@ export interface GcpRuntimeAdapter {
   ensureCloudRunService(
     input: EnsureCloudRunServiceInput,
   ): Promise<EnsureCloudRunServiceResult>;
-  getCloudRunService(input: GetCloudRunServiceInput): Promise<GetCloudRunServiceResult>;
+  getCloudRunService(
+    input: GetCloudRunServiceInput,
+  ): Promise<GetCloudRunServiceResult>;
 }
 
 export class GcpRuntimeAdapterError extends Error {

@@ -93,6 +93,8 @@ const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
 );
 
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
+const PR_EVENT_EXPR = "github.event.workflow_run.event == 'pull_request'";
+const PR_NUMBER_EXPR = 'github.event.workflow_run.pull_requests[0].number';
 
 /** Extra coverage demanded on uat/main on top of the baseline, capped. */
 const STRICT_COVERAGE_BONUS = 10;
@@ -370,6 +372,12 @@ export function buildStagedWorkflowBundle(
             gcpTargets,
             centralWorkflowRef,
           ),
+          ...gcpPreviewDeployJobs(
+            serviceName,
+            servicePath,
+            gcpTargets,
+            centralWorkflowRef,
+          ),
           'promote-to-uat': promotionJob(
             'test-to-uat',
             'test',
@@ -511,7 +519,7 @@ function protectedDeployBranchExpression(): string {
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
-    if: `\${{ (${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' }}`,
+    if: `\${{ (${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' || ${PR_EVENT_EXPR} }}`,
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {
@@ -651,6 +659,46 @@ function gcpDeployJobs(
   );
 }
 
+function gcpPreviewDeployJobs(
+  serviceName: string,
+  servicePath: string,
+  targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
+) {
+  const prNumber = `\${{ ${PR_NUMBER_EXPR} }}`;
+  return Object.fromEntries(
+    targets
+      .filter((target) => target.allowPreview === true)
+      .map((target) => [
+        `deploy-gcp-preview-${target.slot}`,
+        {
+          needs: ['build'],
+          if: `\${{ !cancelled() && needs.build.result == 'success' && ${PR_EVENT_EXPR} && ${PR_NUMBER_EXPR} != '' }}`,
+          uses: `${CENTRAL_WORKFLOW_REF}/gcp-cloud-run-deploy.yml@${centralWorkflowRef}`,
+          with: {
+            'system-name':
+              target.slot === 'standalone' ? serviceName : target.slot,
+            'working-directory': target.rootDirectory ?? servicePath,
+            'checkout-ref': HEAD_SHA_EXPR,
+            'source-branch': `\${{ ${BRANCH_EXPR} }}`,
+            environment: 'preview',
+            'gcp-project-id': target.gcpProjectId,
+            'gcp-region': target.gcpRegion,
+            'workload-identity-provider': target.workloadIdentityProvider,
+            'deployer-service-account': target.deployerServiceAccount,
+            'runtime-service-account': target.runtimeServiceAccount,
+            'artifact-registry-repository': target.artifactRegistryRepository,
+            'image-name': `${target.imageName ?? `flowci-${target.slot}`}-pr-${prNumber}`,
+            'cloud-run-service-name': `${target.cloudRunServiceName}-pr-${prNumber}`,
+            'docker-context':
+              target.dockerContext ?? target.rootDirectory ?? servicePath,
+            'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
+            'allow-preview': true,
+          },
+        },
+      ]),
+  );
+}
 function renderDeployJob(serviceName: string, centralWorkflowRef: string) {
   return {
     needs: ['build', 'production-gate'],

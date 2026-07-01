@@ -1,5 +1,9 @@
 export type RuntimeDomainKind = 'generated' | 'preview' | 'custom' | 'fallback';
-export type RuntimeDomainRoutingMode = 'load_balancer' | 'cloud_run_domain_mapping' | 'dns_only' | 'manual';
+export type RuntimeDomainRoutingMode =
+  | 'load_balancer'
+  | 'cloud_run_domain_mapping'
+  | 'dns_only'
+  | 'manual';
 export type RuntimeDomainCertificateStatus =
   | 'pending'
   | 'provisioning'

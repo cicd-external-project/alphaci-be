@@ -26,8 +26,10 @@ function makeTarget(
     artifactRegistryRepo: 'alphaci',
     imageName: 'alpha-demo',
     cloudRunServiceName: 'alpha-demo-dev',
-    runtimeServiceAccount: 'alpha-demo-dev@alphaci-shared-dev.iam.gserviceaccount.com',
-    deployerServiceAccount: 'deployer@alphaci-shared-dev.iam.gserviceaccount.com',
+    runtimeServiceAccount:
+      'alpha-demo-dev@alphaci-shared-dev.iam.gserviceaccount.com',
+    deployerServiceAccount:
+      'deployer@alphaci-shared-dev.iam.gserviceaccount.com',
     provisioningStatus: 'provisioned',
     deploymentStatus: 'healthy',
     lastHealthyRevision: null,
@@ -51,7 +53,8 @@ describe('GcpRuntimeReconcilerService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     deploymentTargetsRepository.recordReconciliationEvidence.mockImplementation(
-      (input: Record<string, unknown>) => Promise.resolve({ ...makeTarget(), ...input }),
+      (input: Record<string, unknown>) =>
+        Promise.resolve({ ...makeTarget(), ...input }),
     );
     provisioningJobsRepository.findByIdempotencyKey.mockResolvedValue(null);
   });
@@ -69,7 +72,9 @@ describe('GcpRuntimeReconcilerService', () => {
       correlationId: 'corr-healthy',
     });
 
-    expect(deploymentTargetsRepository.recordReconciliationEvidence).toHaveBeenCalledWith(
+    expect(
+      deploymentTargetsRepository.recordReconciliationEvidence,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         targetId: 'target-1',
         status: 'ready',
@@ -105,7 +110,9 @@ describe('GcpRuntimeReconcilerService', () => {
       correlationId: 'corr-missing',
     });
 
-    expect(deploymentTargetsRepository.recordReconciliationEvidence).toHaveBeenCalledWith(
+    expect(
+      deploymentTargetsRepository.recordReconciliationEvidence,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         targetId: 'target-1',
         status: 'drifted',
@@ -139,7 +146,9 @@ describe('GcpRuntimeReconcilerService', () => {
       correlationId: 'corr-access',
     });
 
-    expect(deploymentTargetsRepository.recordReconciliationEvidence).toHaveBeenCalledWith(
+    expect(
+      deploymentTargetsRepository.recordReconciliationEvidence,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'blocked_by_access',
         deploymentStatus: 'failed',
@@ -176,7 +185,9 @@ describe('GcpRuntimeReconcilerService', () => {
       correlationId: 'corr-retry',
     });
 
-    expect(deploymentTargetsRepository.recordReconciliationEvidence).toHaveBeenCalledWith(
+    expect(
+      deploymentTargetsRepository.recordReconciliationEvidence,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'retry_pending',
         deploymentStatus: 'queued',

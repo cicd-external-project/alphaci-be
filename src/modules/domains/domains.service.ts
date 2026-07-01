@@ -2,10 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { DomainsRepository } from './domains.repository';
 import { FakeDomainVerifier } from './fake-domain-verifier';
-import type {
-  DomainVerifier,
-  RuntimeDomainSummary,
-} from './domains.types';
+import type { DomainVerifier, RuntimeDomainSummary } from './domains.types';
 
 export interface ReserveManagedDomainInput {
   deploymentTargetId: string;
@@ -40,7 +37,8 @@ export class DomainsService {
       input.managedDomainBase ?? 'itsandbox.site',
     );
     const projectSlug = this.slugify(input.projectSlug);
-    const environmentSuffix = input.environment === 'prod' ? '' : `-${input.environment}`;
+    const environmentSuffix =
+      input.environment === 'prod' ? '' : `-${input.environment}`;
     const hostname = `${projectSlug}${environmentSuffix}.${domainBase}`;
 
     return this.repository.createDomainRecord({
@@ -65,7 +63,9 @@ export class DomainsService {
     const hostname = this.normalizeHostname(input.hostname);
     const existing = await this.repository.findActiveDomainByHostname(hostname);
     if (existing && existing.deploymentTargetId !== input.deploymentTargetId) {
-      throw new BadRequestException('Domain is already attached to another project');
+      throw new BadRequestException(
+        'Domain is already attached to another project',
+      );
     }
 
     return this.repository.createDomainRecord({
@@ -110,7 +110,9 @@ export class DomainsService {
   private domainBaseFromHostname(hostname: string): string {
     const parts = hostname.split('.').filter(Boolean);
     if (parts.length < 2) {
-      throw new BadRequestException('Custom domain must contain a registrable base');
+      throw new BadRequestException(
+        'Custom domain must contain a registrable base',
+      );
     }
 
     return parts.slice(-2).join('.');
