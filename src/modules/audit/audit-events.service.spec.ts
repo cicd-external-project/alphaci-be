@@ -1,4 +1,7 @@
-import { AuditEventsService } from './audit-events.service';
+import {
+  AuditEventsService,
+  GCP_RUNTIME_AUDIT_EVENT_CODES,
+} from './audit-events.service';
 
 describe('AuditEventsService', () => {
   const repository = {
@@ -89,5 +92,19 @@ describe('AuditEventsService', () => {
       service.listProjectEvents('project-1', 'user-1'),
     ).resolves.toEqual({ enabled: false, items: [] });
     expect(repository.listByProjectForUser).not.toHaveBeenCalled();
+  });
+
+  it('defines the GCP runtime audit events used by local readiness views', () => {
+    expect(GCP_RUNTIME_AUDIT_EVENT_CODES).toEqual([
+      'gcp.runtime.provision.requested',
+      'gcp.runtime.provision.succeeded',
+      'gcp.runtime.provision.failed',
+      'gcp.runtime.reconcile.drifted',
+      'gcp.domain.verification.requested',
+      'gcp.domain.verification.succeeded',
+      'gcp.preview.cleanup.requested',
+      'gcp.preview.cleanup.succeeded',
+      'legacy_provider_connection.create_blocked',
+    ]);
   });
 });

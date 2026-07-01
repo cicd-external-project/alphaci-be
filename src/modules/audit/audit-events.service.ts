@@ -8,6 +8,20 @@ import {
   type CreateAuditEventInput,
 } from './audit-events.repository';
 
+export const GCP_RUNTIME_AUDIT_EVENT_CODES = [
+  'gcp.runtime.provision.requested',
+  'gcp.runtime.provision.succeeded',
+  'gcp.runtime.provision.failed',
+  'gcp.runtime.reconcile.drifted',
+  'gcp.domain.verification.requested',
+  'gcp.domain.verification.succeeded',
+  'gcp.preview.cleanup.requested',
+  'gcp.preview.cleanup.succeeded',
+  'legacy_provider_connection.create_blocked',
+] as const;
+
+export type GcpRuntimeAuditEventCode =
+  (typeof GCP_RUNTIME_AUDIT_EVENT_CODES)[number];
 @Injectable()
 export class AuditEventsService {
   private readonly logger = new Logger(AuditEventsService.name);

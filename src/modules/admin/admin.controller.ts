@@ -22,6 +22,12 @@ import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 import { SuperAdminGuard } from './guards/super-admin.guard';
 
+interface ListGcpRuntimeProjectsQuery {
+  status?: string;
+  runtimePlacement?: string;
+  owner?: string;
+}
+
 /**
  * Platform admin API. Every route is locked by the class-level guards
  * (SessionAuthGuard → PlatformAdminGuard), so a new endpoint is admin-only by
@@ -31,6 +37,18 @@ import { SuperAdminGuard } from './guards/super-admin.guard';
 @UseGuards(SessionAuthGuard, PlatformAdminGuard)
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Get('gcp-runtime')
+  listGcpRuntimeProjects(
+    @Req() req: Request,
+    @Query() query: ListGcpRuntimeProjectsQuery,
+  ) {
+    return this.adminService.listGcpRuntimeProjects(this.actorId(req), {
+      status: query.status,
+      runtimePlacement: query.runtimePlacement,
+      owner: query.owner,
+    });
+  }
 
   @Get('users')
   listUsers(@Req() req: Request, @Query() query: ListUsersQueryDto) {

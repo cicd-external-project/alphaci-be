@@ -22,6 +22,10 @@ import {
   type AdminUserDetail,
   type AdminUserListItem,
 } from './admin-user.view';
+import {
+  toAdminGcpRuntimeProject,
+  type AdminGcpRuntimeProject,
+} from './gcp-runtime-admin.view';
 
 const DEFAULT_PAGE_SIZE = 25;
 
@@ -30,6 +34,11 @@ export interface AdminUsersPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface AdminGcpRuntimeProjectsPage {
+  items: AdminGcpRuntimeProject[];
+  total: number;
 }
 
 @Injectable()
@@ -117,6 +126,40 @@ export class AdminService {
       { targetUserId, count: errors.length },
     );
     return { items: errors };
+  }
+
+  async listGcpRuntimeProjects(
+    actorId: string,
+    query: {
+      status?: string | undefined;
+      runtimePlacement?: string | undefined;
+      owner?: string | undefined;
+    },
+  ): Promise<AdminGcpRuntimeProjectsPage> {
+    const rows = await this.adminRepository.listGcpRuntimeProjects({
+      ...(query.status !== undefined && { status: query.status }),
+      ...(query.runtimePlacement !== undefined && {
+        runtimePlacement: query.runtimePlacement,
+      }),
+      ...(query.owner !== undefined && { owner: query.owner }),
+    });
+
+    await this.audit(
+      actorId,
+      'admin.gcp_runtime.viewed',
+      'Admin viewed GCP runtime readiness',
+      {
+        status: query.status ?? null,
+        runtimePlacement: query.runtimePlacement ?? null,
+        owner: query.owner ?? null,
+        returned: rows.length,
+      },
+    );
+
+    return {
+      items: rows.map(toAdminGcpRuntimeProject),
+      total: rows.length,
+    };
   }
 
   async listAdmins(): Promise<PlatformAdminRecord[]> {
