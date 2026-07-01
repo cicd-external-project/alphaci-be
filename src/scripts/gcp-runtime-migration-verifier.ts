@@ -8,6 +8,18 @@ const DEFAULT_MIGRATION_PATH =
 const DEFAULT_ROLLBACK_PATH =
   'supabase/rollbacks/20260701_gcp_runtime_expand_contract_down.sql';
 const DISPOSABLE_REMOTE_DATABASE_NAME = /(shadow|verify|test|local)/i;
+const VERIFY_DATABASE_URL_ENV = 'GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL';
+const MISSING_DATABASE_URL_MESSAGE =
+  'GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL is required for apply verification. Use a local or disposable shadow database. Do not point this at production or shared staging.';
+
+const REQUIRED_RUNTIME_TABLES = [
+  'runtime_deployments.deployment_targets',
+  'runtime_deployments.deployment_attempts',
+  'runtime_domains.domain_records',
+  'runtime_secrets.secret_references',
+  'gcp_operations.provisioning_jobs',
+  'billing_lifecycle.runtime_cost_summaries',
+];
 
 export interface VerificationConfig {
   databaseUrl: string;
@@ -27,13 +39,19 @@ export interface MigrationClient {
   query(sql: string): Promise<unknown>;
 }
 
+interface TableCheckResult {
+  rows?: Array<{
+    exists?: unknown;
+  }>;
+}
+
 export function buildVerificationConfig(
   env: NodeJS.ProcessEnv,
 ): VerificationConfig {
-  const databaseUrl = env.GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL;
+  const databaseUrl = env[VERIFY_DATABASE_URL_ENV];
 
   if (!databaseUrl) {
-    throw new Error('GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL is required');
+    throw new Error(MISSING_DATABASE_URL_MESSAGE);
   }
 
   return {
@@ -91,6 +109,20 @@ export function maskDatabaseUrl(databaseUrl: string): string {
   return url.toString();
 }
 
+export function formatVerificationPlan(
+  config: VerificationConfig,
+  decision: VerificationDecision,
+): string[] {
+  return [
+    `Database URL source: ${VERIFY_DATABASE_URL_ENV}`,
+    `Database target: ${maskDatabaseUrl(config.databaseUrl)}`,
+    `Migration file: ${config.migrationPath}`,
+    `Rollback file: ${config.rollbackPath}`,
+    `Safety gate: ${decision.reason}`,
+    'Production/shared safety: use only a local or disposable shadow database.',
+  ];
+}
+
 export async function runMigrationVerification(
   config: VerificationConfig,
   client: MigrationClient = new Client({
@@ -103,14 +135,16 @@ export async function runMigrationVerification(
     throw new Error(`Refusing migration verification: ${decision.reason}`);
   }
 
-  const migrationSql = await readFile(resolve(config.migrationPath), 'utf8');
-  const rollbackSql = await readFile(resolve(config.rollbackPath), 'utf8');
+  const migrationSql = await readSqlFile(config.migrationPath, 'migration');
+  const rollbackSql = await readSqlFile(config.rollbackPath, 'rollback');
 
   await client.connect();
 
   try {
     await client.query(migrationSql);
+    await assertRuntimeTables(client, 'after migration', true);
     await client.query(rollbackSql);
+    await assertRuntimeTables(client, 'after rollback', false);
   } finally {
     await client.end();
   }
@@ -124,14 +158,48 @@ export async function main(env: NodeJS.ProcessEnv = process.env) {
     throw new Error(`Refusing migration verification: ${decision.reason}`);
   }
 
-  console.info(
-    `Verifying GCP runtime migration against ${maskDatabaseUrl(
-      config.databaseUrl,
-    )}`,
-  );
-  console.info(`Safety gate: ${decision.reason}`);
+  for (const line of formatVerificationPlan(config, decision)) {
+    console.info(line);
+  }
 
   await runMigrationVerification(config);
 
   console.info('GCP runtime migration apply/rollback verification passed');
+}
+
+async function readSqlFile(path: string, kind: 'migration' | 'rollback') {
+  try {
+    return await readFile(resolve(path), 'utf8');
+  } catch (error) {
+    throw new Error(
+      `Failed to read ${kind} file ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+async function assertRuntimeTables(
+  client: MigrationClient,
+  phase: 'after migration' | 'after rollback',
+  shouldExist: boolean,
+): Promise<void> {
+  for (const tableName of REQUIRED_RUNTIME_TABLES) {
+    const result = (await client.query(
+      `SELECT to_regclass('${tableName}') AS exists; -- ${phase}`,
+    )) as TableCheckResult;
+    const exists = result.rows?.[0]?.exists ?? null;
+
+    if (shouldExist && exists === null) {
+      throw new Error(
+        `Schema/table check failed ${phase}: ${tableName} was not created`,
+      );
+    }
+
+    if (!shouldExist && exists !== null) {
+      throw new Error(
+        `Schema/table check failed ${phase}: ${tableName} still exists`,
+      );
+    }
+  }
 }

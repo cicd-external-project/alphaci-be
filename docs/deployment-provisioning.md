@@ -146,3 +146,29 @@ After deploying backend, frontend, and central workflow to test:
 Use `docs/deployment-provisioning-live-smoke.md` for the full live smoke
 checklist and cleanup sequence. The live smoke creates temporary GitHub, Vercel,
 and Render resources and must only be run after explicit approval.
+
+## GCP Runtime Migration Verification
+
+The GCP runtime expand-contract migration has a local verifier that must only run against a local database or disposable shadow database. It is intentionally separate from production or shared staging promotion.
+
+Run without a URL to confirm the safety gate:
+
+```powershell
+npm run db:verify:gcp-runtime-migration
+```
+
+Expected safe failure:
+
+```text
+GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL is required for apply verification. Use a local or disposable shadow database. Do not point this at production or shared staging.
+```
+
+Run the apply/rollback check only after a disposable database exists:
+
+```powershell
+$env:GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL='postgresql://postgres:postgres@localhost:54322/postgres'
+npm run db:verify:gcp-runtime-migration
+Remove-Item Env:\GCP_RUNTIME_MIGRATION_VERIFY_DATABASE_URL
+```
+
+The verifier prints the URL source, a masked target, the migration file, the rollback file, and the safety gate. It then applies the migration, checks that the expected runtime schemas and tables exist, applies the rollback, and checks that those runtime tables were removed. It must not print the raw database URL.
