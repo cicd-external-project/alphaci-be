@@ -4,6 +4,7 @@ import { DatabaseModule } from '../database/database.module';
 import { FakeGcpRuntimeAdapter } from './fake-gcp-runtime.adapter';
 import { GcpProviderCapabilitiesService } from './gcp-provider-capabilities.service';
 import { GcpProvisioningOrchestratorService } from './gcp-provisioning-orchestrator.service';
+import { GcpRuntimeReconcilerService } from './gcp-runtime-reconciler.service';
 import { GCP_RUNTIME_ADAPTER } from './gcp-runtime.adapter';
 import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
 
@@ -13,6 +14,7 @@ import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
     GcpProviderCapabilitiesService,
     ProvisioningJobsRepository,
     GcpProvisioningOrchestratorService,
+    GcpRuntimeReconcilerService,
     {
       provide: GCP_RUNTIME_ADAPTER,
       useClass: FakeGcpRuntimeAdapter,
@@ -22,6 +24,7 @@ import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
     GcpProviderCapabilitiesService,
     ProvisioningJobsRepository,
     GcpProvisioningOrchestratorService,
+    GcpRuntimeReconcilerService,
     GCP_RUNTIME_ADAPTER,
   ],
 })

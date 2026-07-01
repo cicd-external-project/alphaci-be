@@ -139,7 +139,53 @@ describe('GcpDeploymentTargetsRepository', () => {
       }),
     );
   });
+  it('records reconciliation evidence without changing provider secrets', async () => {
+    databaseService.query.mockResolvedValueOnce({
+      rows: [
+        makeRow({
+          id: 'target-1',
+          deployment_status: 'healthy',
+          last_healthy_revision: 'alpha-demo-dev-00001-fake',
+          metadata: {
+            reconciliation: {
+              status: 'ready',
+              lastObservedUrl: 'https://alpha-demo-dev-uc.a.run.app',
+            },
+          },
+        }),
+      ],
+    });
 
+    const target = await repository.recordReconciliationEvidence({
+      targetId: 'target-1',
+      status: 'ready',
+      deploymentStatus: 'healthy',
+      lastCheckedAt: '2026-07-02T00:00:00.000Z',
+      lastObservedRevision: 'alpha-demo-dev-00001-fake',
+      lastObservedUrl: 'https://alpha-demo-dev-uc.a.run.app',
+      correlationId: 'corr-1',
+    });
+
+    expect(databaseService.query).toHaveBeenCalledWith(
+      expect.stringContaining('last_healthy_revision = $2'),
+      expect.arrayContaining([
+        'target-1',
+        'alpha-demo-dev-00001-fake',
+        null,
+        null,
+      ]),
+    );
+    expect(JSON.stringify(databaseService.query.mock.calls[0])).not.toContain(
+      'secret',
+    );
+    expect(target).toEqual(
+      expect.objectContaining({
+        id: 'target-1',
+        deploymentStatus: 'healthy',
+        lastHealthyRevision: 'alpha-demo-dev-00001-fake',
+      }),
+    );
+  });
   it('never maps secret payload fields into target summaries', async () => {
     databaseService.query.mockResolvedValueOnce({
       rows: [

@@ -78,3 +78,26 @@ export interface FindGcpDeploymentTargetInput {
   environment: GcpRuntimeEnvironment;
   serviceSlot: GcpRuntimeServiceSlot;
 }
+
+export type GcpRuntimeReconciliationStatus =
+  | 'pending'
+  | 'provisioning'
+  | 'ready'
+  | 'degraded'
+  | 'drifted'
+  | 'blocked_by_access'
+  | 'retry_pending'
+  | 'failed'
+  | 'archived';
+
+export interface RecordGcpReconciliationEvidenceInput {
+  targetId: string;
+  status: GcpRuntimeReconciliationStatus;
+  deploymentStatus: GcpDeploymentStatus;
+  lastCheckedAt: string;
+  lastObservedRevision?: string | null;
+  lastObservedUrl?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  correlationId?: string;
+}

@@ -11,6 +11,7 @@ import type {
   GcpRuntimeOwnerType,
   GcpRuntimeScope,
   GcpRuntimeServiceSlot,
+  RecordGcpReconciliationEvidenceInput,
 } from './gcp-runtime.types';
 
 interface GcpDeploymentTargetRow {
@@ -138,6 +139,54 @@ export class GcpDeploymentTargetsRepository {
     return row ? this.toSummary(row) : null;
   }
 
+  async recordReconciliationEvidence(
+    input: RecordGcpReconciliationEvidenceInput,
+  ): Promise<GcpDeploymentTargetSummary> {
+    if (!input.targetId.trim()) {
+      throw new BadRequestException('targetId is required');
+    }
+
+    const reconciliation = {
+      status: input.status,
+      lastCheckedAt: input.lastCheckedAt,
+      ...(input.lastObservedUrl
+        ? { lastObservedUrl: input.lastObservedUrl }
+        : {}),
+      ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    };
+
+    const result = await this.databaseService.query<GcpDeploymentTargetRow>(
+      `
+        UPDATE runtime_deployments.deployment_targets
+        SET
+          last_healthy_revision = $2,
+          last_deployment_error_code = $3,
+          last_deployment_error_safe_message = $4,
+          deployment_status = $5,
+          metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reconciliation', $6::jsonb),
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *;
+      `,
+      [
+        input.targetId,
+        input.lastObservedRevision ?? null,
+        input.lastErrorCode ?? null,
+        input.lastErrorMessage ?? null,
+        input.deploymentStatus,
+        JSON.stringify(reconciliation),
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error(
+        'runtime_deployments.deployment_targets reconciliation update returned no row',
+      );
+    }
+
+    return this.toSummary(row);
+  }
   private assertRequiredFields(input: CreateGcpDeploymentTargetInput): void {
     const required: Array<[keyof CreateGcpDeploymentTargetInput, string]> = [
       ['workspaceId', 'workspaceId'],
