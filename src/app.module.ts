@@ -32,6 +32,7 @@ import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { GcpRuntimeModule } from './modules/gcp-runtime/gcp-runtime.module.js';
 import { GcpControlModule } from './modules/gcp-control/gcp-control.module.js';
+import { DomainsModule } from './modules/domains/domains.module.js';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { GcpControlModule } from './modules/gcp-control/gcp-control.module.js';
     AdminModule,
     GcpRuntimeModule,
     GcpControlModule,
+    DomainsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
