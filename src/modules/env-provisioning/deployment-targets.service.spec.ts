@@ -81,6 +81,11 @@ describe('DeploymentTargetsService', () => {
       projectTargetManagement: {
         enabled: true,
       },
+      legacyProviders: {
+        vercelEnabled: true,
+        renderEnabled: true,
+        byoDeploymentProviderEnabled: true,
+      },
     });
 
     service = new DeploymentTargetsService(
@@ -97,6 +102,89 @@ describe('DeploymentTargetsService', () => {
       auditEventsService as never,
       notificationEventsService as never,
     );
+  });
+
+  it('rejects BYO deployment provider targets when BYO provider hosting is disabled', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+      projectTargetManagement: {
+        enabled: true,
+      },
+      legacyProviders: {
+        vercelEnabled: true,
+        renderEnabled: true,
+        byoDeploymentProviderEnabled: false,
+      },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        projectName: 'demo-frontend',
+      }),
+    ).rejects.toThrow('BYO deployment providers are disabled');
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy Vercel and Render target creation when their flags are disabled', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+      projectTargetManagement: {
+        enabled: true,
+      },
+      legacyProviders: {
+        vercelEnabled: false,
+        renderEnabled: false,
+        byoDeploymentProviderEnabled: true,
+      },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'flowci_managed',
+        provider: 'vercel',
+        projectName: 'demo-frontend',
+      }),
+    ).rejects.toThrow('Legacy Vercel deployments are disabled');
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'backend',
+        ownershipMode: 'flowci_managed',
+        provider: 'render',
+        projectName: 'demo-backend',
+      }),
+    ).rejects.toThrow('Legacy Render deployments are disabled');
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects BYO Vercel targets when connection org metadata is missing', async () => {
@@ -204,6 +292,11 @@ describe('DeploymentTargetsService', () => {
       },
       projectTargetManagement: {
         enabled: true,
+      },
+      legacyProviders: {
+        vercelEnabled: true,
+        renderEnabled: true,
+        byoDeploymentProviderEnabled: true,
       },
     });
 

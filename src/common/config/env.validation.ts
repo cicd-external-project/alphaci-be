@@ -47,6 +47,10 @@ export interface EnvironmentVariables {
   FLOWCI_VERCEL_TOKEN?: string;
   FLOWCI_VERCEL_TEAM_ID?: string;
   FLOWCI_VERCEL_TEAM_SLUG?: string;
+  GCP_DEPLOYMENTS_ENABLED?: string;
+  LEGACY_VERCEL_PROVIDER_ENABLED?: string;
+  LEGACY_RENDER_PROVIDER_ENABLED?: string;
+  BYO_DEPLOYMENT_PROVIDER_ENABLED?: string;
 }
 
 type RawEnv = Record<string, unknown>;

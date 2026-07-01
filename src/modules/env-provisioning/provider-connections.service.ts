@@ -5,7 +5,9 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import type { AppConfig } from '../../config/app.config';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type { CreateProviderConnectionDto } from './dto/create-provider-connection.dto';
 import type { EnvProvider } from './env-provisioning.types';
@@ -24,6 +26,8 @@ export class ProviderConnectionsService {
     private readonly clientRegistry: ProviderClientRegistry,
     @Optional()
     private readonly workspacesService?: WorkspacesService,
+    @Optional()
+    private readonly configService?: ConfigService,
   ) {}
 
   async createProviderConnection(
@@ -31,6 +35,7 @@ export class ProviderConnectionsService {
     dto: CreateProviderConnectionDto,
   ) {
     await this.assertCanManageProviderConnections(userId);
+    this.assertByoProviderConnectionsEnabled();
     if (!PROVIDERS.includes(dto.provider)) {
       throw new BadRequestException('Unsupported provider');
     }
@@ -86,6 +91,13 @@ export class ProviderConnectionsService {
       throw new ForbiddenException(
         'Provider connection management requires owner or admin workspace access',
       );
+    }
+  }
+
+  private assertByoProviderConnectionsEnabled(): void {
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    if (config && !config.legacyProviders.byoDeploymentProviderEnabled) {
+      throw new BadRequestException('BYO deployment providers are disabled');
     }
   }
 

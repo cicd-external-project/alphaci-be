@@ -30,6 +30,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
+import { GcpRuntimeModule } from './modules/gcp-runtime/gcp-runtime.module.js';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { AdminModule } from './modules/admin/admin.module.js';
     NotificationsModule,
     FeedbackModule,
     AdminModule,
+    GcpRuntimeModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

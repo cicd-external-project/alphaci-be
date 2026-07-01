@@ -57,6 +57,14 @@ export interface AppConfig {
       vercelTeamSlug: string | null;
     };
   };
+  gcpDeployments: {
+    enabled: boolean;
+  };
+  legacyProviders: {
+    vercelEnabled: boolean;
+    renderEnabled: boolean;
+    byoDeploymentProviderEnabled: boolean;
+  };
   projectSyncSnapshots: {
     enabled: boolean;
     liveGithubEnabled: boolean;
@@ -219,6 +227,15 @@ export const appConfig = registerAs('app', (): AppConfig => {
         vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
         vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
       },
+    },
+    gcpDeployments: {
+      enabled: env['GCP_DEPLOYMENTS_ENABLED'] === 'true',
+    },
+    legacyProviders: {
+      vercelEnabled: env['LEGACY_VERCEL_PROVIDER_ENABLED'] === 'true',
+      renderEnabled: env['LEGACY_RENDER_PROVIDER_ENABLED'] === 'true',
+      byoDeploymentProviderEnabled:
+        env['BYO_DEPLOYMENT_PROVIDER_ENABLED'] === 'true',
     },
     projectSyncSnapshots: {
       enabled: env['PROJECT_SYNC_SNAPSHOTS_ENABLED'] === 'true',

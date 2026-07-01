@@ -35,6 +35,10 @@ describe('appConfig factory', () => {
     delete process.env['AUDIT_EVENTS_ENABLED'];
     delete process.env['NOTIFICATIONS_ENABLED'];
     delete process.env['SESSION_STORE_DRIVER'];
+    delete process.env['GCP_DEPLOYMENTS_ENABLED'];
+    delete process.env['LEGACY_VERCEL_PROVIDER_ENABLED'];
+    delete process.env['LEGACY_RENDER_PROVIDER_ENABLED'];
+    delete process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'];
 
     const config = appConfig();
 
@@ -61,6 +65,10 @@ describe('appConfig factory', () => {
     expect(config.auditEvents.enabled).toBe(false);
     expect(config.notifications.enabled).toBe(false);
     expect(config.session.storeDriver).toBe('memory');
+    expect(config.gcpDeployments.enabled).toBe(false);
+    expect(config.legacyProviders.vercelEnabled).toBe(false);
+    expect(config.legacyProviders.renderEnabled).toBe(false);
+    expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(false);
   });
 
   it('reads environment variables when set', () => {
@@ -217,6 +225,20 @@ describe('appConfig factory', () => {
     expect(config.workspaces.enabled).toBe(true);
     expect(config.auditEvents.enabled).toBe(true);
     expect(config.notifications.enabled).toBe(true);
+  });
+
+  it('reads GCP and legacy provider rollout flags when explicitly flagged', () => {
+    process.env['GCP_DEPLOYMENTS_ENABLED'] = 'true';
+    process.env['LEGACY_VERCEL_PROVIDER_ENABLED'] = 'true';
+    process.env['LEGACY_RENDER_PROVIDER_ENABLED'] = 'true';
+    process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.gcpDeployments.enabled).toBe(true);
+    expect(config.legacyProviders.vercelEnabled).toBe(true);
+    expect(config.legacyProviders.renderEnabled).toBe(true);
+    expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(true);
   });
 
   it('defaults archivedAccountRetentionDays to 30', () => {

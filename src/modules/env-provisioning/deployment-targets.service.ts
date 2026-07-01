@@ -67,6 +67,7 @@ export class DeploymentTargetsService {
     dto: CreateDeploymentTargetDto,
   ) {
     await this.assertProjectMutationAccess(projectId, userId);
+    this.assertProviderCreationAllowed(dto);
     const project = await this.getProjectOrThrow(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
@@ -492,6 +493,25 @@ export class DeploymentTargetsService {
   private projectTargetManagementEnabled(): boolean {
     const config = this.configService.getOrThrow<AppConfig>('app');
     return config.projectTargetManagement?.enabled ?? false;
+  }
+
+  private assertProviderCreationAllowed(dto: CreateDeploymentTargetDto): void {
+    const config = this.configService.getOrThrow<AppConfig>('app');
+
+    if (
+      dto.ownershipMode === 'byo' &&
+      !config.legacyProviders.byoDeploymentProviderEnabled
+    ) {
+      throw new BadRequestException('BYO deployment providers are disabled');
+    }
+
+    if (dto.provider === 'vercel' && !config.legacyProviders.vercelEnabled) {
+      throw new BadRequestException('Legacy Vercel deployments are disabled');
+    }
+
+    if (dto.provider === 'render' && !config.legacyProviders.renderEnabled) {
+      throw new BadRequestException('Legacy Render deployments are disabled');
+    }
   }
 
   private normalizeMetadataUpdate(

@@ -19,6 +19,9 @@ describe('ProviderConnectionsService', () => {
   const workspacesService = {
     getMyWorkspaces: jest.fn(),
   };
+  const configService = {
+    getOrThrow: jest.fn(),
+  };
 
   let service: ProviderConnectionsService;
 
@@ -62,13 +65,38 @@ describe('ProviderConnectionsService', () => {
       updatedAt: '2026-06-10T00:00:00.000Z',
       lastUsedAt: null,
     });
+    configService.getOrThrow.mockReturnValue({
+      legacyProviders: {
+        byoDeploymentProviderEnabled: true,
+      },
+    });
 
     service = new ProviderConnectionsService(
       repository as never,
       encryptionService as never,
       clientRegistry as never,
       workspacesService as never,
+      configService as never,
     );
+  });
+
+  it('rejects new provider connections when BYO deployment providers are disabled', async () => {
+    configService.getOrThrow.mockReturnValueOnce({
+      legacyProviders: {
+        byoDeploymentProviderEnabled: false,
+      },
+    });
+
+    await expect(
+      service.createProviderConnection('user-1', {
+        provider: 'vercel',
+        label: 'Team Vercel',
+        token: 'vercel-token-cdef',
+      }),
+    ).rejects.toThrow('BYO deployment providers are disabled');
+
+    expect(vercelClient.validateConnection).not.toHaveBeenCalled();
+    expect(repository.createProviderConnection).not.toHaveBeenCalled();
   });
 
   it('validates Vercel team access before saving team connection metadata', async () => {

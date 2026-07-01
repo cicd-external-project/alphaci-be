@@ -54,6 +54,14 @@ const appConfig: AppConfig = {
       vercelTeamSlug: null,
     },
   },
+  gcpDeployments: {
+    enabled: false,
+  },
+  legacyProviders: {
+    vercelEnabled: false,
+    renderEnabled: false,
+    byoDeploymentProviderEnabled: false,
+  },
   projectSyncSnapshots: {
     enabled: false,
     liveGithubEnabled: false,
