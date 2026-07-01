@@ -1,3 +1,5 @@
+import { GoneException } from '@nestjs/common';
+
 import { ProviderConnectionsController } from './provider-connections.controller';
 import type { ProviderConnectionsService } from './provider-connections.service';
 
@@ -37,6 +39,27 @@ describe('ProviderConnectionsController', () => {
     );
   });
 
+  it('propagates the legacy provider disabled product error', async () => {
+    const service = makeService();
+    const error = new GoneException({
+      code: 'LEGACY_PROVIDER_CONNECTIONS_DISABLED',
+      message:
+        'New Vercel and Render provider connections are disabled for the managed GCP migration.',
+    });
+    service.createProviderConnection.mockRejectedValueOnce(error);
+    const controller = new ProviderConnectionsController(service);
+    const body = {
+      provider: 'vercel',
+      label: 'Vercel test',
+      token: 'vercel_secret',
+    } as never;
+
+    await expect(controller.create(request, body)).rejects.toBe(error);
+    expect(service.createProviderConnection).toHaveBeenCalledWith(
+      'user-1',
+      body,
+    );
+  });
   it('revokes a provider connection for the current user', async () => {
     const service = makeService();
     const controller = new ProviderConnectionsController(service);

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  GoneException,
   Injectable,
   NotFoundException,
   Optional,
@@ -97,7 +98,11 @@ export class ProviderConnectionsService {
   private assertByoProviderConnectionsEnabled(): void {
     const config = this.configService?.getOrThrow<AppConfig>('app');
     if (config && !config.legacyProviders.byoDeploymentProviderEnabled) {
-      throw new BadRequestException('BYO deployment providers are disabled');
+      throw new GoneException({
+        code: 'LEGACY_PROVIDER_CONNECTIONS_DISABLED',
+        message:
+          'New Vercel and Render provider connections are disabled for the managed GCP migration.',
+      });
     }
   }
 

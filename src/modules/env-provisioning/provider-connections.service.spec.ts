@@ -93,7 +93,14 @@ describe('ProviderConnectionsService', () => {
         label: 'Team Vercel',
         token: 'vercel-token-cdef',
       }),
-    ).rejects.toThrow('BYO deployment providers are disabled');
+    ).rejects.toMatchObject({
+      status: 410,
+      response: {
+        code: 'LEGACY_PROVIDER_CONNECTIONS_DISABLED',
+        message:
+          'New Vercel and Render provider connections are disabled for the managed GCP migration.',
+      },
+    });
 
     expect(vercelClient.validateConnection).not.toHaveBeenCalled();
     expect(repository.createProviderConnection).not.toHaveBeenCalled();

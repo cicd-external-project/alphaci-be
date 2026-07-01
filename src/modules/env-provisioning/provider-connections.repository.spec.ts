@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { Test } from '@nestjs/testing';
 
 import { DatabaseService } from '../database/database.service';
@@ -46,5 +49,35 @@ describe('ProviderConnectionsRepository', () => {
     expect(queryText).toContain('encrypted_token');
     expect(queryValues).toContain('encrypted-token');
     expect(queryValues).not.toContain('plain-token');
+  });
+
+  it('keeps the database BYO guard limited to new provider connection inserts', () => {
+    const migration = readFileSync(
+      join(
+        __dirname,
+        '../../..',
+        'supabase/migrations/20260702_block_new_byo_provider_connections.sql',
+      ),
+      'utf8',
+    );
+    const rollback = readFileSync(
+      join(
+        __dirname,
+        '../../..',
+        'supabase/rollbacks/20260702_block_new_byo_provider_connections_down.sql',
+      ),
+      'utf8',
+    );
+
+    expect(migration).toContain(
+      'BEFORE INSERT ON env_provisioning.provider_connections',
+    );
+    expect(migration).not.toMatch(
+      /delete\s+from\s+env_provisioning\.provider_connections/i,
+    );
+    expect(migration).not.toContain('project_env_var_metadata');
+    expect(rollback).toContain(
+      'DROP TRIGGER IF EXISTS reject_new_legacy_provider_connections ON env_provisioning.provider_connections',
+    );
   });
 });
