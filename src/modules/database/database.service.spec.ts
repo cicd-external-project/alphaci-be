@@ -150,6 +150,24 @@ describe('DatabaseService', () => {
     expect(() => handler(new Error('connection dropped'))).not.toThrow();
   });
 
+  it('adds GCP runtime schemas to the database search path', () => {
+    const service = new DatabaseService(
+      makeConfigService('postgres://user:pass@db.example.com:5432/db'),
+    );
+
+    expect(service.isEnabled()).toBe(true);
+    expect(mockPoolOn).toHaveBeenCalledWith('error', expect.any(Function));
+    const poolFactory = jest.requireMock('pg').Pool as jest.Mock;
+    const options = poolFactory.mock.calls.at(-1)?.[0] as {
+      options?: string;
+    };
+    expect(options.options).toContain('runtime_deployments');
+    expect(options.options).toContain('runtime_domains');
+    expect(options.options).toContain('runtime_secrets');
+    expect(options.options).toContain('billing_lifecycle');
+    expect(options.options).toContain('gcp_operations');
+  });
+
   it('retries a query once when it hits a stale connection', async () => {
     const staleError = Object.assign(new Error('Connection terminated'), {
       code: '08006',

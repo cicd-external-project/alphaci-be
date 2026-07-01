@@ -24,6 +24,11 @@ const SERVICE_SCHEMA_SEARCH_PATH = [
   'workflow',
   'ci',
   'env_provisioning',
+  'runtime_deployments',
+  'runtime_domains',
+  'runtime_secrets',
+  'billing_lifecycle',
+  'gcp_operations',
   'public',
 ].join(',');
 
