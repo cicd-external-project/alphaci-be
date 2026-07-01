@@ -7,6 +7,7 @@ import { GcpProvisioningOrchestratorService } from './gcp-provisioning-orchestra
 import { GcpRuntimeReconcilerService } from './gcp-runtime-reconciler.service';
 import { GCP_RUNTIME_ADAPTER } from './gcp-runtime.adapter';
 import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
+import { RuntimeEntitlementsService } from './runtime-entitlements.service';
 
 @Module({
   imports: [DatabaseModule],
@@ -15,6 +16,8 @@ import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
     ProvisioningJobsRepository,
     GcpProvisioningOrchestratorService,
     GcpRuntimeReconcilerService,
+    RuntimeEntitlementsService,
+    RuntimeEntitlementsService,
     {
       provide: GCP_RUNTIME_ADAPTER,
       useClass: FakeGcpRuntimeAdapter,
@@ -25,6 +28,8 @@ import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
     ProvisioningJobsRepository,
     GcpProvisioningOrchestratorService,
     GcpRuntimeReconcilerService,
+    RuntimeEntitlementsService,
+    RuntimeEntitlementsService,
     GCP_RUNTIME_ADAPTER,
   ],
 })
