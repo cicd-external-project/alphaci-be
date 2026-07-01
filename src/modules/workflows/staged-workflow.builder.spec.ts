@@ -22,6 +22,7 @@ const makeTemplate = (
 
 interface ParsedWorkflow {
   name: string;
+  permissions?: Record<string, string>;
   on: {
     workflow_run?: { workflows: string[] };
   };
@@ -352,6 +353,83 @@ describe('buildStagedWorkflowBundle', () => {
     expect(deploy?.with?.['environment']).toBe(
       "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || (github.event.workflow_run.head_branch || github.ref_name) }}",
     );
+  });
+
+  it('generates GCP Cloud Run deploy jobs without legacy provider or JSON key secrets', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      servicePath: 'backend',
+      deploymentTargets: [
+        {
+          slot: 'backend',
+          provider: 'gcp',
+          deploymentStrategy: 'gcp_cloud_run',
+          rootDirectory: 'backend',
+          dockerContext: '.',
+          dockerfilePath: 'Dockerfile',
+          imageName: 'orders-api',
+          gcpProjectId: 'alphaci-runtime',
+          gcpRegion: 'asia-southeast1',
+          workloadIdentityProvider:
+            'projects/123/locations/global/workloadIdentityPools/github/providers/github',
+          deployerServiceAccount:
+            'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com',
+          runtimeServiceAccount:
+            'orders-api-runtime@alphaci-runtime.iam.gserviceaccount.com',
+          artifactRegistryRepository: 'alphaci-services',
+          cloudRunServiceName: 'orders-api-dev',
+        },
+      ],
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+    const deploy = pkg.jobs['deploy-gcp-backend'];
+    const packageYaml = bundle.workflowFiles[2]!.yaml;
+
+    expect(pkg.permissions).toEqual(
+      expect.objectContaining({
+        contents: 'read',
+        packages: 'write',
+        'id-token': 'write',
+      }),
+    );
+    expect(deploy?.needs).toEqual(['build', 'production-gate']);
+    expect(deploy?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/gcp-cloud-run-deploy.yml@v1',
+    );
+    expect(deploy?.if).toContain("== 'test'");
+    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
+    expect(deploy?.with).toEqual(
+      expect.objectContaining({
+        'system-name': 'backend',
+        'working-directory': 'backend',
+        'checkout-ref':
+          '${{ github.event.workflow_run.head_sha || github.sha }}',
+        'source-branch':
+          '${{ github.event.workflow_run.head_branch || github.ref_name }}',
+        environment:
+          "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'prod' || (github.event.workflow_run.head_branch || github.ref_name) == 'uat' && 'uat' || 'dev' }}",
+        'gcp-project-id': 'alphaci-runtime',
+        'gcp-region': 'asia-southeast1',
+        'workload-identity-provider':
+          'projects/123/locations/global/workloadIdentityPools/github/providers/github',
+        'deployer-service-account':
+          'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com',
+        'runtime-service-account':
+          'orders-api-runtime@alphaci-runtime.iam.gserviceaccount.com',
+        'artifact-registry-repository': 'alphaci-services',
+        'image-name': 'orders-api',
+        'cloud-run-service-name': 'orders-api-dev',
+        'docker-context': '.',
+        'dockerfile-path': 'Dockerfile',
+        'allow-preview': false,
+      }),
+    );
+    expect(packageYaml).not.toContain('VERCEL_TOKEN');
+    expect(packageYaml).not.toContain('RENDER_API_KEY');
+    expect(packageYaml).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
+    expect(packageYaml).not.toContain('service_account_key');
   });
 
   it('creates promotion PR jobs for test→uat and uat→main', () => {

@@ -11,20 +11,29 @@ import {
   MinLength,
 } from 'class-validator';
 
-export type DeploymentProvider = 'vercel' | 'render';
+export type DeploymentProvider = 'vercel' | 'render' | 'gcp';
 
 export interface DeploymentWorkflowTarget {
   slot: 'backend' | 'frontend' | 'standalone';
-  provider: 'vercel' | 'render';
+  provider: DeploymentProvider;
   deploymentStrategy:
     | 'vercel_ci_pushed'
     | 'render_image_pushed'
     | 'render_git_connected'
-    | 'render_existing_service';
+    | 'render_existing_service'
+    | 'gcp_cloud_run';
   rootDirectory?: string;
   dockerContext?: string | null;
   dockerfilePath?: string | null;
   imageName?: string | null;
+  gcpProjectId?: string | null;
+  gcpRegion?: string | null;
+  workloadIdentityProvider?: string | null;
+  deployerServiceAccount?: string | null;
+  runtimeServiceAccount?: string | null;
+  artifactRegistryRepository?: string | null;
+  cloudRunServiceName?: string | null;
+  allowPreview?: boolean | null;
   renderServiceType?: string | null;
   renderInstanceType?: string | null;
   secretNames?: {
@@ -65,7 +74,7 @@ export class GenerateWorkflowDto {
   coverageThreshold?: number;
 
   @IsOptional()
-  @IsIn(['vercel', 'render'])
+  @IsIn(['vercel', 'render', 'gcp'])
   deploymentProvider?: DeploymentProvider;
 
   deploymentTargets?: DeploymentWorkflowTarget[];

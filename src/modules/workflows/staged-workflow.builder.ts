@@ -152,6 +152,11 @@ export function buildStagedWorkflowBundle(
       target.provider === 'render' &&
       target.deploymentStrategy === 'render_image_pushed',
   );
+  const gcpTargets = deploymentTargets.filter(
+    (target) =>
+      target.provider === 'gcp' &&
+      target.deploymentStrategy === 'gcp_cloud_run',
+  );
   const deployJobIds = [
     ...deploymentTargets
       .filter((target) => target.provider === 'vercel')
@@ -161,6 +166,7 @@ export function buildStagedWorkflowBundle(
       : deploymentProvider === 'render'
         ? ['deploy-render']
         : []),
+    ...gcpTargets.map((target) => `deploy-gcp-${target.slot}`),
   ];
 
   const files: StagedWorkflowFile[] = [
@@ -319,6 +325,7 @@ export function buildStagedWorkflowBundle(
         permissions: {
           contents: 'read',
           packages: 'write',
+          ...(gcpTargets.length > 0 ? { 'id-token': 'write' } : {}),
         },
         env: {
           CI_VALIDATE_URL,
@@ -357,6 +364,12 @@ export function buildStagedWorkflowBundle(
                   ),
                 }
               : {}),
+          ...gcpDeployJobs(
+            serviceName,
+            servicePath,
+            gcpTargets,
+            centralWorkflowRef,
+          ),
           'promote-to-uat': promotionJob(
             'test-to-uat',
             'test',
@@ -600,6 +613,44 @@ function vercelDeployJobs(
  * uat → uat, main → production); the production environment is reachable
  * only after the production gate passes.
  */
+function gcpDeployJobs(
+  serviceName: string,
+  servicePath: string,
+  targets: DeploymentWorkflowTarget[],
+  centralWorkflowRef: string,
+) {
+  return Object.fromEntries(
+    targets.map((target) => [
+      `deploy-gcp-${target.slot}`,
+      {
+        needs: ['build', 'production-gate'],
+        if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
+        uses: `${CENTRAL_WORKFLOW_REF}/gcp-cloud-run-deploy.yml@${centralWorkflowRef}`,
+        with: {
+          'system-name':
+            target.slot === 'standalone' ? serviceName : target.slot,
+          'working-directory': target.rootDirectory ?? servicePath,
+          'checkout-ref': HEAD_SHA_EXPR,
+          'source-branch': `\${{ ${BRANCH_EXPR} }}`,
+          environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'prod' || (${BRANCH_EXPR}) == 'uat' && 'uat' || 'dev' }}`,
+          'gcp-project-id': target.gcpProjectId,
+          'gcp-region': target.gcpRegion,
+          'workload-identity-provider': target.workloadIdentityProvider,
+          'deployer-service-account': target.deployerServiceAccount,
+          'runtime-service-account': target.runtimeServiceAccount,
+          'artifact-registry-repository': target.artifactRegistryRepository,
+          'image-name': target.imageName ?? `flowci-${target.slot}`,
+          'cloud-run-service-name': target.cloudRunServiceName,
+          'docker-context':
+            target.dockerContext ?? target.rootDirectory ?? servicePath,
+          'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
+          'allow-preview': target.allowPreview === true,
+        },
+      },
+    ]),
+  );
+}
+
 function renderDeployJob(serviceName: string, centralWorkflowRef: string) {
   return {
     needs: ['build', 'production-gate'],
