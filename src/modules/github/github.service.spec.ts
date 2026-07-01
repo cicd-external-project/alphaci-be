@@ -56,6 +56,14 @@ const appConfig: AppConfig = {
   },
   gcpDeployments: {
     enabled: false,
+    sharedProjectId: null,
+    region: 'asia-southeast1',
+    workloadIdentityProvider: null,
+    deployerServiceAccount: null,
+    artifactRegistryRepository: null,
+    dedicatedProjectsEnabled: false,
+    customDomainsEnabled: false,
+    previewDeploymentsEnabled: false,
   },
   legacyProviders: {
     vercelEnabled: false,

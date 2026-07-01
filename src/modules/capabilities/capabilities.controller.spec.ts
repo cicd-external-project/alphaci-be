@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
+import { GcpProviderCapabilitiesService } from '../gcp-control/gcp-provider-capabilities.service';
 import { CapabilitiesController } from './capabilities.controller';
 
 const makeConfig = (enabled: boolean) =>
@@ -58,10 +59,56 @@ const makeConfig = (enabled: boolean) =>
   }) as unknown as ConfigService;
 
 describe('CapabilitiesController', () => {
+  const providerCapabilities = {
+    getCapabilities: jest.fn().mockReturnValue({
+      gcp: {
+        provider: 'gcp',
+        enabled: false,
+        disabledReason: 'gcp_deployments_disabled',
+        deploymentStrategy: 'gcp_cloud_run',
+        runtimeScopes: [],
+        supportsPreviewDeployments: false,
+        supportsCustomDomains: false,
+        requiresProviderConnection: false,
+        customerDatabaseManagedByAlphaCI: false,
+        defaults: {
+          projectId: null,
+          region: 'asia-southeast1',
+          artifactRegistryRepository: null,
+        },
+      },
+      legacyProviders: {
+        vercel: {
+          provider: 'vercel',
+          enabledForNewTargets: false,
+          requiresProviderConnection: false,
+        },
+        render: {
+          provider: 'render',
+          enabledForNewTargets: false,
+          requiresProviderConnection: false,
+        },
+        byoDeploymentProviders: {
+          enabledForNewConnections: false,
+        },
+      },
+    }),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('reports env provisioning enabled capabilities', async () => {
     const module = await Test.createTestingModule({
       controllers: [CapabilitiesController],
-      providers: [{ provide: ConfigService, useValue: makeConfig(true) }],
+      providers: [
+        { provide: ConfigService, useValue: makeConfig(true) },
+        {
+          provide: GcpProviderCapabilitiesService,
+          useValue: providerCapabilities,
+        },
+      ],
     }).compile();
 
     const controller = module.get(CapabilitiesController);
@@ -120,13 +167,20 @@ describe('CapabilitiesController', () => {
       notifications: {
         enabled: true,
       },
+      deploymentProviders: providerCapabilities.getCapabilities(),
     });
   });
 
   it('reports env provisioning disabled without provider lists', async () => {
     const module = await Test.createTestingModule({
       controllers: [CapabilitiesController],
-      providers: [{ provide: ConfigService, useValue: makeConfig(false) }],
+      providers: [
+        { provide: ConfigService, useValue: makeConfig(false) },
+        {
+          provide: GcpProviderCapabilitiesService,
+          useValue: providerCapabilities,
+        },
+      ],
     }).compile();
 
     const controller = module.get(CapabilitiesController);
@@ -185,6 +239,7 @@ describe('CapabilitiesController', () => {
       notifications: {
         enabled: false,
       },
+      deploymentProviders: providerCapabilities.getCapabilities(),
     });
   });
 
@@ -213,7 +268,13 @@ describe('CapabilitiesController', () => {
     };
     const module = await Test.createTestingModule({
       controllers: [CapabilitiesController],
-      providers: [{ provide: ConfigService, useValue: configService }],
+      providers: [
+        { provide: ConfigService, useValue: configService },
+        {
+          provide: GcpProviderCapabilitiesService,
+          useValue: providerCapabilities,
+        },
+      ],
     }).compile();
 
     const controller = module.get(CapabilitiesController);

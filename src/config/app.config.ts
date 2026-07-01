@@ -59,6 +59,14 @@ export interface AppConfig {
   };
   gcpDeployments: {
     enabled: boolean;
+    sharedProjectId: string | null;
+    region: string;
+    workloadIdentityProvider: string | null;
+    deployerServiceAccount: string | null;
+    artifactRegistryRepository: string | null;
+    dedicatedProjectsEnabled: boolean;
+    customDomainsEnabled: boolean;
+    previewDeploymentsEnabled: boolean;
   };
   legacyProviders: {
     vercelEnabled: boolean;
@@ -230,6 +238,19 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     gcpDeployments: {
       enabled: env['GCP_DEPLOYMENTS_ENABLED'] === 'true',
+      sharedProjectId: env['GCP_SHARED_PROJECT_ID']?.trim() || null,
+      region: env['GCP_REGION']?.trim() || 'asia-southeast1',
+      workloadIdentityProvider:
+        env['GCP_WORKLOAD_IDENTITY_PROVIDER']?.trim() || null,
+      deployerServiceAccount:
+        env['GCP_DEPLOYER_SERVICE_ACCOUNT']?.trim() || null,
+      artifactRegistryRepository:
+        env['GCP_ARTIFACT_REGISTRY_REPOSITORY']?.trim() || null,
+      dedicatedProjectsEnabled:
+        env['GCP_DEDICATED_PROJECTS_ENABLED'] === 'true',
+      customDomainsEnabled: env['GCP_CUSTOM_DOMAINS_ENABLED'] === 'true',
+      previewDeploymentsEnabled:
+        env['GCP_PREVIEW_DEPLOYMENTS_ENABLED'] === 'true',
     },
     legacyProviders: {
       vercelEnabled: env['LEGACY_VERCEL_PROVIDER_ENABLED'] === 'true',

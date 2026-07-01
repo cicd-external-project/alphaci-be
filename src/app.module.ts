@@ -31,6 +31,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { FeedbackModule } from './modules/feedback/feedback.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { GcpRuntimeModule } from './modules/gcp-runtime/gcp-runtime.module.js';
+import { GcpControlModule } from './modules/gcp-control/gcp-control.module.js';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { GcpRuntimeModule } from './modules/gcp-runtime/gcp-runtime.module.js';
     FeedbackModule,
     AdminModule,
     GcpRuntimeModule,
+    GcpControlModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

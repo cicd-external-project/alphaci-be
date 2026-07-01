@@ -2,10 +2,14 @@ import { Controller, Get } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
+import { GcpProviderCapabilitiesService } from '../gcp-control/gcp-provider-capabilities.service';
 
 @Controller('capabilities')
 export class CapabilitiesController {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly providerCapabilities: GcpProviderCapabilitiesService,
+  ) {}
 
   @Get()
   getCapabilities() {
@@ -76,6 +80,7 @@ export class CapabilitiesController {
       notifications: {
         enabled: config.notifications.enabled,
       },
+      deploymentProviders: this.providerCapabilities.getCapabilities(),
     };
   }
 }

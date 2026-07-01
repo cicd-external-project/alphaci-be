@@ -36,6 +36,14 @@ describe('appConfig factory', () => {
     delete process.env['NOTIFICATIONS_ENABLED'];
     delete process.env['SESSION_STORE_DRIVER'];
     delete process.env['GCP_DEPLOYMENTS_ENABLED'];
+    delete process.env['GCP_SHARED_PROJECT_ID'];
+    delete process.env['GCP_REGION'];
+    delete process.env['GCP_WORKLOAD_IDENTITY_PROVIDER'];
+    delete process.env['GCP_DEPLOYER_SERVICE_ACCOUNT'];
+    delete process.env['GCP_ARTIFACT_REGISTRY_REPOSITORY'];
+    delete process.env['GCP_DEDICATED_PROJECTS_ENABLED'];
+    delete process.env['GCP_CUSTOM_DOMAINS_ENABLED'];
+    delete process.env['GCP_PREVIEW_DEPLOYMENTS_ENABLED'];
     delete process.env['LEGACY_VERCEL_PROVIDER_ENABLED'];
     delete process.env['LEGACY_RENDER_PROVIDER_ENABLED'];
     delete process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'];
@@ -66,6 +74,14 @@ describe('appConfig factory', () => {
     expect(config.notifications.enabled).toBe(false);
     expect(config.session.storeDriver).toBe('memory');
     expect(config.gcpDeployments.enabled).toBe(false);
+    expect(config.gcpDeployments.sharedProjectId).toBeNull();
+    expect(config.gcpDeployments.region).toBe('asia-southeast1');
+    expect(config.gcpDeployments.workloadIdentityProvider).toBeNull();
+    expect(config.gcpDeployments.deployerServiceAccount).toBeNull();
+    expect(config.gcpDeployments.artifactRegistryRepository).toBeNull();
+    expect(config.gcpDeployments.dedicatedProjectsEnabled).toBe(false);
+    expect(config.gcpDeployments.customDomainsEnabled).toBe(false);
+    expect(config.gcpDeployments.previewDeploymentsEnabled).toBe(false);
     expect(config.legacyProviders.vercelEnabled).toBe(false);
     expect(config.legacyProviders.renderEnabled).toBe(false);
     expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(false);
@@ -229,6 +245,16 @@ describe('appConfig factory', () => {
 
   it('reads GCP and legacy provider rollout flags when explicitly flagged', () => {
     process.env['GCP_DEPLOYMENTS_ENABLED'] = 'true';
+    process.env['GCP_SHARED_PROJECT_ID'] = 'alphaci-runtime';
+    process.env['GCP_REGION'] = 'asia-southeast1';
+    process.env['GCP_WORKLOAD_IDENTITY_PROVIDER'] =
+      'projects/123/locations/global/workloadIdentityPools/github/providers/github';
+    process.env['GCP_DEPLOYER_SERVICE_ACCOUNT'] =
+      'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com';
+    process.env['GCP_ARTIFACT_REGISTRY_REPOSITORY'] = 'alphaci-services';
+    process.env['GCP_DEDICATED_PROJECTS_ENABLED'] = 'true';
+    process.env['GCP_CUSTOM_DOMAINS_ENABLED'] = 'true';
+    process.env['GCP_PREVIEW_DEPLOYMENTS_ENABLED'] = 'true';
     process.env['LEGACY_VERCEL_PROVIDER_ENABLED'] = 'true';
     process.env['LEGACY_RENDER_PROVIDER_ENABLED'] = 'true';
     process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'] = 'true';
@@ -236,6 +262,20 @@ describe('appConfig factory', () => {
     const config = appConfig();
 
     expect(config.gcpDeployments.enabled).toBe(true);
+    expect(config.gcpDeployments.sharedProjectId).toBe('alphaci-runtime');
+    expect(config.gcpDeployments.region).toBe('asia-southeast1');
+    expect(config.gcpDeployments.workloadIdentityProvider).toBe(
+      'projects/123/locations/global/workloadIdentityPools/github/providers/github',
+    );
+    expect(config.gcpDeployments.deployerServiceAccount).toBe(
+      'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com',
+    );
+    expect(config.gcpDeployments.artifactRegistryRepository).toBe(
+      'alphaci-services',
+    );
+    expect(config.gcpDeployments.dedicatedProjectsEnabled).toBe(true);
+    expect(config.gcpDeployments.customDomainsEnabled).toBe(true);
+    expect(config.gcpDeployments.previewDeploymentsEnabled).toBe(true);
     expect(config.legacyProviders.vercelEnabled).toBe(true);
     expect(config.legacyProviders.renderEnabled).toBe(true);
     expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(true);
