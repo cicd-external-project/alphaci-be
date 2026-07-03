@@ -68,11 +68,17 @@ export class AuthController {
   configCheck() {
     const cfg = this.configService.getOrThrow<AppConfig>('app');
     return {
+      // Deploy-freshness marker: only present once this exact commit is live.
+      // Safe to delete once the enforced-org deploy-staleness issue is resolved.
+      diagnosticBuildTag: 'enforced-org-diag-1',
       githubScope: cfg.github.scope || '(empty)',
       githubAppSlug: cfg.github.appSlug || '(empty)',
       githubClientId: cfg.github.clientId
         ? `${cfg.github.clientId.slice(0, 6)}…`
         : '(not set)',
+      githubAppIdSet: Boolean(cfg.github.appId),
+      githubAppPrivateKeySet: Boolean(cfg.github.appPrivateKey),
+      githubEnforcedOrg: cfg.github.enforcedOrg || '(empty)',
       callbackUrl: cfg.github.callbackUrl || '(empty)',
       frontendUrl: cfg.frontendUrl || '(empty)',
       sessionDriver: cfg.session.storeDriver,
