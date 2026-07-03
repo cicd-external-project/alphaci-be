@@ -583,16 +583,101 @@ export class GithubService {
     };
   }
 
+  /** True when GitHub App credentials (App ID + private key) are configured. */
+  private hasAppCredentials(): boolean {
+    const github = this.configService?.get<AppConfig>('app')?.github;
+    return Boolean(
+      (github?.appId ?? this.appId) &&
+        (github?.appPrivateKey ?? this.appPrivateKey),
+    );
+  }
+
+  /**
+   * Resolve the GitHub App installation for an org directly via the App JWT
+   * (GET /orgs/{org}/installation). Requires no per-user linkage — the App is
+   * installed once on the org and every request resolves it centrally.
+   */
+  private async getInstallationForOrg(orgLogin: string): Promise<{
+    id: number;
+    accountLogin: string;
+    targetType: string;
+    repositorySelection: string;
+  }> {
+    const response = await this.fetchWithRetry(
+      `https://api.github.com/orgs/${encodeURIComponent(orgLogin)}/installation`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.createAppJwt()}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (response.status === 404) {
+      throw new ForbiddenException(
+        `The GitHub App is not installed on the ${orgLogin} organization. ` +
+          `Install it on ${orgLogin} with access to all repositories, then try again.`,
+      );
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new BadGatewayException(
+        `GitHub org installation lookup failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const payload = (await response.json()) as {
+      id: number;
+      account?: { login?: string };
+      target_type?: string;
+      repository_selection?: string;
+    };
+
+    return {
+      id: payload.id,
+      accountLogin: payload.account?.login ?? orgLogin,
+      targetType: payload.target_type ?? '',
+      repositorySelection: payload.repository_selection ?? '',
+    };
+  }
+
   /**
    * Resolve the org provisioning context for a fixed org login (used when the
-   * deployment enforces a single destination org). Finds the caller's linked
-   * installation for that org, then reuses the installation-id validation so
-   * the same "Organization + all repositories" guarantees apply.
+   * deployment enforces a single destination org).
+   *
+   * Internal/centralized deployments install the GitHub App once on the enforced
+   * org, so we resolve that installation app-to-org via the App JWT and never
+   * require each user to have linked it. When App credentials are absent (e.g. a
+   * BYO deployment), we fall back to the caller's own linked installation.
    */
   async getOrganizationProvisioningContextByLogin(
     userId: string,
     orgLogin: string,
   ): Promise<{ accessToken: string; ownerLogin: string }> {
+    if (this.hasAppCredentials()) {
+      const installation = await this.getInstallationForOrg(orgLogin);
+
+      if (installation.targetType !== 'Organization') {
+        throw new ForbiddenException(
+          `The GitHub App installation for ${orgLogin} is not an organization installation.`,
+        );
+      }
+      if (installation.repositorySelection !== 'all') {
+        throw new ForbiddenException(
+          'Organization repository creation requires GitHub App access to all repositories.',
+        );
+      }
+
+      return {
+        accessToken: await this.createInstallationAccessToken(installation.id),
+        ownerLogin: installation.accountLogin,
+      };
+    }
+
+    // Fallback: no App credentials configured — use the caller's linked
+    // installation for the org (BYO deployments).
     if (!this.githubInstallationsRepository) {
       throw new ForbiddenException('GitHub App installations are unavailable.');
     }
@@ -611,10 +696,7 @@ export class GithubService {
       );
     }
 
-    return this.getOrganizationProvisioningContext(
-      userId,
-      match.installationId,
-    );
+    return this.getOrganizationProvisioningContext(userId, match.installationId);
   }
 
   /**
