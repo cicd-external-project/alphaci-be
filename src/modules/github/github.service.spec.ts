@@ -465,7 +465,19 @@ describe('GithubService', () => {
       });
     });
 
-    it('resolves the enforced org installation by login (case-insensitive)', async () => {
+    it('resolves the enforced org installation app-to-org via the App JWT', async () => {
+      // 1) GET /orgs/{org}/installation — app-level lookup, no per-user linkage.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 12345,
+          account: { login: 'tone' },
+          target_type: 'Organization',
+          repository_selection: 'all',
+        }),
+      } as unknown as Response);
+      // 2) POST installation access token.
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ token: 'organization-token' }),
@@ -479,7 +491,14 @@ describe('GithubService', () => {
       });
     });
 
-    it('rejects when the enforced org has no linked installation for the user', async () => {
+    it('rejects when the App is not installed on the enforced org (404)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => 'Not Found',
+      } as unknown as Response);
+
       await expect(
         service.getOrganizationProvisioningContextByLogin(
           'user-1',
@@ -488,7 +507,23 @@ describe('GithubService', () => {
       ).rejects.toThrow(
         'The GitHub App is not installed on the Alpha-Explora organization',
       );
-      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the enforced org installation lacks all-repositories access', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 12345,
+          account: { login: 'tone' },
+          target_type: 'Organization',
+          repository_selection: 'selected',
+        }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContextByLogin('user-1', 'TONE'),
+      ).rejects.toThrow('access to all repositories');
     });
   });
 
