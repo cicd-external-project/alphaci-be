@@ -10,6 +10,7 @@ const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const makeContext = (session: Record<string, unknown>) =>

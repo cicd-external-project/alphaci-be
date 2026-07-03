@@ -56,6 +56,7 @@ import type { SetupProjectDto } from './dto/setup-project.dto';
 import {
   buildStagedWorkflowBundle,
   CI_REPORT_URL,
+  resolveDefaultCentralWorkflowRef,
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
 } from '../workflows/staged-workflow.builder';
@@ -548,7 +549,7 @@ export class ProjectsService {
         projectId: row.id,
         eventCode: 'project_created',
         title: 'Project created',
-        body: `${repoFullName} is now tracked by FlowCI.`,
+        body: `${repoFullName} is now tracked by alphaCI.`,
         metadata: {
           repoFullName,
           repoShape,
@@ -856,7 +857,7 @@ export class ProjectsService {
         projectId: backendRow.id,
         eventCode: 'project_created',
         title: 'Project created',
-        body: `${repoFullName} is now tracked by FlowCI.`,
+        body: `${repoFullName} is now tracked by alphaCI.`,
         metadata: {
           repoFullName,
           repoShape: 'microservices',
@@ -1013,7 +1014,7 @@ export class ProjectsService {
       projectId: row.id,
       eventCode: 'project_created',
       title: 'Project created',
-      body: `${dto.repoFullName} is now tracked by FlowCI.`,
+      body: `${dto.repoFullName} is now tracked by alphaCI.`,
       metadata: {
         repoFullName: dto.repoFullName,
         repoShape: 'existing',
@@ -1139,9 +1140,9 @@ export class ProjectsService {
   // ─── DELETE /projects/:id ──────────────────────────────────────────────────
 
   /**
-   * Removes a provisioned_projects record from FlowCI's database.
+   * Removes a provisioned_projects record from alphaCI's database.
    * The GitHub repository, its workflow YAML files, and its GitHub Secrets
-   * are NOT touched — this is a FlowCI tracking disconnect only.
+   * are NOT touched — this is an alphaCI tracking disconnect only.
    * CASCADE deletes ci.project_ci_tokens automatically via the FK.
    */
   async syncProjectSnapshot(
@@ -1360,7 +1361,7 @@ export class ProjectsService {
         file.path,
         file.yaml,
         branchName,
-        'ci: update FlowCI workflow configuration',
+        'ci: update alphaCI workflow configuration',
       );
     }
 
@@ -1371,7 +1372,7 @@ export class ProjectsService {
         owner,
         repo,
         {
-          title: 'Update FlowCI workflow configuration',
+          title: 'Update alphaCI workflow configuration',
           head: branchName,
           base: baseBranch,
           body: this.buildWorkflowUpdatePullRequestBody(preview),
@@ -1593,6 +1594,32 @@ export class ProjectsService {
     provisioningToken: string;
     provisioningOwnerLogin: string | undefined;
   }> {
+    // When the deployment enforces a destination org, every repository is
+    // created there regardless of the request's ownerType/installationId. The
+    // org repo is created with the user's OAuth token (GitHub forbids a
+    // server-to-server installation token from creating org repos), while the
+    // enforced org's installation token drives downstream provisioning.
+    const enforcedOrg = this.githubService.getEnforcedOrg();
+    if (enforcedOrg) {
+      if (!oauthAccessToken) {
+        throw new UnauthorizedException(
+          `A GitHub OAuth token with the repo scope is required to create a repository in the ${enforcedOrg} organization. Sign out and sign back in with GitHub.`,
+        );
+      }
+
+      const context =
+        await this.githubService.getOrganizationProvisioningContextByLogin(
+          userId,
+          enforcedOrg,
+        );
+
+      return {
+        repositoryCreationToken: oauthAccessToken,
+        provisioningToken: context.accessToken,
+        provisioningOwnerLogin: context.ownerLogin,
+      };
+    }
+
     const ownerType = dto.ownerType ?? 'personal';
 
     if (ownerType === 'organization') {
@@ -2040,7 +2067,7 @@ export class ProjectsService {
     repo: string,
     filePath: string,
     content: string,
-    commitMessage = 'ci: add FlowCI Studio workflow',
+    commitMessage = 'ci: add alphaCI Studio workflow',
   ): Promise<{ commitSha: string; commitUrl: string | null }> {
     const encodedContent = Buffer.from(content, 'utf8').toString('base64');
 
@@ -2170,7 +2197,7 @@ export class ProjectsService {
     const readmeContent = [
       `# ${projectName}`,
       '',
-      'This repository was created and configured by FlowCI Studio.',
+      'This repository was created and configured by alphaCI Studio.',
       '',
       '## Branch strategy',
       '',
@@ -2848,7 +2875,7 @@ export class ProjectsService {
     ].join('\n');
 
     return [
-      'This PR updates the FlowCI workflow configuration for this project.',
+      'This PR updates the alphaCI workflow configuration for this project.',
       '',
       'Changed settings:',
       changedSettings,
@@ -2894,7 +2921,8 @@ export class ProjectsService {
         this.readNumber(projectOptions['coverageThreshold']) ??
         80,
       centralWorkflowRef:
-        this.readString(storedSettings['centralWorkflowRef']) ?? 'v1',
+        this.readString(storedSettings['centralWorkflowRef']) ??
+        resolveDefaultCentralWorkflowRef(),
       checks,
     };
   }

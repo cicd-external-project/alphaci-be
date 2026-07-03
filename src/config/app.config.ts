@@ -13,6 +13,22 @@ export interface AppConfig {
     appSlug: string;
     appPrivateKey: string;
     appWebhookSecret: string;
+    /**
+     * Login of the internal company GitHub org. When set, members of this org
+     * are stamped is_internal=true on sign-in (and bypass the subscription
+     * gate); non-members are hard-blocked on the internal deployment. Leave
+     * empty on the external (sold) deployment to disable internal gating.
+     */
+    internalOrg: string;
+    /**
+     * ALL repositories created by the product are forced into this GitHub
+     * organization instead of the signed-in user's personal account. Always
+     * resolves to a non-empty org (defaults to Alpha-Explora); an empty or
+     * unset GITHUB_ENFORCED_ORG falls back to the default rather than
+     * re-enabling personal-account creation. Requires the GitHub App to be
+     * installed on this org with access to all repositories.
+     */
+    enforcedOrg: string;
   };
   templates: {
     repoPath: string;
@@ -34,6 +50,15 @@ export interface AppConfig {
   };
   envProvisioning: {
     enabled: boolean;
+    /**
+     * Deployment ownership mode offered by this deployment:
+     *  - 'byo': users connect their own Render/Vercel accounts (external/sold
+     *    product).
+     *  - 'flowci_managed': deployments are centralized on the organization's
+     *    Render/Vercel via the flowciManaged.* credentials (internal
+     *    Alphaexplora deployment). BYO is not offered.
+     */
+    ownershipMode: 'byo' | 'flowci_managed';
     encryptionKey: string;
     flowciManaged: {
       renderToken: string;
@@ -145,7 +170,9 @@ export const appConfig = registerAs('app', (): AppConfig => {
       callbackUrl:
         env['GITHUB_CALLBACK_URL'] ??
         'http://localhost:4000/api/v1/auth/github/callback',
-      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow',
+      // read:org is required so the OAuth token can query the signed-in user's
+      // org membership (GET /user/memberships/orgs/{org}) for internal gating.
+      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow,read:org',
       appId: env['GITHUB_APP_ID'] ?? '',
       appSlug:
         env['GITHUB_APP_SLUG']?.trim() || (isProduction ? '' : 'my-github-app'),
@@ -154,6 +181,11 @@ export const appConfig = registerAs('app', (): AppConfig => {
         '\n',
       ),
       appWebhookSecret: env['GITHUB_APP_WEBHOOK_SECRET'] ?? '',
+      internalOrg: env['GITHUB_INTERNAL_ORG']?.trim() ?? '',
+      // Force every created repository into this org. Defaults to Alpha-Explora
+      // and, by using `||`, treats an empty or unset GITHUB_ENFORCED_ORG as the
+      // default too — the product can never provision into personal accounts.
+      enforcedOrg: env['GITHUB_ENFORCED_ORG']?.trim() || 'Alpha-Explora',
     },
     templates: {
       repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',
@@ -183,6 +215,10 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     envProvisioning: {
       enabled: env['ENV_PROVISIONING_ENABLED'] === 'true',
+      ownershipMode:
+        env['ENV_PROVISIONING_OWNERSHIP_MODE']?.trim() === 'flowci_managed'
+          ? 'flowci_managed'
+          : 'byo',
       encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
       flowciManaged: {
         renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',

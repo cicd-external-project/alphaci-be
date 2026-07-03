@@ -13,7 +13,7 @@ describe('RenderEnvClient', () => {
           {
             owner: {
               id: 'usr-owner-1',
-              name: 'FlowCI Test',
+              name: 'alphaCI Test',
             },
           },
         ]),
@@ -23,10 +23,10 @@ describe('RenderEnvClient', () => {
 
     expect(account).toEqual({
       id: 'usr-owner-1',
-      name: 'FlowCI Test',
+      name: 'alphaCI Test',
       metadata: {
         ownerId: 'usr-owner-1',
-        ownerName: 'FlowCI Test',
+        ownerName: 'alphaCI Test',
       },
     });
   });
@@ -150,7 +150,7 @@ describe('RenderEnvClient', () => {
             {
               owner: {
                 id: 'tea-1',
-                name: 'FlowCI workspace',
+                name: 'alphaCI workspace',
               },
             },
           ]),
@@ -222,7 +222,7 @@ describe('RenderEnvClient', () => {
             {
               owner: {
                 id: 'tea-1',
-                name: 'FlowCI workspace',
+                name: 'alphaCI workspace',
               },
             },
           ]),
@@ -276,7 +276,7 @@ describe('RenderEnvClient', () => {
             {
               owner: {
                 id: 'tea-1',
-                name: 'FlowCI workspace',
+                name: 'alphaCI workspace',
               },
             },
           ]),
@@ -383,7 +383,7 @@ describe('RenderEnvClient', () => {
     });
   });
 
-  it('uses configured FlowCI Render owner id when creating services', async () => {
+  it('uses configured alphaCI Render owner id when creating services', async () => {
     const fetchMock = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>

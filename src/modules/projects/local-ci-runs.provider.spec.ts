@@ -1,14 +1,14 @@
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
 
 describe('LocalCiRunsProvider', () => {
-  it('maps workflow names to FlowCI stages', () => {
+  it('maps workflow names to alphaCI stages', () => {
     const provider = new LocalCiRunsProvider();
 
-    expect(provider.mapWorkflowNameToStage('FlowCI Access Gate')).toBe(
+    expect(provider.mapWorkflowNameToStage('alphaCI Access Gate')).toBe(
       'access_gate',
     );
-    expect(provider.mapWorkflowNameToStage('FlowCI Quality')).toBe('quality');
-    expect(provider.mapWorkflowNameToStage('FlowCI Package')).toBe('package');
+    expect(provider.mapWorkflowNameToStage('alphaCI Quality')).toBe('quality');
+    expect(provider.mapWorkflowNameToStage('alphaCI Package')).toBe('package');
     expect(provider.mapWorkflowNameToStage('Deploy Render')).toBe(
       'deploy_render',
     );
@@ -39,7 +39,7 @@ describe('LocalCiRunsProvider', () => {
         repoFullName: 'tone/orders-api',
         workflowFiles: [
           {
-            name: 'FlowCI Quality',
+            name: 'alphaCI Quality',
             path: '.github/workflows/10-flowci-quality.yml',
           },
         ],
@@ -48,7 +48,7 @@ describe('LocalCiRunsProvider', () => {
       expect.objectContaining({
         id: 'local-project-1-quality',
         stage: 'quality',
-        workflowName: 'FlowCI Quality',
+        workflowName: 'alphaCI Quality',
         htmlUrl:
           'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
         canRerun: false,

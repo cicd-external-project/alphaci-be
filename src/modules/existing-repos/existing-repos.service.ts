@@ -110,18 +110,18 @@ export class ExistingReposService {
       workflowPath,
       generatedYaml,
       branchName,
-      'ci: add FlowCI Studio workflow',
+      'ci: add alphaCI Studio workflow',
     );
     const pullRequest = await this.githubService.createPullRequest(
       token,
       owner,
       repo,
       {
-        title: 'Add FlowCI Studio workflow',
+        title: 'Add alphaCI Studio workflow',
         head: branchName,
         base: baseBranch,
         body: [
-          'This PR adds a FlowCI Studio workflow for this existing repository.',
+          'This PR adds an alphaCI Studio workflow for this existing repository.',
           '',
           `Service: ${dto.serviceName}`,
           `Workflow: ${workflowPath}`,

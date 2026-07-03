@@ -9,7 +9,7 @@ describe('ProjectCiRunsService', () => {
     project_options: {
       workflowFiles: [
         {
-          name: 'FlowCI Quality',
+          name: 'alphaCI Quality',
           path: '.github/workflows/10-flowci-quality.yml',
         },
       ],
@@ -66,7 +66,7 @@ describe('ProjectCiRunsService', () => {
       repoFullName: 'tone/orders-api',
       workflowFiles: [
         {
-          name: 'FlowCI Quality',
+          name: 'alphaCI Quality',
           path: '.github/workflows/10-flowci-quality.yml',
         },
       ],
@@ -78,7 +78,7 @@ describe('ProjectCiRunsService', () => {
       {
         id: 'local-project-1-quality',
         stage: 'quality',
-        workflowName: 'FlowCI Quality',
+        workflowName: 'alphaCI Quality',
         branch: 'test',
         commitSha: 'abc123',
         actor: 'flowci-local',
@@ -110,7 +110,7 @@ describe('ProjectCiRunsService', () => {
     provider.getRun.mockResolvedValueOnce({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'FlowCI Quality',
+      workflowName: 'alphaCI Quality',
       branch: 'test',
       commitSha: 'abc123',
       actor: 'flowci-local',

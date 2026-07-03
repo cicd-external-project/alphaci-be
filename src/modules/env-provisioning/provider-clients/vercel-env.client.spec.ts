@@ -260,7 +260,7 @@ describe('VercelEnvClient', () => {
     );
   });
 
-  it('omits Git repository linking for FlowCI-managed CI-pushed Vercel projects', async () => {
+  it('omits Git repository linking for alphaCI-managed CI-pushed Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -332,7 +332,7 @@ describe('VercelEnvClient', () => {
         Promise.resolve({
           id: 'team_123',
           slug: 'flowci',
-          name: 'FlowCI',
+          name: 'alphaCI',
         }),
     });
 
@@ -342,7 +342,7 @@ describe('VercelEnvClient', () => {
     ).resolves.toEqual({
       id: 'team_123',
       slug: 'flowci',
-      name: 'FlowCI',
+      name: 'alphaCI',
     });
 
     expect(fetch).toHaveBeenCalledWith(

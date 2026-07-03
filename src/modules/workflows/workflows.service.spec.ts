@@ -138,7 +138,7 @@ describe('WorkflowsService', () => {
       expect(result.workflowFiles.every((file) => file.gated)).toBe(true);
       expect(result.workflowFiles[1]?.yaml).toContain('workflow_run:');
       expect(result.workflowFiles[1]?.yaml).toContain('workflows:');
-      expect(result.workflowFiles[1]?.yaml).toContain('FlowCI Access Gate');
+      expect(result.workflowFiles[1]?.yaml).toContain('alphaCI Access Gate');
       expect(result.workflowFiles[1]?.yaml).toContain(
         "conclusion == 'success'",
       );
@@ -148,7 +148,7 @@ describe('WorkflowsService', () => {
       expect(result.workflowFiles[1]?.yaml).toContain(
         'http://localhost:4000/api/v1/ci/validate',
       );
-      expect(result.workflowFiles[2]?.yaml).toContain('FlowCI Quality');
+      expect(result.workflowFiles[2]?.yaml).toContain('alphaCI Quality');
       expect(result.workflowFiles[2]?.yaml).toContain(
         "conclusion == 'success'",
       );
@@ -157,7 +157,7 @@ describe('WorkflowsService', () => {
       );
     });
 
-    it('adds CI-pushed Vercel deploy jobs with installed GitHub secret names', async () => {
+    it('omits Vercel deploy jobs even when deployment targets are provided', async () => {
       const result = await service.generate('user-1', {
         templateId: 'nestjs-be',
         serviceName: 'my-service',
@@ -178,21 +178,11 @@ describe('WorkflowsService', () => {
       });
 
       const packageWorkflow = result.workflowFiles[2]?.yaml ?? '';
+      expect(packageWorkflow).not.toContain('vercel-deploy.yml');
+      expect(packageWorkflow).not.toContain('deploy-vercel-frontend:');
+      expect(packageWorkflow).not.toContain('VERCEL_FRONTEND_TOKEN');
       expect(packageWorkflow).toContain(
-        'cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1',
-      );
-      expect(packageWorkflow).toContain('deploy-vercel-frontend:');
-      expect(packageWorkflow).toContain(
-        'VERCEL_TOKEN: ${{ secrets.VERCEL_FRONTEND_TOKEN }}',
-      );
-      expect(packageWorkflow).toContain(
-        'VERCEL_ORG_ID: ${{ secrets.VERCEL_FRONTEND_ORG_ID }}',
-      );
-      expect(packageWorkflow).toContain(
-        'VERCEL_PROJECT_ID: ${{ secrets.VERCEL_FRONTEND_PROJECT_ID }}',
-      );
-      expect(packageWorkflow).toContain(
-        'checkout-ref: ${{ github.event.workflow_run.head_sha || github.sha }}',
+        'ref: ${{ github.event.workflow_run.head_sha || github.sha }}',
       );
     });
 

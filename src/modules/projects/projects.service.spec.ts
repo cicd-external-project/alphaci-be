@@ -43,9 +43,14 @@ const makeGithubService = () =>
       .fn()
       .mockResolvedValue('app-token'),
     getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
+    getEnforcedOrg: jest.fn().mockReturnValue(''),
     getOrganizationProvisioningContext: jest.fn().mockResolvedValue({
       accessToken: 'installation-token',
       ownerLogin: 'tone',
+    }),
+    getOrganizationProvisioningContextByLogin: jest.fn().mockResolvedValue({
+      accessToken: 'installation-token',
+      ownerLogin: 'Alpha-Explora',
     }),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/tone/orders-api',
@@ -169,7 +174,7 @@ const makeOverviewReadRepositories = () => ({
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: FlowCI Access Gate',
+        yaml: 'name: alphaCI Access Gate',
       },
       {
         id: 'history-other',
@@ -197,7 +202,7 @@ const makeOverviewReadRepositories = () => ({
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: FlowCI Access Gate',
+        yaml: 'name: alphaCI Access Gate',
       },
     ]),
   },
@@ -258,7 +263,9 @@ describe('ProjectsService', () => {
   let githubServiceMock: {
     getInstallationAccessTokenForUser: jest.Mock;
     getInstallationAccessTokenForUserRepo: jest.Mock;
+    getEnforcedOrg: jest.Mock;
     getOrganizationProvisioningContext: jest.Mock;
+    getOrganizationProvisioningContextByLogin: jest.Mock;
     createRepo: jest.Mock;
     setActionsSecretStrict: jest.Mock;
   };
@@ -282,7 +289,9 @@ jobs:
     githubServiceMock = githubService as unknown as {
       getInstallationAccessTokenForUser: jest.Mock;
       getInstallationAccessTokenForUserRepo: jest.Mock;
+      getEnforcedOrg: jest.Mock;
       getOrganizationProvisioningContext: jest.Mock;
+      getOrganizationProvisioningContextByLogin: jest.Mock;
       createRepo: jest.Mock;
       setActionsSecretStrict: jest.Mock;
     };
@@ -389,6 +398,52 @@ jobs:
     );
     expect(
       githubServiceMock.getOrganizationProvisioningContext,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('forces every repository into the enforced org regardless of ownerType', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      // Even a "personal" request must land in the enforced org.
+      ownerType: 'personal',
+    });
+
+    expect(
+      githubServiceMock.getOrganizationProvisioningContextByLogin,
+    ).toHaveBeenCalledWith('user-1', 'Alpha-Explora');
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'oauth-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'Alpha-Explora',
+    );
+  });
+
+  it('rejects enforced-org creation when the session has no OAuth token', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await expect(
+      service.createProject('user-1', 'tone', null, {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+      }),
+    ).rejects.toThrow(
+      'required to create a repository in the Alpha-Explora organization',
+    );
+    expect(
+      githubServiceMock.getOrganizationProvisioningContextByLogin,
     ).not.toHaveBeenCalled();
     expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
   });
@@ -641,7 +696,7 @@ jobs:
     );
   });
 
-  it('generates BYO Vercel deploy jobs for frontend single-repo creation', async () => {
+  it('omits Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
       visibility: 'private',
@@ -675,13 +730,12 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-  it('generates managed Vercel deploy jobs for frontend single-repo creation', async () => {
+  it('omits archived managed Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
       visibility: 'private',
@@ -714,13 +768,12 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-  it('generates BYO Vercel deploy jobs for frontend single-repo setup', async () => {
+  it('omits Vercel deploy jobs for frontend single-repo setup', async () => {
     await service.setupProject('user-1', 'oauth-token', {
       repoFullName: 'tone/orders-ui',
       templateId: 'be-nestjs',
@@ -754,10 +807,9 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
   });
 
   it('uses a linked GitHub App installation token for existing private repo setup', async () => {
@@ -1031,13 +1083,13 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
+              name: 'alphaCI Access Gate',
               path: '.github/workflows/00-flowci-access.yml',
               gated: true,
             },
             {
               stage: 'quality',
-              name: 'FlowCI Quality',
+              name: 'alphaCI Quality',
               path: '.github/workflows/10-flowci-quality.yml',
               gated: true,
             },
@@ -1259,7 +1311,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
+              name: 'alphaCI Access Gate',
               path: '.github/workflows/00-flowci-access.yml',
               gated: true,
             },
@@ -1461,7 +1513,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
+              name: 'alphaCI Access Gate',
               path: '.github/workflows/00-flowci-access.yml',
               gated: true,
             },
@@ -1517,7 +1569,7 @@ jobs:
       '.github/workflows/10-flowci-quality.yml',
       '.github/workflows/20-flowci-package.yml',
     ]);
-    expect(result.workflowFiles[0]?.yaml).toContain('FlowCI Access Gate');
+    expect(result.workflowFiles[0]?.yaml).toContain('alphaCI Access Gate');
     expect(result.diffSummary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1621,7 +1673,7 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
+              name: 'alphaCI Access Gate',
               path: '.github/workflows/00-flowci-access.yml',
               gated: true,
             },
@@ -1705,7 +1757,7 @@ jobs:
       'tone',
       'orders-api',
       expect.objectContaining({
-        title: 'Update FlowCI workflow configuration',
+        title: 'Update alphaCI workflow configuration',
         head: expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
         base: 'main',
         body: expect.stringContaining(

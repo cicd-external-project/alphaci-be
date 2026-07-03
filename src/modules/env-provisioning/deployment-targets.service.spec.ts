@@ -71,6 +71,7 @@ describe('DeploymentTargetsService', () => {
     });
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
+        ownershipMode: 'byo',
         flowciManaged: {
           renderToken: 'render-token',
           vercelToken: 'flowci-vercel-token',
@@ -127,86 +128,7 @@ describe('DeploymentTargetsService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('creates FlowCI-managed Vercel targets as CI-pushed projects in the managed team', async () => {
-    vercelClient.createTarget.mockResolvedValueOnce({
-      id: 'prj_1',
-      name: 'demo-frontend',
-      provider: 'vercel',
-      metadata: {
-        deploymentStrategy: 'vercel_ci_pushed',
-        vercelOrgId: 'team_flowci',
-        vercelProjectId: 'prj_1',
-        vercelTeamId: 'team_flowci',
-        gitConnected: false,
-      },
-    });
-    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
-      id: 'target-1',
-    });
-
-    await service.createDeploymentTarget('project-1', 'user-1', {
-      action: 'create',
-      slot: 'frontend',
-      ownershipMode: 'flowci_managed',
-      provider: 'vercel',
-      projectName: 'demo-frontend',
-    });
-
-    expect(vercelClient.createTarget).toHaveBeenCalledWith(
-      expect.objectContaining({
-        token: 'flowci-vercel-token',
-        deploymentStrategy: 'vercel_ci_pushed',
-        vercelOrgId: 'team_flowci',
-        vercelTeamId: 'team_flowci',
-        vercelTeamSlug: 'flowci-team',
-      }),
-    );
-    expect(
-      deploymentTargetsRepository.createDeploymentTarget,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ownershipMode: 'flowci_managed',
-        provider: 'vercel',
-        deploymentStrategy: 'vercel_ci_pushed',
-        providerConnectionId: null,
-      }),
-    );
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['owner', 'admin', 'developer'],
-    );
-    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actorUserId: 'user-1',
-        projectId: 'project-1',
-        eventCode: 'deployment_target_created',
-      }),
-    );
-    expect(notificationEventsService.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-1',
-        projectId: 'project-1',
-        eventCode: 'deployment_target_created',
-      }),
-    );
-  });
-
-  it('rejects FlowCI-managed Vercel targets when the managed team id is missing', async () => {
-    configService.getOrThrow.mockReturnValue({
-      envProvisioning: {
-        flowciManaged: {
-          renderToken: 'render-token',
-          vercelToken: 'flowci-vercel-token',
-          vercelTeamId: null,
-          vercelTeamSlug: 'flowci-team',
-        },
-      },
-      projectTargetManagement: {
-        enabled: true,
-      },
-    });
-
+  it('rejects archived alphaCI-managed Vercel targets before provider calls', async () => {
     await expect(
       service.createDeploymentTarget('project-1', 'user-1', {
         action: 'create',
@@ -215,7 +137,66 @@ describe('DeploymentTargetsService', () => {
         provider: 'vercel',
         projectName: 'demo-frontend',
       }),
-    ).rejects.toThrow('FLOWCI_VERCEL_TEAM_ID is required');
+    ).rejects.toThrow(
+      'Managed vercel hosting is archived. Connect your own vercel account and use BYO hosting for new targets.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    );
+  });
+
+  it('rejects archived alphaCI-managed Render targets before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'backend',
+        ownershipMode: 'flowci_managed',
+        provider: 'render',
+        projectName: 'demo-backend',
+      }),
+    ).rejects.toThrow(
+      'Managed render hosting is archived. Connect your own render account and use BYO hosting for new targets.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects BYO targets when the deployment centralizes on flowci_managed', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        ownershipMode: 'flowci_managed',
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+      projectTargetManagement: { enabled: true },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        projectName: 'demo-frontend',
+        providerConnectionId: 'conn-1',
+      }),
+    ).rejects.toThrow(
+      "This workspace centralizes deployments on the organization's vercel account. Bring-your-own vercel hosting is not available here.",
+    );
 
     expect(vercelClient.createTarget).not.toHaveBeenCalled();
     expect(
@@ -274,7 +255,7 @@ describe('DeploymentTargetsService', () => {
     expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
   });
 
-  it('updates FlowCI target metadata without calling provider clients', async () => {
+  it('updates alphaCI target metadata without calling provider clients', async () => {
     const updatedTarget = {
       id: 'target-1',
       projectId: 'project-1',
@@ -356,7 +337,7 @@ describe('DeploymentTargetsService', () => {
     ).rejects.toThrow('Deployment target not found');
   });
 
-  it('detaches a target from FlowCI without calling provider delete APIs', async () => {
+  it('detaches a target from alphaCI without calling provider delete APIs', async () => {
     deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
       true,
     );

@@ -20,6 +20,7 @@ const fakeUser: SessionUser = {
   login: 'testuser',
   email: 'test@example.com',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const fakeFreeSub: SubscriptionState = {
@@ -29,7 +30,7 @@ const fakeFreeSub: SubscriptionState = {
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const makeConfig = (withGitHub = true) =>
+const makeConfig = (withGitHub = true, internalOrg = '') =>
   ({
     get: jest.fn((key: string) => {
       if (key === 'ALLOWED_ORIGINS') {
@@ -48,6 +49,7 @@ const makeConfig = (withGitHub = true) =>
         clientSecret: withGitHub ? 'gh-client-secret' : '',
         callbackUrl: 'http://localhost:4000/api/v1/auth/github/callback',
         scope: 'read:user user:email',
+        internalOrg,
       },
     }),
   }) as unknown as ConfigService;
@@ -115,6 +117,7 @@ async function createService(
   oauthStateOverrides?: Partial<OAuthStateRepository>,
   usersRepoOverrides?: Partial<UsersRepository>,
   exampleProjectSeederOverrides?: Partial<ExampleProjectSeederService>,
+  internalOrg = '',
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
@@ -127,7 +130,7 @@ async function createService(
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       AuthService,
-      { provide: ConfigService, useValue: makeConfig(withGitHub) },
+      { provide: ConfigService, useValue: makeConfig(withGitHub, internalOrg) },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
@@ -449,6 +452,149 @@ describe('AuthService', () => {
       expect(
         exampleProjectSeederService.ensureExampleProjectSeeded,
       ).not.toHaveBeenCalled();
+    });
+
+    it('hard-blocks a non-member when GITHUB_INTERNAL_ORG is set', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → 404 (not a member).
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=not_authorized');
+      // No account is created for a blocked non-member.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('blocks with a distinct reason when org membership cannot be verified (e.g. 403)', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → 403 (missing scope, or the org
+      // has OAuth App access restrictions that have not approved this app).
+      // This must NOT be conflated with a confirmed 404 non-member.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({}),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_verification_failed');
+      expect(url).not.toContain('auth=not_authorized');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('blocks with a distinct reason when the membership check throws (network error)', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check throws (e.g. DNS/network failure).
+      fetchMock.mockRejectedValueOnce(new Error('network unreachable'));
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_verification_failed');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('admits an org member and stamps them internal', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → active member.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ state: 'active' }),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
+        expect.objectContaining({ isInternal: true }),
+      );
+    });
+
+    it('preserves is_internal (passes null) on the sold deployment where the org is unset', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        // internalOrg defaults to '' → gating disabled, no membership check.
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      // null means "do not overwrite the shared flag"; brand-new rows default
+      // to false at the DB layer via COALESCE.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
+        expect.objectContaining({ isInternal: null }),
+      );
     });
 
     it('does not block login when example project seeding rejects', async () => {
@@ -813,6 +959,7 @@ describe('AuthService', () => {
         githubUserId: '12345',
         login: 'testuser',
         accessToken: 'tok-restore',
+        isInternal: true,
       };
       const session = makeSession({ pendingArchived: pending });
       const req = { session } as unknown as Request;
@@ -820,7 +967,10 @@ describe('AuthService', () => {
       await service.restoreArchivedAccount(req);
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(usersRepo.restoreByGithubUserId).toHaveBeenCalledWith('12345');
+      expect(usersRepo.restoreByGithubUserId).toHaveBeenCalledWith(
+        '12345',
+        true,
+      );
 
       const s = session as unknown as Record<string, unknown>;
       expect(s['userId']).toBe('user-1');
@@ -855,6 +1005,7 @@ describe('AuthService', () => {
         email: 'test@example.com',
         avatarUrl: 'https://example.com/avatar.png',
         accessToken: 'tok-fresh',
+        isInternal: true,
       };
       const session = makeSession({ pendingArchived: pending });
       const req = { session } as unknown as Request;
@@ -868,6 +1019,7 @@ describe('AuthService', () => {
         name: 'Test User',
         email: 'test@example.com',
         avatarUrl: 'https://example.com/avatar.png',
+        isInternal: true,
       });
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(subsRepo.ensureDefaultFreeSubscription).toHaveBeenCalledWith(

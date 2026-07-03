@@ -120,7 +120,7 @@ export class RenderCiSecretsService {
       const token = config.envProvisioning.flowciManaged.renderToken.trim();
       if (!token) {
         throw new InternalServerErrorException(
-          'FLOWCI_RENDER_API_KEY is required for FlowCI-managed Render deployments',
+          'FLOWCI_RENDER_API_KEY is required for alphaCI-managed Render deployments',
         );
       }
 

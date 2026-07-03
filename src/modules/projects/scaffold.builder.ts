@@ -2,7 +2,7 @@
 //
 // Generates a default project scaffold — an array of { path, content } tuples
 // ready to be pushed to a freshly-created GitHub repository. The scaffold gives
-// developers a working starting point that is compatible with the FlowCI CI/CD
+// developers a working starting point that is compatible with the alphaCI CI/CD
 // workflows (TypeScript, ESLint, Jest with coverage, SonarQube reporting).
 //
 // Shape-aware: the scaffold structure varies by repoShape (standalone, monorepo,

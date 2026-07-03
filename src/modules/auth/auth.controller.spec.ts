@@ -17,6 +17,7 @@ const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const fakeFreeSub: SubscriptionState = {
