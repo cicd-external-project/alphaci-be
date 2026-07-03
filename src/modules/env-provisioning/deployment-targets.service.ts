@@ -69,6 +69,7 @@ export class DeploymentTargetsService {
     await this.assertProjectMutationAccess(projectId, userId);
     const project = await this.getProjectOrThrow(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
+    this.assertOwnershipModeAllowed(dto);
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
       await this.assertWithinQuota(
         userId,
@@ -360,7 +361,7 @@ export class DeploymentTargetsService {
       projectId,
       eventCode: 'deployment_target_detached',
       title: 'Deployment target detached',
-      body: 'Deployment target metadata was removed from FlowCI.',
+      body: 'Deployment target metadata was removed from alphaCI.',
       metadata: { targetId },
     });
     return { detached: true };
@@ -444,6 +445,35 @@ export class DeploymentTargetsService {
         metadata: { limitCode },
       });
       throw error;
+    }
+  }
+
+  /**
+   * Enforce the single ownership mode this deployment offers (see
+   * capabilities.controller and ENV_PROVISIONING_OWNERSHIP_MODE):
+   *  - 'flowci_managed' (internal): deployments are centralized on the
+   *    organization's Render/Vercel; bring-your-own is not available.
+   *  - 'byo' (external/sold): managed hosting is archived; users connect their
+   *    own provider accounts.
+   */
+  private assertOwnershipModeAllowed(dto: CreateDeploymentTargetDto): void {
+    const configuredMode =
+      this.configService.getOrThrow<AppConfig>('app').envProvisioning
+        .ownershipMode;
+
+    if (configuredMode === 'flowci_managed') {
+      if (dto.ownershipMode !== 'flowci_managed') {
+        throw new BadRequestException(
+          `This workspace centralizes deployments on the organization's ${dto.provider} account. Bring-your-own ${dto.provider} hosting is not available here.`,
+        );
+      }
+      return;
+    }
+
+    if (dto.ownershipMode === 'flowci_managed') {
+      throw new BadRequestException(
+        `Managed ${dto.provider} hosting is archived. Connect your own ${dto.provider} account and use BYO hosting for new targets.`,
+      );
     }
   }
 
@@ -586,7 +616,7 @@ export class DeploymentTargetsService {
           : config.envProvisioning.flowciManaged.vercelToken;
       if (!token) {
         throw new BadRequestException(
-          `FlowCI-managed ${provider} token is not configured`,
+          `alphaCI-managed ${provider} token is not configured`,
         );
       }
 
@@ -632,7 +662,7 @@ export class DeploymentTargetsService {
         config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
       if (!teamId) {
         throw new BadRequestException(
-          'FLOWCI_VERCEL_TEAM_ID is required for FlowCI-managed Vercel deployment targets',
+          'FLOWCI_VERCEL_TEAM_ID is required for alphaCI-managed Vercel deployment targets',
         );
       }
 

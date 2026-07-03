@@ -18,7 +18,10 @@ export class CapabilitiesController {
         enabled,
         providers: enabled ? ['render', 'vercel'] : [],
         environments: enabled ? ['test', 'uat', 'production'] : [],
-        modes: enabled ? ['byo', 'flowci_managed'] : [],
+        // Advertise the single ownership mode this deployment supports. The
+        // external/sold product uses 'byo'; the internal deployment centralizes
+        // on the organization's Render/Vercel via 'flowci_managed'.
+        modes: enabled ? [config.envProvisioning.ownershipMode] : [],
       },
       projectSyncSnapshots: {
         enabled: config.projectSyncSnapshots.enabled,

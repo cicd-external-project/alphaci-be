@@ -112,7 +112,7 @@ export class ProjectsController {
 
   /**
    * GET /api/v1/projects/:id/overview
-   * Returns the read-only project control center state from stored FlowCI data.
+   * Returns the read-only project control center state from stored alphaCI data.
    */
   @Get(':id/overview')
   @UseGuards(SessionAuthGuard)
@@ -131,7 +131,7 @@ export class ProjectsController {
 
   /**
    * POST /api/v1/projects/:id/sync
-   * Writes a local dashboard snapshot from FlowCI's stored project state.
+   * Writes a local dashboard snapshot from alphaCI's stored project state.
    * This endpoint intentionally does not require a GitHub OAuth token.
    */
   @Post(':id/sync')
@@ -354,9 +354,9 @@ export class ProjectsController {
 
   /**
    * DELETE /api/v1/projects/:id
-   * Removes a project from FlowCI tracking. The actual GitHub repository,
+   * Removes a project from alphaCI tracking. The actual GitHub repository,
    * workflow YAML files, and GitHub Secrets are NOT touched — this only
-   * removes the FlowCI database record and cascades to ci.project_ci_tokens.
+   * removes the alphaCI database record and cascades to ci.project_ci_tokens.
    */
   @Delete(':id')
   @UseGuards(SessionAuthGuard)

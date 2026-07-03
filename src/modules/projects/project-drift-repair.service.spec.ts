@@ -115,7 +115,7 @@ describe('ProjectDriftRepairService', () => {
     );
   });
 
-  it('detaches a target from FlowCI without deleting provider resources', async () => {
+  it('detaches a target from alphaCI without deleting provider resources', async () => {
     findingsRepository.findByIdForProject.mockResolvedValueOnce({
       id: 'finding-2',
       projectId: 'project-1',

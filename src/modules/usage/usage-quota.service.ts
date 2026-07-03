@@ -36,7 +36,17 @@ export class UsageQuotaService {
   ) {}
 
   async getUsage(userId: string): Promise<UsageMeResponse> {
-    const enabled = this.enabled();
+    const internal = await this.isInternalUser(userId);
+    return this.buildUsage(userId, internal);
+  }
+
+  private async buildUsage(
+    userId: string,
+    internal: boolean,
+  ): Promise<UsageMeResponse> {
+    // Internal users share the same database as the paid platform but are never
+    // quota-limited, so quotas read as disabled and nothing prompts an upgrade.
+    const enabled = this.enabled() && !internal;
     const plan = await this.resolvePlan(userId);
     const counts = await this.loadCounts(userId);
     const limits = DEFAULT_LIMITS[plan];
@@ -48,7 +58,7 @@ export class UsageQuotaService {
         code,
         current: counts[code] ?? 0,
         limit: limits[code],
-        upgradeRequired: (counts[code] ?? 0) >= limits[code],
+        upgradeRequired: !internal && (counts[code] ?? 0) >= limits[code],
       })),
     };
   }
@@ -62,7 +72,16 @@ export class UsageQuotaService {
       return;
     }
 
-    const usage = await this.getUsage(userId);
+    // Internal users (company GitHub org members, is_internal=true) are exempt
+    // from usage quotas, mirroring the entitlement bypass in SubscriptionService.
+    // The paid platform (is_internal=false) keeps every limit despite sharing
+    // this database.
+    const internal = await this.isInternalUser(userId);
+    if (internal) {
+      return;
+    }
+
+    const usage = await this.buildUsage(userId, internal);
     const item = usage.items.find((candidate) => candidate.code === limitCode);
     if (!item) {
       return;
@@ -138,6 +157,22 @@ export class UsageQuotaService {
   private enabled(): boolean {
     const config = this.configService.getOrThrow<AppConfig>('app');
     return config.usageQuotas?.enabled ?? false;
+  }
+
+  /**
+   * True when the user is an internal company user (stamped is_internal=true on
+   * the internal deployment via GITHUB_INTERNAL_ORG membership). Internal users
+   * are exempt from usage quotas even though they live in the same database as
+   * paid-platform users; this is the single seam that separates the two
+   * audiences, consistent with SubscriptionService.
+   */
+  private async isInternalUser(userId: string): Promise<boolean> {
+    const result = await this.databaseService.query<{
+      is_internal: boolean | null;
+    }>(`SELECT is_internal FROM identity.app_users WHERE id = $1 LIMIT 1;`, [
+      userId,
+    ]);
+    return result.rows[0]?.is_internal === true;
   }
 
   private async resolvePlan(userId: string): Promise<'free' | 'pro'> {

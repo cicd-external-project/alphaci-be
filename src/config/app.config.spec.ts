@@ -84,6 +84,28 @@ describe('appConfig factory', () => {
     expect(config.session.secure).toBe(true);
   });
 
+  it.each([
+    ['unset', undefined, 'Alpha-Explora'],
+    ['empty', '', 'Alpha-Explora'],
+    ['whitespace only', '   ', 'Alpha-Explora'],
+    ['a custom org', 'My-Org', 'My-Org'],
+    ['a padded custom org', '  My-Org  ', 'My-Org'],
+  ])(
+    'always resolves a non-empty enforced org (never personal accounts) when GITHUB_ENFORCED_ORG is %s',
+    (_label, value, expected) => {
+      if (value === undefined) {
+        delete process.env['GITHUB_ENFORCED_ORG'];
+      } else {
+        process.env['GITHUB_ENFORCED_ORG'] = value;
+      }
+
+      const config = appConfig();
+
+      expect(config.github.enforcedOrg).toBe(expected);
+      delete process.env['GITHUB_ENFORCED_ORG'];
+    },
+  );
+
   it('parses SUBSCRIPTION_MOCK_MAP_JSON correctly', () => {
     process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({
       testuser: 'pro',
@@ -121,7 +143,7 @@ describe('appConfig factory', () => {
     expect(config.session.storeDriver).toBe('memory');
   });
 
-  it('reads FlowCI-managed Render owner id when set', () => {
+  it('reads alphaCI-managed Render owner id when set', () => {
     process.env['FLOWCI_RENDER_OWNER_ID'] = 'tea-configured';
 
     const config = appConfig();

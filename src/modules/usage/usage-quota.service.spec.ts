@@ -31,18 +31,21 @@ describe('UsageQuotaService', () => {
   });
 
   it('returns local usage counters and free plan limits', async () => {
-    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
-      rows: [
-        {
-          projects: '2',
-          managed_render_services: '1',
-          managed_vercel_projects: '0',
-          deployment_targets: '2',
-          env_keys: '4',
-          workflow_prs: '1',
-        },
-      ],
-    });
+    query
+      .mockResolvedValueOnce({ rows: [{ is_internal: false }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            projects: '2',
+            managed_render_services: '1',
+            managed_vercel_projects: '0',
+            deployment_targets: '2',
+            env_keys: '4',
+            workflow_prs: '1',
+          },
+        ],
+      });
 
     await expect(service.getUsage('user-1')).resolves.toMatchObject({
       enabled: true,
@@ -61,6 +64,7 @@ describe('UsageQuotaService', () => {
 
   it('treats pro_monthly subscriptions as pro quota plan', async () => {
     query
+      .mockResolvedValueOnce({ rows: [{ is_internal: false }] })
       .mockResolvedValueOnce({ rows: [{ plan_code: 'pro_monthly' }] })
       .mockResolvedValueOnce({
         rows: [
@@ -84,22 +88,60 @@ describe('UsageQuotaService', () => {
   });
 
   it('blocks actions that would exceed enabled quotas', async () => {
-    query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
-      rows: [
-        {
-          projects: '3',
-          managed_render_services: '0',
-          managed_vercel_projects: '0',
-          deployment_targets: '0',
-          env_keys: '0',
-          workflow_prs: '0',
-        },
-      ],
-    });
+    query
+      .mockResolvedValueOnce({ rows: [{ is_internal: false }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            projects: '3',
+            managed_render_services: '0',
+            managed_vercel_projects: '0',
+            deployment_targets: '0',
+            env_keys: '0',
+            workflow_prs: '0',
+          },
+        ],
+      });
 
     await expect(
       service.assertWithinLimit('user-1', 'projects'),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('exempts internal users from quota enforcement even when over the limit', async () => {
+    // is_internal=true short-circuits before any plan/count lookup.
+    query.mockResolvedValueOnce({ rows: [{ is_internal: true }] });
+
+    await expect(
+      service.assertWithinLimit('internal-user', 'projects'),
+    ).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports quotas as disabled and never upgrade-required for internal users', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ is_internal: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            projects: '99',
+            managed_render_services: '99',
+            managed_vercel_projects: '99',
+            deployment_targets: '99',
+            env_keys: '99',
+            workflow_prs: '99',
+          },
+        ],
+      });
+
+    const usage = await service.getUsage('internal-user');
+
+    expect(usage.enabled).toBe(false);
+    expect(usage.items.every((item) => item.upgradeRequired === false)).toBe(
+      true,
+    );
   });
 
   it('does not block actions when quotas are disabled', async () => {

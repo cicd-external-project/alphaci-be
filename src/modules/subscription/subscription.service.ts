@@ -60,7 +60,10 @@ export class SubscriptionService {
   }
 
   async getForUser(user: SessionUser): Promise<SubscriptionState> {
-    if (this.config.subscription.gateEnabled === false) {
+    // Internal employees (company GitHub org members) and the global
+    // gate-disabled mode are both fully entitled without a subscription row,
+    // payment, or a visit to /subscribe.
+    if (user.isInternal || this.config.subscription.gateEnabled === false) {
       return {
         plan: 'pro' as SubscriptionPlan,
         status: 'active' as const,
@@ -121,7 +124,7 @@ export class SubscriptionService {
                 {
                   currency: 'PHP',
                   amount: amountPhp * 100,
-                  name: 'FlowCI Studio Pro Monthly',
+                  name: 'alphaCI Studio Pro Monthly',
                   quantity: 1,
                 },
               ],

@@ -46,7 +46,7 @@ export class RenderCostPolicyService {
       .renderAllowedInstanceTypes ?? ['free'];
     if (!allowed.includes(instanceType)) {
       throw new BadRequestException(
-        `FlowCI-managed Render does not allow instance type '${instanceType}'. Choose one of: ${allowed.join(', ')}.`,
+        `alphaCI-managed Render does not allow instance type '${instanceType}'. Choose one of: ${allowed.join(', ')}.`,
       );
     }
 

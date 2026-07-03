@@ -126,7 +126,7 @@ jobs:
       '.github/workflows/ci.yml',
       expect.stringContaining('app - Next.js Service'),
       'flowci/app-ci',
-      'ci: add FlowCI Studio workflow',
+      'ci: add alphaCI Studio workflow',
     );
     expect(githubService.createPullRequest).toHaveBeenCalledWith(
       'app-token',
@@ -228,7 +228,7 @@ jobs:
       '.github/workflows/orders-api-unknown-standard.yml',
       expect.stringContaining("default: '24'"),
       'flowci/orders-api-ci',
-      'ci: add FlowCI Studio workflow',
+      'ci: add alphaCI Studio workflow',
     );
   });
 

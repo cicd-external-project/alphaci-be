@@ -17,6 +17,9 @@ declare module 'express-session' {
       email?: string;
       avatarUrl?: string;
       accessToken: string;
+      // boolean when membership was verifiable (internal deployment); null on
+      // the sold deployment, meaning "preserve the existing is_internal flag".
+      isInternal: boolean | null;
     };
   }
 }

@@ -38,6 +38,8 @@ const appConfig: AppConfig = {
     appSlug: 'flowci-test',
     appPrivateKey: testPrivateKey,
     appWebhookSecret: 'webhook-secret',
+    internalOrg: '',
+    enforcedOrg: 'Alpha-Explora',
   },
   templates: {
     repoPath: '../cicd-workflow',
@@ -45,6 +47,7 @@ const appConfig: AppConfig = {
   },
   envProvisioning: {
     enabled: false,
+    ownershipMode: 'byo',
     encryptionKey: '',
     flowciManaged: {
       renderToken: '',
@@ -461,6 +464,32 @@ describe('GithubService', () => {
         ownerLogin: 'tone',
       });
     });
+
+    it('resolves the enforced org installation by login (case-insensitive)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'organization-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContextByLogin('user-1', 'TONE'),
+      ).resolves.toEqual({
+        accessToken: 'organization-token',
+        ownerLogin: 'tone',
+      });
+    });
+
+    it('rejects when the enforced org has no linked installation for the user', async () => {
+      await expect(
+        service.getOrganizationProvisioningContextByLogin(
+          'user-1',
+          'Alpha-Explora',
+        ),
+      ).rejects.toThrow(
+        'The GitHub App is not installed on the Alpha-Explora organization',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe('GitHub webhooks', () => {
@@ -682,13 +711,13 @@ describe('GithubService', () => {
       ).rejects.toThrow('GitHub repo lookup failed (404): not found');
     });
 
-    it('creates a repository through the GitHub API', async () => {
+    it('creates a repository inside the enforced organization, never a personal account', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          html_url: 'https://github.com/tone/orders-api',
-          clone_url: 'https://github.com/tone/orders-api.git',
-          owner: { login: 'tone' },
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
       } as unknown as Response);
@@ -700,13 +729,13 @@ describe('GithubService', () => {
           private: true,
         }),
       ).resolves.toEqual({
-        repoUrl: 'https://github.com/tone/orders-api',
-        cloneUrl: 'https://github.com/tone/orders-api.git',
-        ownerLogin: 'tone',
+        repoUrl: 'https://github.com/Alpha-Explora/orders-api',
+        cloneUrl: 'https://github.com/Alpha-Explora/orders-api.git',
+        ownerLogin: 'Alpha-Explora',
         repoName: 'orders-api',
       });
       expect(fetchMock).toHaveBeenCalledWith(
-        'https://api.github.com/user/repos',
+        'https://api.github.com/orgs/Alpha-Explora/repos',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
@@ -718,15 +747,20 @@ describe('GithubService', () => {
           }),
         }),
       );
+      // The personal /user/repos endpoint must never be reached.
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'https://api.github.com/user/repos',
+        expect.anything(),
+      );
     });
 
     it('uses an empty description when creating a repository without one', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          html_url: 'https://github.com/tone/orders-api',
-          clone_url: 'https://github.com/tone/orders-api.git',
-          owner: { login: 'tone' },
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
       } as unknown as Response);
@@ -737,7 +771,7 @@ describe('GithubService', () => {
       });
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringContaining('/orgs/Alpha-Explora/repos'),
         expect.objectContaining({
           body: expect.stringContaining('"description":""'),
         }),
@@ -745,12 +779,13 @@ describe('GithubService', () => {
     });
 
     it.each([
-      [403, 'GitHub rejected repo creation (403).'],
-      [401, 'GitHub rejected repo creation (401).'],
-      [422, 'Repository already exists or name is invalid:'],
+      [403, 'GitHub denied repository creation in organization Alpha-Explora'],
+      [401, 'GitHub denied repository creation in organization Alpha-Explora'],
+      [404, 'GitHub organization Alpha-Explora is unavailable'],
+      [422, 'Repository already exists in Alpha-Explora'],
       [500, 'GitHub repo creation failed (500):'],
     ])(
-      'maps repo creation status %s to a useful exception',
+      'maps org repo creation status %s to a useful exception',
       async (status, message) => {
         fetchMock.mockResolvedValueOnce({
           ok: false,
@@ -767,27 +802,24 @@ describe('GithubService', () => {
       },
     );
 
-    it('explains when a stale OAuth token lacks repository creation scope', async () => {
-      fetchMock.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        headers: {
-          get: jest
-            .fn()
-            .mockReturnValue('read:org, read:user, repo:status, workflow'),
-        },
-        text: async () => '{"message":"Not Found"}',
-      } as unknown as Response);
+    it('throws without any network call when no destination org can be resolved', async () => {
+      const unconfiguredService = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, enforcedOrg: '' },
+        }),
+        installationsRepository,
+      );
 
       await expect(
-        service.createRepo('under-scoped-oauth-token', {
+        unconfiguredService.createRepo('gh-token', {
           repoName: 'orders-api',
           private: true,
         }),
       ).rejects.toThrow(
-        "repository creation requires the full 'repo' scope. Sign out of this environment and sign back in",
+        'Repository creation is locked to a GitHub organization',
       );
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('creates an organization repository with a user OAuth token when an owner is selected', async () => {
@@ -810,6 +842,42 @@ describe('GithubService', () => {
       expect(fetchMock).toHaveBeenCalledWith(
         'https://api.github.com/orgs/tone/repos',
         expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('forces creation into the enforced org when no owner is provided', async () => {
+      const enforcedService = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, enforcedOrg: 'Alpha-Explora' },
+        }),
+        installationsRepository,
+      );
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
+          name: 'orders-api',
+        }),
+      } as unknown as Response);
+
+      await expect(
+        enforcedService.createRepo('gh-token', {
+          repoName: 'orders-api',
+          private: true,
+        }),
+      ).resolves.toMatchObject({ ownerLogin: 'Alpha-Explora' });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/Alpha-Explora/repos',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      // The personal /user/repos endpoint must never be reached.
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'https://api.github.com/user/repos',
+        expect.anything(),
       );
     });
 

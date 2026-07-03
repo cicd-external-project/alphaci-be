@@ -3,11 +3,15 @@ import { Test } from '@nestjs/testing';
 
 import { CapabilitiesController } from './capabilities.controller';
 
-const makeConfig = (enabled: boolean) =>
+const makeConfig = (
+  enabled: boolean,
+  ownershipMode: 'byo' | 'flowci_managed' = 'byo',
+) =>
   ({
     getOrThrow: jest.fn().mockReturnValue({
       envProvisioning: {
         enabled,
+        ownershipMode,
       },
       projectSyncSnapshots: {
         enabled,
@@ -71,7 +75,7 @@ describe('CapabilitiesController', () => {
         enabled: true,
         providers: ['render', 'vercel'],
         environments: ['test', 'uat', 'production'],
-        modes: ['byo', 'flowci_managed'],
+        modes: ['byo'],
       },
       projectSyncSnapshots: {
         enabled: true,
@@ -121,6 +125,24 @@ describe('CapabilitiesController', () => {
         enabled: true,
       },
     });
+  });
+
+  it('advertises the flowci_managed ownership mode when centralized', async () => {
+    const module = await Test.createTestingModule({
+      controllers: [CapabilitiesController],
+      providers: [
+        {
+          provide: ConfigService,
+          useValue: makeConfig(true, 'flowci_managed'),
+        },
+      ],
+    }).compile();
+
+    const controller = module.get(CapabilitiesController);
+
+    expect(controller.getCapabilities().envProvisioning.modes).toEqual([
+      'flowci_managed',
+    ]);
   });
 
   it('reports env provisioning disabled without provider lists', async () => {

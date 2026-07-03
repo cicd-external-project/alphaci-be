@@ -1,10 +1,7 @@
 import yaml from 'js-yaml';
 
 import type { WorkflowTemplate } from '../catalog/catalog.service';
-import type {
-  DeploymentWorkflowTarget,
-  GenerateWorkflowDto,
-} from './dto/generate-workflow.dto';
+import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
 export type WorkflowStage = 'access' | 'quality' | 'package';
 
@@ -30,6 +27,21 @@ export interface StagedWorkflowBundle {
 
 const CENTRAL_WORKFLOW_REF =
   'cicd-external-project/cicd-workflow/.github/workflows';
+
+/**
+ * Git ref (tag/branch) of the central reusable workflows that generated
+ * pipelines pin to. The external (sold) deployment uses `v1`; the internal
+ * Alphaexplora deployment sets CENTRAL_WORKFLOW_REF=internal-v1 so its
+ * generated pipelines track a separate, independently-versioned tag and never
+ * collide with the customer-facing `v1` line. Per-project overrides still win.
+ */
+export function resolveDefaultCentralWorkflowRef(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env['CENTRAL_WORKFLOW_REF']?.trim() || 'v1';
+}
+
+const DEFAULT_CENTRAL_WORKFLOW_REF = resolveDefaultCentralWorkflowRef();
 
 const DEFAULT_LOCAL_PLATFORM_BASE_URL = 'http://localhost:4000';
 const GITHUB_CALLBACK_PATH = /\/api\/v1\/auth\/github\/callback\/?$/;
@@ -69,28 +81,19 @@ export const CI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
  * Branch promotion model enforced by the generated pipelines:
  *
  *   test → full quality suite at the baseline thresholds (tests, lint,
- *          security, Sonar analysis). CI-only: no deployments except the
- *          Render `test` environment for backends.
+ *          security, Sonar analysis). CI-only: no deployments.
  *   uat  → the same suite under a stricter governance policy: higher
  *          coverage threshold, lint warnings fail the build, and the
- *          SonarCloud quality gate is blocking. Vercel deploys are
- *          *preview* only.
+ *          SonarCloud quality gate is blocking.
  *   main → production. A production-readiness gate (GitHub `production`
  *          environment — honours required reviewers when configured) must
- *          pass before any deployment, and deploys target the production
- *          environment on the provider.
+ *          pass before promotion.
  *
  * Quality/package stages are `workflow_run`-triggered, which always executes
  * in the default-branch context, so every branch decision below must use the
  * originating branch instead of `github.ref_name` alone.
  */
 const BRANCH_EXPR = 'github.event.workflow_run.head_branch || github.ref_name';
-
-const PROTECTED_DEPLOY_BRANCHES = ['test', 'uat', 'main'] as const;
-
-const PROTECTED_DEPLOY_BRANCHES_JSON = JSON.stringify(
-  PROTECTED_DEPLOY_BRANCHES,
-);
 
 const HEAD_SHA_EXPR = '${{ github.event.workflow_run.head_sha || github.sha }}';
 
@@ -122,9 +125,8 @@ export function buildStagedWorkflowBundle(
     coverageThreshold + STRICT_COVERAGE_BONUS,
     STRICT_COVERAGE_CAP,
   );
-  const deploymentProvider = dto.deploymentProvider;
-  const deploymentTargets = dto.deploymentTargets ?? [];
-  const centralWorkflowRef = dto.centralWorkflowRef ?? 'v1';
+  const centralWorkflowRef =
+    dto.centralWorkflowRef ?? DEFAULT_CENTRAL_WORKFLOW_REF;
   const requireProductionApproval =
     dto.enhancements?.includes('strictProductionApproval') ?? false;
   const stack = template.stack;
@@ -141,27 +143,9 @@ export function buildStagedWorkflowBundle(
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
   const nameSuffix = dto.workflowVariant ? ` (${dto.workflowVariant})` : '';
-  const accessName = `FlowCI Access Gate${nameSuffix}`;
-  const qualityName = `FlowCI Quality${nameSuffix}`;
-  const packageName = `FlowCI Package${nameSuffix}`;
-
-  // Promotion PRs wait on every deploy job configured for the repo; skipped
-  // deploys are acceptable (e.g. Vercel jobs skip on the test branch).
-  const renderImageTargets = deploymentTargets.filter(
-    (target) =>
-      target.provider === 'render' &&
-      target.deploymentStrategy === 'render_image_pushed',
-  );
-  const deployJobIds = [
-    ...deploymentTargets
-      .filter((target) => target.provider === 'vercel')
-      .map((target) => `deploy-vercel-${target.slot}`),
-    ...(renderImageTargets.length > 0
-      ? renderImageTargets.map((target) => `deploy-render-${target.slot}`)
-      : deploymentProvider === 'render'
-        ? ['deploy-render']
-        : []),
-  ];
+  const accessName = `alphaCI Access Gate${nameSuffix}`;
+  const qualityName = `alphaCI Quality${nameSuffix}`;
+  const packageName = `alphaCI Package${nameSuffix}`;
 
   const files: StagedWorkflowFile[] = [
     {
@@ -264,7 +248,7 @@ export function buildStagedWorkflowBundle(
           },
           sonar: {
             needs: ['branch-policy', testJobId],
-            // Runs only when the FlowCI-provisioned SonarCloud secrets are
+            // Runs only when the alphaCI-provisioned SonarCloud secrets are
             // present so repos without Sonar keep passing. The quality gate
             // is advisory on test and blocking on uat/main (branch-policy
             // decides via sonar-gate-wait).
@@ -336,39 +320,16 @@ export function buildStagedWorkflowBundle(
             requireProductionApproval,
             centralWorkflowRef,
           ),
-          ...vercelDeployJobs(
-            serviceName,
-            servicePath,
-            deploymentTargets,
-            centralWorkflowRef,
-          ),
-          ...(renderImageTargets.length > 0
-            ? renderDeployJobs(
-                serviceName,
-                servicePath,
-                renderImageTargets,
-                centralWorkflowRef,
-              )
-            : deploymentProvider === 'render'
-              ? {
-                  'deploy-render': renderDeployJob(
-                    serviceName,
-                    centralWorkflowRef,
-                  ),
-                }
-              : {}),
           'promote-to-uat': promotionJob(
             'test-to-uat',
             'test',
             serviceName,
-            deployJobIds,
             centralWorkflowRef,
           ),
           'promote-to-main': promotionJob(
             'uat-to-main',
             'uat',
             serviceName,
-            deployJobIds,
             centralWorkflowRef,
           ),
           'report-results': reportingJob('package', [
@@ -406,7 +367,7 @@ function validationJob(stage: WorkflowStage) {
     runs_on: 'ubuntu-latest',
     steps: [
       {
-        name: 'Validate FlowCI access',
+        name: 'Validate alphaCI access',
         run: [
           'RESPONSE=$(curl -sf -w "\\n%{http_code}" \\',
           '  -X POST \\',
@@ -419,10 +380,10 @@ function validationJob(stage: WorkflowStage) {
           'HTTP_CODE=$(printf \'%s\' "$RESPONSE" | tail -1)',
           'BODY=$(printf \'%s\' "$RESPONSE" | head -n -1)',
           'if [ "$HTTP_CODE" != "200" ]; then',
-          '  echo "::error::FlowCI authorization failed (HTTP $HTTP_CODE). ${BODY}"',
+          '  echo "::error::alphaCI authorization failed (HTTP $HTTP_CODE). ${BODY}"',
           '  exit 1',
           'fi',
-          'echo "FlowCI authorization validated."',
+          'echo "alphaCI authorization validated."',
         ].join('\n'),
       },
     ],
@@ -479,22 +440,6 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function protectedDeployBranchExpression(): string {
-  return [
-    '${{',
-    '(',
-    "github.event_name == 'workflow_dispatch' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.ref_name)`,
-    ') || (',
-    "github.event_name == 'workflow_run' &&",
-    "github.event.workflow_run.conclusion == 'success' &&",
-    `contains(fromJson('${PROTECTED_DEPLOY_BRANCHES_JSON}'), github.event.workflow_run.head_branch)`,
-    ')',
-    '}}',
-  ].join(' ');
-}
-
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
@@ -520,7 +465,7 @@ function buildJob(servicePath: string, nodeVersion: string) {
       },
       {
         name: 'Install dependencies',
-        // Fresh FlowCI scaffolds have no package-lock.json yet (the customer
+        // Fresh alphaCI scaffolds have no package-lock.json yet (the customer
         // generates it on first `npm install`), so npm ci would hard-fail.
         run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
       },
@@ -554,67 +499,6 @@ function productionGateJob(
 }
 
 /**
- * Vercel deployments follow the promotion model: nothing on test (CI-only),
- * previews on uat, production on main — and main additionally requires the
- * production gate to have passed. `!cancelled()` keeps the `if` evaluated
- * when production-gate is skipped (every branch except main).
- */
-function vercelDeployJobs(
-  serviceName: string,
-  servicePath: string,
-  targets: DeploymentWorkflowTarget[],
-  centralWorkflowRef: string,
-) {
-  return Object.fromEntries(
-    targets
-      .filter((target) => target.provider === 'vercel')
-      .map((target) => {
-        const secretNames = target.secretNames ?? {};
-        return [
-          `deploy-vercel-${target.slot}`,
-          {
-            needs: ['build', 'production-gate'],
-            if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-            uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${centralWorkflowRef}`,
-            with: {
-              'system-name':
-                target.slot === 'standalone' ? serviceName : target.slot,
-              'working-directory': target.rootDirectory ?? servicePath,
-              'checkout-ref': HEAD_SHA_EXPR,
-              'source-branch': `\${{ ${BRANCH_EXPR} }}`,
-              environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || 'preview' }}`,
-            },
-            secrets: {
-              VERCEL_TOKEN: `\${{ secrets.${secretNames.token} }}`,
-              VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId} }}`,
-              VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId} }}`,
-            },
-          },
-        ];
-      }),
-  );
-}
-
-/**
- * Render deployments map branches to provider environments (test → test,
- * uat → uat, main → production); the production environment is reachable
- * only after the production gate passes.
- */
-function renderDeployJob(serviceName: string, centralWorkflowRef: string) {
-  return {
-    needs: ['build', 'production-gate'],
-    if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
-    with: {
-      'system-name': serviceName,
-      environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || (${BRANCH_EXPR}) }}`,
-      branch: `\${{ ${BRANCH_EXPR} }}`,
-    },
-    secrets: 'inherit',
-  };
-}
-
-/**
  * Auto-promotion PR after a fully green package stage on a promotion source
  * branch: test → uat once everything passed on test, uat → main once
  * everything passed on uat. The package stage only starts after the quality
@@ -631,17 +515,12 @@ function promotionJob(
   direction: 'test-to-uat' | 'uat-to-main',
   sourceBranch: 'test' | 'uat',
   serviceName: string,
-  deployJobIds: string[],
   centralWorkflowRef: string,
 ) {
   const conditions = [
     '!cancelled()',
     `(${BRANCH_EXPR}) == '${sourceBranch}'`,
     "needs.build.result == 'success'",
-    ...deployJobIds.map(
-      (id) =>
-        `(needs.${id}.result == 'success' || needs.${id}.result == 'skipped')`,
-    ),
   ];
 
   return {
@@ -649,7 +528,7 @@ function promotionJob(
       contents: 'read',
       'pull-requests': 'write',
     },
-    needs: ['build', ...deployJobIds],
+    needs: ['build'],
     if: `\${{ ${conditions.join(' && ')} }}`,
     uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@${centralWorkflowRef}`,
     with: {
@@ -665,55 +544,9 @@ function promotionJob(
   };
 }
 
-function renderDeployJobs(
-  serviceName: string,
-  servicePath: string,
-  targets: DeploymentWorkflowTarget[],
-  centralWorkflowRef: string,
-) {
-  return Object.fromEntries(
-    targets
-      .filter(
-        (target) =>
-          target.provider === 'render' &&
-          target.deploymentStrategy === 'render_image_pushed',
-      )
-      .map((target) => {
-        const secretNames = target.secretNames ?? {};
-        const secretPrefix = `RENDER_${target.slot.toUpperCase()}`;
-        return [
-          `deploy-render-${target.slot}`,
-          {
-            needs: ['build', 'production-gate'],
-            if: `\${{ !cancelled() && needs.build.result == 'success' && ((${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || ((${BRANCH_EXPR}) == 'main' && needs.production-gate.result == 'success')) }}`,
-            uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
-            with: {
-              'system-name':
-                target.slot === 'standalone' ? serviceName : target.slot,
-              environment: `\${{ (${BRANCH_EXPR}) == 'main' && 'production' || (${BRANCH_EXPR}) }}`,
-              branch: `\${{ ${BRANCH_EXPR} }}`,
-              'working-directory': target.rootDirectory ?? servicePath,
-              'docker-context':
-                target.dockerContext ?? target.rootDirectory ?? servicePath,
-              'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
-              'image-name': target.imageName ?? `flowci-${target.slot}`,
-              'checkout-ref': HEAD_SHA_EXPR,
-            },
-            secrets: {
-              RENDER_API_KEY: `\${{ secrets.${secretNames.apiKey ?? `${secretPrefix}_API_KEY`} }}`,
-              RENDER_SERVICE_ID: `\${{ secrets.${secretNames.serviceId ?? `${secretPrefix}_SERVICE_ID`} }}`,
-              RENDER_OWNER_ID: `\${{ secrets.${secretNames.ownerId ?? `${secretPrefix}_OWNER_ID`} }}`,
-              RENDER_REGISTRY_CREDENTIAL_ID: `\${{ secrets.${secretNames.registryCredentialId ?? `${secretPrefix}_REGISTRY_CREDENTIAL_ID`} }}`,
-            },
-          },
-        ];
-      }),
-  );
-}
-
 /**
  * Best-effort reporting step that POSTs structured pipeline results to the
- * FlowCI platform after each stage. Runs with `if: always()` so it fires on
+ * alphaCI platform after each stage. Runs with `if: always()` so it fires on
  * success, failure, and cancellation. The curl uses `--max-time 5` and falls
  * back to a warning annotation on any error so the pipeline never fails due to
  * a reporting outage.
@@ -801,7 +634,7 @@ function reportingJob(
     '  -H "Authorization: Bearer $CI_TOKEN" \\',
     '  -H "Content-Type: application/json" \\',
     '  -d "$PAYLOAD" \\',
-    '  || echo "::warning::Failed to report pipeline results to FlowCI"',
+    '  || echo "::warning::Failed to report pipeline results to alphaCI"',
   ];
 
   return {
@@ -814,7 +647,7 @@ function reportingJob(
     },
     steps: [
       {
-        name: 'Report stage results to FlowCI',
+        name: 'Report stage results to alphaCI',
         env: stepEnv,
         run: scriptLines.join('\n'),
       },

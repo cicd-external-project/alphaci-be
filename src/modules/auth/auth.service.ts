@@ -46,7 +46,24 @@ type AccountState =
       kind: 'archived';
       profile: GitHubNormalizedUser;
       accessToken: string;
+      isInternal: boolean | null;
+    }
+  | {
+      // The internal deployment (GITHUB_INTERNAL_ORG set) rejects sign-ins from
+      // users who are not members of the company org. No session is created.
+      //  - 'not_member': GitHub confirmed (404) the user is not an active
+      //    member of the org.
+      //  - 'verification_failed': GitHub membership could not be confirmed
+      //    (403, 5xx, network error) — denied fail-closed, but this is NOT the
+      //    same as a confirmed non-member and should not tell the user to ask
+      //    to be added to the org.
+      kind: 'unauthorized';
+      login: string;
+      reason: 'not_member' | 'verification_failed';
     };
+
+/** Tri-state result of checking GitHub org membership for the internal gate. */
+type OrgMembershipCheck = 'member' | 'not_member' | 'verification_failed';
 
 export interface PendingAccountInfo {
   pending: true;
@@ -260,6 +277,7 @@ export class AuthService {
 
     const restoredUser = await this.usersRepository.restoreByGithubUserId(
       pending.githubUserId,
+      pending.isInternal,
     );
 
     await this.establishSession(request, restoredUser);
@@ -297,6 +315,7 @@ export class AuthService {
       ...(pending.name !== undefined && { name: pending.name }),
       ...(pending.email !== undefined && { email: pending.email }),
       ...(pending.avatarUrl !== undefined && { avatarUrl: pending.avatarUrl }),
+      isInternal: pending.isInternal,
     });
 
     await this.subscriptionsRepository.ensureDefaultFreeSubscription(
@@ -347,11 +366,27 @@ export class AuthService {
 
       const accountState = await this.resolveAccountState(code);
 
+      if (accountState.kind === 'unauthorized') {
+        // Internal deployment gate rejected this sign-in. No session, no DB
+        // write. The reason maps to a distinct auth= code so the FE can tell
+        // a confirmed non-member apart from an unverifiable membership check
+        // (see AccountState's 'unauthorized' comment) instead of always
+        // telling the user to "ask to be added to the org".
+        this.logger.warn(
+          `Blocked sign-in for "${accountState.login}" (GITHUB_INTERNAL_ORG gate, reason: ${accountState.reason}).`,
+        );
+        const authCode =
+          accountState.reason === 'verification_failed'
+            ? 'org_verification_failed'
+            : 'not_authorized';
+        return this.withQuery(returnTo, 'auth', authCode);
+      }
+
       if (accountState.kind === 'archived') {
         // User previously archived their account. Stash a pending-choice
         // payload in the session so the FE can present restore/start-fresh.
         // Do NOT set userId or session.user — the user is NOT authenticated.
-        const { profile, accessToken } = accountState;
+        const { profile, accessToken, isInternal } = accountState;
         request.session.pendingArchived = {
           githubUserId: profile.githubUserId,
           login: profile.login,
@@ -361,6 +396,7 @@ export class AuthService {
             avatarUrl: profile.avatarUrl,
           }),
           accessToken,
+          isInternal,
         };
 
         await this.saveSession(request);
@@ -444,6 +480,28 @@ export class AuthService {
     const accessToken = await this.exchangeCodeForGitHubToken(code);
     const profile = await this.fetchGitHubUser(accessToken);
 
+    // Internal-org membership handling:
+    //  - Internal deployment (GITHUB_INTERNAL_ORG set): verify membership and
+    //    authoritatively persist the boolean (self-heals on join/leave).
+    //  - Sold deployment (unset): pass null so the persisted flag is preserved
+    //    for existing users (an employee's internal status is not clobbered by
+    //    logging into the customer product) and defaults to false for new rows.
+    const internalGatingEnabled = Boolean(this.config.github.internalOrg);
+    let isInternal: boolean | null = null;
+    if (internalGatingEnabled) {
+      const membership = await this.checkInternalOrgMembership(accessToken);
+
+      // Hard-block: non-members (confirmed or unverifiable) may not sign in on
+      // the internal deployment. Rejected before any session is established
+      // and before any DB write. Both failure modes deny access, but they are
+      // NOT the same situation — see AccountState's 'unauthorized' comment —
+      // so the reason is threaded through to produce an accurate message.
+      if (membership !== 'member') {
+        return { kind: 'unauthorized', login: profile.login, reason: membership };
+      }
+      isInternal = true;
+    }
+
     const existing =
       await this.usersRepository.findByGithubUserIdIncludingArchived(
         profile.githubUserId,
@@ -451,16 +509,78 @@ export class AuthService {
 
     if (existing && existing.archivedAt !== null) {
       // Archived — do not upsert; return enough info to build pendingArchived.
-      return { kind: 'archived', profile, accessToken };
+      return { kind: 'archived', profile, accessToken, isInternal };
     }
 
     // Active or new — upsertGitHubUser handles both paths:
     // - no existing row: INSERT (new user).
     // - existing active row: UPDATE last_login_at + profile fields.
-    const user = await this.usersRepository.upsertGitHubUser(profile);
+    const user = await this.usersRepository.upsertGitHubUser({
+      ...profile,
+      isInternal,
+    });
 
     const kind = existing ? 'active' : 'new';
     return { kind, user, accessToken };
+  }
+
+  /**
+   * Checks whether the OAuth-authenticated user is an active member of the
+   * configured internal org (GITHUB_INTERNAL_ORG), using the user's own token
+   * against GET /user/memberships/orgs/{org}. Returns a tri-state result
+   * rather than a boolean because "not a member" and "could not verify" are
+   * different situations that call for different operator/user messaging,
+   * even though both deny access (fail-closed):
+   *   - 200 + state 'active' → 'member'
+   *   - 404                  → 'not_member' (confirmed; includes pending
+   *                            invites that have not been accepted yet)
+   *   - anything else (403/5xx) or a network error → 'verification_failed'
+   *     (e.g. missing read:org scope, or the org has OAuth App access
+   *     restrictions and has not approved this app)
+   */
+  private async checkInternalOrgMembership(
+    accessToken: string,
+  ): Promise<OrgMembershipCheck> {
+    const org = this.config.github.internalOrg;
+    if (!org) {
+      return 'not_member';
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.github.com/user/memberships/orgs/${encodeURIComponent(org)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
+        },
+      );
+
+      if (response.status === 404) {
+        this.logger.log(
+          `Org membership check: "${org}" returned 404 (confirmed non-member or unaccepted invite).`,
+        );
+        return 'not_member';
+      }
+
+      if (!response.ok) {
+        this.logger.warn(
+          `Org membership check for "${org}" returned ${String(response.status)}; could not verify, denying access. ` +
+            'Common causes: the OAuth token is missing the read:org scope, or the GitHub org has "OAuth App access restrictions" enabled and has not approved this app.',
+        );
+        return 'verification_failed';
+      }
+
+      const payload = (await response.json()) as { state?: string };
+      return payload.state === 'active' ? 'member' : 'not_member';
+    } catch (err) {
+      this.logger.warn(
+        `Org membership check for "${org}" failed: ${err instanceof Error ? err.message : String(err)}; could not verify, denying access.`,
+      );
+      return 'verification_failed';
+    }
   }
 
   private buildGitHubAuthorizationUrl(state: string): string {

@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
   buildStagedWorkflowBundle,
+  resolveDefaultCentralWorkflowRef,
   resolvePlatformBaseUrl,
 } from './staged-workflow.builder';
 
@@ -56,6 +57,28 @@ describe('buildStagedWorkflowBundle', () => {
     expect(resolvePlatformBaseUrl({})).toBe('http://localhost:4000');
   });
 
+  it('defaults the central workflow ref to v1 but honors CENTRAL_WORKFLOW_REF', () => {
+    expect(resolveDefaultCentralWorkflowRef({})).toBe('v1');
+    expect(
+      resolveDefaultCentralWorkflowRef({ CENTRAL_WORKFLOW_REF: 'internal-v1' }),
+    ).toBe('internal-v1');
+    // Blank/whitespace falls back to v1.
+    expect(
+      resolveDefaultCentralWorkflowRef({ CENTRAL_WORKFLOW_REF: '  ' }),
+    ).toBe('v1');
+  });
+
+  it('pins internal pipelines to internal-v1 when the ref is provided', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'payments',
+      centralWorkflowRef: 'internal-v1',
+    });
+    const allYaml = bundle.workflowFiles.map((f) => f.yaml).join('\n');
+    expect(allYaml).toContain('@internal-v1');
+    expect(allYaml).not.toContain('lint-check.yml@v1');
+  });
+
   it('emits the three-stage bundle with unsuffixed names and paths by default', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
@@ -68,9 +91,9 @@ describe('buildStagedWorkflowBundle', () => {
       '.github/workflows/20-flowci-package.yml',
     ]);
     expect(bundle.workflowFiles.map((file) => file.name)).toEqual([
-      'FlowCI Access Gate',
-      'FlowCI Quality',
-      'FlowCI Package',
+      'alphaCI Access Gate',
+      'alphaCI Quality',
+      'alphaCI Package',
     ]);
   });
 
@@ -143,7 +166,7 @@ describe('buildStagedWorkflowBundle', () => {
       expect(file.yaml).toContain('CI_REPORT_URL');
       // graceful degradation: curl failure must not fail the pipeline
       expect(file.yaml).toContain(
-        '|| echo "::warning::Failed to report pipeline results to FlowCI"',
+        '|| echo "::warning::Failed to report pipeline results to alphaCI"',
       );
     }
   });
@@ -165,13 +188,13 @@ describe('buildStagedWorkflowBundle', () => {
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
-    expect(quality.name).toBe('FlowCI Quality (backend)');
+    expect(quality.name).toBe('alphaCI Quality (backend)');
     expect(quality.on.workflow_run?.workflows).toEqual([
-      'FlowCI Access Gate (backend)',
+      'alphaCI Access Gate (backend)',
     ]);
-    expect(pkg.name).toBe('FlowCI Package (backend)');
+    expect(pkg.name).toBe('alphaCI Package (backend)');
     expect(pkg.on.workflow_run?.workflows).toEqual([
-      'FlowCI Quality (backend)',
+      'alphaCI Quality (backend)',
     ]);
   });
 
@@ -305,7 +328,7 @@ describe('buildStagedWorkflowBundle', () => {
     expect(gate?.with?.['require-approval']).toBe(true);
   });
 
-  it('deploys Vercel previews on test and uat, production on gated main', () => {
+  it('does not emit Vercel deploy jobs when deployment targets are present', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
       templateId: 'fe-nextjs',
       serviceName: 'orders-web',
@@ -324,19 +347,14 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const deploy = pkg.jobs['deploy-vercel-standalone'];
+    const packageYaml = bundle.workflowFiles[2]!.yaml;
 
-    expect(deploy?.needs).toEqual(['build', 'production-gate']);
-    // all three branches deploy; main additionally requires the production gate
-    expect(deploy?.if).toContain("== 'test'");
-    expect(deploy?.if).toContain("== 'uat'");
-    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
-    expect(deploy?.with?.['environment']).toBe(
-      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
-    );
+    expect(pkg.jobs['deploy-vercel-standalone']).toBeUndefined();
+    expect(packageYaml).not.toContain('vercel-deploy.yml');
+    expect(packageYaml).not.toContain('VERCEL_TOKEN');
   });
 
-  it('maps render deploys to per-branch environments with main gated', () => {
+  it('does not emit Render deploy jobs when deployment provider is render', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -344,14 +362,10 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const deploy = pkg.jobs['deploy-render'];
+    const packageYaml = bundle.workflowFiles[2]!.yaml;
 
-    expect(deploy?.needs).toEqual(['build', 'production-gate']);
-    expect(deploy?.if).toContain("== 'test'");
-    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
-    expect(deploy?.with?.['environment']).toBe(
-      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || (github.event.workflow_run.head_branch || github.ref_name) }}",
-    );
+    expect(pkg.jobs['deploy-render']).toBeUndefined();
+    expect(packageYaml).not.toContain('render-deploy.yml');
   });
 
   it('creates promotion PR jobs for test→uat and uat→main', () => {
@@ -380,7 +394,7 @@ describe('buildStagedWorkflowBundle', () => {
     expect(toMain?.with?.['direction']).toBe('uat-to-main');
   });
 
-  it('makes promotion wait on deploy jobs, tolerating skips', () => {
+  it('keeps promotion independent of deployment jobs when provider is render', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -390,9 +404,7 @@ describe('buildStagedWorkflowBundle', () => {
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     const toUat = pkg.jobs['promote-to-uat'];
 
-    expect(toUat?.needs).toEqual(['build', 'deploy-render']);
-    expect(toUat?.if).toContain(
-      "(needs.deploy-render.result == 'success' || needs.deploy-render.result == 'skipped')",
-    );
+    expect(toUat?.needs).toEqual(['build']);
+    expect(toUat?.if).not.toContain('deploy-render');
   });
 });

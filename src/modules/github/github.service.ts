@@ -110,6 +110,18 @@ export class GithubService {
   }
 
   /**
+   * Login of the org that every created repository must belong to, or '' when
+   * the deployment allows personal/per-request ownership. Repository creation
+   * reads this so no caller can silently provision into a personal account.
+   */
+  getEnforcedOrg(): string {
+    return (
+      this.configService?.get<AppConfig>('app')?.github.enforcedOrg?.trim() ??
+      ''
+    );
+  }
+
+  /**
    * Wraps fetch with bounded retry/backoff for GitHub rate limits.
    *
    * Retries only on 429 and rate-limit 403s — detected via response headers so
@@ -572,6 +584,40 @@ export class GithubService {
   }
 
   /**
+   * Resolve the org provisioning context for a fixed org login (used when the
+   * deployment enforces a single destination org). Finds the caller's linked
+   * installation for that org, then reuses the installation-id validation so
+   * the same "Organization + all repositories" guarantees apply.
+   */
+  async getOrganizationProvisioningContextByLogin(
+    userId: string,
+    orgLogin: string,
+  ): Promise<{ accessToken: string; ownerLogin: string }> {
+    if (!this.githubInstallationsRepository) {
+      throw new ForbiddenException('GitHub App installations are unavailable.');
+    }
+
+    const installations =
+      await this.githubInstallationsRepository.findByUserId(userId);
+    const match = installations.find(
+      (installation) =>
+        installation.accountLogin?.toLowerCase() === orgLogin.toLowerCase(),
+    );
+
+    if (!match) {
+      throw new ForbiddenException(
+        `The GitHub App is not installed on the ${orgLogin} organization for this account. ` +
+          `Install it on ${orgLogin} with access to all repositories, then try again.`,
+      );
+    }
+
+    return this.getOrganizationProvisioningContext(
+      userId,
+      match.installationId,
+    );
+  }
+
+  /**
    * Returns true if the repository exists and the token has access to it.
    * Returns false on 404 (deleted or never existed) or 403/401 (no access).
    * Throws on unexpected non-2xx/4xx statuses (5xx, network errors).
@@ -676,85 +722,21 @@ export class GithubService {
     ownerLogin: string;
     repoName: string;
   }> {
-    if (ownerLogin) {
-      return this.createRepoForOrg(accessToken, dto, ownerLogin);
-    }
-
-    const response = await this.fetchWithRetry(
-      'https://api.github.com/user/repos',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'cicd-workflow-product',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: dto.repoName,
-          description: dto.description ?? '',
-          private: dto.private,
-          auto_init: true,
-          default_branch: 'main',
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      const oauthScopes = (response.headers?.get('x-oauth-scopes') ?? '')
-        .split(',')
-        .map((scope) => scope.trim())
-        .filter(Boolean);
-      const canCreateRepo =
-        oauthScopes.includes('repo') ||
-        (!dto.private && oauthScopes.includes('public_repo'));
-
-      if (response.status === 403 || response.status === 401) {
-        throw new ForbiddenException(
-          `GitHub rejected repo creation (${String(response.status)}). ` +
-            `Ensure your OAuth token includes the 'repo' scope, then sign out and sign back in.`,
-        );
-      }
-      if (response.status === 422) {
-        throw new UnprocessableEntityException(
-          `Repository already exists or name is invalid: ${body}`,
-        );
-      }
-      if (response.status === 404 && oauthScopes.length > 0 && !canCreateRepo) {
-        throw new ForbiddenException(
-          `GitHub rejected repo creation (404). The current OAuth token grants ` +
-            `[${oauthScopes.join(', ')}] but repository creation requires ` +
-            `${dto.private ? "the full 'repo' scope" : "'repo' or 'public_repo'"}. ` +
-            `Sign out of this environment and sign back in with GitHub to refresh the token.`,
-        );
-      }
-      if (response.status === 404) {
-        throw new BadGatewayException(
-          `GitHub repo creation failed (404): ${body}. ` +
-            `This usually means the access token is an App installation token that cannot target /user/repos ` +
-            `(e.g. the App is installed on an organisation, not a personal account). ` +
-            `Re-authenticate via GitHub OAuth to obtain a user token.`,
-        );
-      }
-      throw new BadGatewayException(
-        `GitHub repo creation failed (${String(response.status)}): ${body}`,
+    // Repositories are ALWAYS created inside a GitHub organization. The personal
+    // `POST /user/repos` path has been removed entirely so a repository can never
+    // be provisioned into a user's own account — not through a missing owner, and
+    // not through configuration. `getEnforcedOrg()` defaults to Alpha-Explora and
+    // can never resolve to an empty value (see app.config.ts).
+    const targetOwner = ownerLogin || this.getEnforcedOrg();
+    if (!targetOwner) {
+      throw new ForbiddenException(
+        'Repository creation is locked to a GitHub organization, but no ' +
+          'destination org is configured. Set GITHUB_ENFORCED_ORG to a valid ' +
+          'organization login.',
       );
     }
 
-    const repo = (await response.json()) as {
-      html_url: string;
-      clone_url: string;
-      owner: { login: string };
-      name: string;
-    };
-
-    return {
-      repoUrl: repo.html_url,
-      cloneUrl: repo.clone_url,
-      ownerLogin: repo.owner.login,
-      repoName: repo.name,
-    };
+    return this.createRepoForOrg(accessToken, dto, targetOwner);
   }
 
   private async createRepoForOrg(
