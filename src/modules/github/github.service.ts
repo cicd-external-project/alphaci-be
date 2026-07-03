@@ -90,6 +90,17 @@ export class GithubService {
     this.appSlug = config?.github.appSlug?.trim() ?? '';
     this.appPrivateKey = config?.github.appPrivateKey ?? '';
     this.appWebhookSecret = config?.github.appWebhookSecret ?? '';
+
+    // Printed once per process boot so a stale deploy (running code that
+    // predates the enforced-org fallback, or a config wiring regression) is
+    // visible in the Render log stream immediately — instead of only
+    // surfacing when a user hits create-project and gets a 403.
+    const enforcedOrg = config?.github.enforcedOrg?.trim();
+    this.logger.log(
+      enforcedOrg
+        ? `Repository creation is enforced to organization: ${enforcedOrg}`
+        : 'GITHUB ENFORCED ORG RESOLVED EMPTY AT BOOT — repository creation will be refused. Check that this deploy includes the enforced-org config fallback.',
+    );
   }
 
   getAppInstallUrl(): string {
