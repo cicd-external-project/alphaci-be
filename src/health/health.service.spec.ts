@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { HealthService } from './health.service.js';
 import { SupabaseService } from '../supabase/supabase.service.js';
 
@@ -7,12 +8,19 @@ const makeSupabaseMock = (pingResult: boolean): Partial<SupabaseService> => ({
   ping: jest.fn().mockResolvedValue(pingResult),
 });
 
+const configServiceMock: Partial<ConfigService> = {
+  get: jest.fn().mockReturnValue({
+    github: { enforcedOrg: 'Alpha-Explora' },
+  }),
+};
+
 describe('HealthService', () => {
   async function createService(dbPing: boolean): Promise<HealthService> {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HealthService,
         { provide: SupabaseService, useValue: makeSupabaseMock(dbPing) },
+        { provide: ConfigService, useValue: configServiceMock },
       ],
     }).compile();
 
