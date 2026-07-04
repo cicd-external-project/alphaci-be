@@ -417,7 +417,7 @@ jobs:
 
     expect(
       githubServiceMock.getOrganizationProvisioningContextByLogin,
-    ).toHaveBeenCalledWith('user-1', 'Alpha-Explora');
+    ).toHaveBeenCalledWith('Alpha-Explora');
     expect(
       githubServiceMock.getOrganizationProvisioningContext,
     ).not.toHaveBeenCalled();

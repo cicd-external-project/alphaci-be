@@ -484,11 +484,21 @@ describe('GithubService', () => {
       } as unknown as Response);
 
       await expect(
-        service.getOrganizationProvisioningContextByLogin('user-1', 'TONE'),
+        service.getOrganizationProvisioningContextByLogin('TONE'),
       ).resolves.toEqual({
         accessToken: 'organization-token',
         ownerLogin: 'tone',
       });
+    });
+
+    it('rejects with a server-config error when App credentials are missing', async () => {
+      const noCreds = new GithubService(null, installationsRepository);
+
+      await expect(
+        noCreds.getOrganizationProvisioningContextByLogin('Alpha-Explora'),
+      ).rejects.toThrow('GITHUB_APP_ID');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(installationsRepository.findByUserId).not.toHaveBeenCalled();
     });
 
     it('rejects when the App is not installed on the enforced org (404)', async () => {
@@ -500,10 +510,7 @@ describe('GithubService', () => {
       } as unknown as Response);
 
       await expect(
-        service.getOrganizationProvisioningContextByLogin(
-          'user-1',
-          'Alpha-Explora',
-        ),
+        service.getOrganizationProvisioningContextByLogin('Alpha-Explora'),
       ).rejects.toThrow(
         'The GitHub App is not installed on the Alpha-Explora organization',
       );
@@ -522,8 +529,8 @@ describe('GithubService', () => {
       } as unknown as Response);
 
       await expect(
-        service.getOrganizationProvisioningContextByLogin('user-1', 'TONE'),
-      ).rejects.toThrow('access to all repositories');
+        service.getOrganizationProvisioningContextByLogin('TONE'),
+      ).rejects.toThrow('requires "All repositories"');
     });
   });
 

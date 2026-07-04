@@ -7,6 +7,7 @@ import {
   InternalServerErrorException,
   Logger,
   Optional,
+  ServiceUnavailableException,
   UnprocessableEntityException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -562,7 +563,9 @@ export class GithubService {
     installationId: number,
   ): Promise<{ accessToken: string; ownerLogin: string }> {
     if (!this.githubInstallationsRepository) {
-      throw new ForbiddenException('GitHub App installations are unavailable.');
+      throw new ServiceUnavailableException(
+        'GitHub App installation records cannot be read: the database layer is not initialized on this deployment.',
+      );
     }
 
     let installation =
@@ -640,9 +643,13 @@ export class GithubService {
     );
 
     if (response.status === 404) {
+      const appSlug = this.getAppSlug();
       throw new ForbiddenException(
         `The GitHub App is not installed on the ${orgLogin} organization. ` +
-          `Install it on ${orgLogin} with access to all repositories, then try again.`,
+          (appSlug
+            ? `Install it at https://github.com/apps/${appSlug}/installations/new, ` +
+              `choose the ${orgLogin} organization, and grant access to all repositories, then try again.`
+            : `Install it on ${orgLogin} with access to all repositories, then try again.`),
       );
     }
 
@@ -670,61 +677,44 @@ export class GithubService {
 
   /**
    * Resolve the org provisioning context for a fixed org login (used when the
-   * deployment enforces a single destination org).
+   * deployment enforces a single destination org, e.g. Alpha-Explora).
    *
-   * Internal/centralized deployments install the GitHub App once on the enforced
-   * org, so we resolve that installation app-to-org via the App JWT and never
-   * require each user to have linked it. When App credentials are absent (e.g. a
-   * BYO deployment), we fall back to the caller's own linked installation.
+   * The GitHub App is installed once on the enforced org, so the installation
+   * is always resolved app-to-org via the App JWT — no per-user linkage is
+   * consulted. Every failure names its exact cause: missing server credentials,
+   * App not installed on the org, or insufficient repository access.
    */
   async getOrganizationProvisioningContextByLogin(
-    userId: string,
     orgLogin: string,
   ): Promise<{ accessToken: string; ownerLogin: string }> {
-    if (this.hasAppCredentials()) {
-      const installation = await this.getInstallationForOrg(orgLogin);
-
-      if (installation.targetType !== 'Organization') {
-        throw new ForbiddenException(
-          `The GitHub App installation for ${orgLogin} is not an organization installation.`,
-        );
-      }
-      if (installation.repositorySelection !== 'all') {
-        throw new ForbiddenException(
-          'Organization repository creation requires GitHub App access to all repositories.',
-        );
-      }
-
-      return {
-        accessToken: await this.createInstallationAccessToken(installation.id),
-        ownerLogin: installation.accountLogin,
-      };
-    }
-
-    // Fallback: no App credentials configured — use the caller's linked
-    // installation for the org (BYO deployments).
-    if (!this.githubInstallationsRepository) {
-      throw new ForbiddenException('GitHub App installations are unavailable.');
-    }
-
-    const installations =
-      await this.githubInstallationsRepository.findByUserId(userId);
-    const match = installations.find(
-      (installation) =>
-        installation.accountLogin?.toLowerCase() === orgLogin.toLowerCase(),
-    );
-
-    if (!match) {
-      throw new ForbiddenException(
-        `The GitHub App is not installed on the ${orgLogin} organization for this account. ` +
-          `Install it on ${orgLogin} with access to all repositories, then try again.`,
+    if (!this.hasAppCredentials()) {
+      throw new ServiceUnavailableException(
+        `Repository creation in the ${orgLogin} organization is not available: ` +
+          'this deployment has no GitHub App credentials. Set GITHUB_APP_ID and ' +
+          'GITHUB_APP_PRIVATE_KEY (or GITHUB_APP / GITHUB_PRIVATE_KEY) and restart the service.',
       );
     }
 
-    return this.getOrganizationProvisioningContext(
-      userId,
-      match.installationId,
-    );
+    const installation = await this.getInstallationForOrg(orgLogin);
+
+    if (installation.targetType !== 'Organization') {
+      throw new ForbiddenException(
+        `The GitHub App installation for ${orgLogin} is not an organization installation.`,
+      );
+    }
+    if (installation.repositorySelection !== 'all') {
+      throw new ForbiddenException(
+        `The GitHub App is installed on ${orgLogin} with "${installation.repositorySelection}" ` +
+          'repository access, but creating repositories requires "All repositories". ' +
+          `Update it on GitHub: ${orgLogin} organization Settings -> GitHub Apps -> ` +
+          `${this.getAppSlug() || 'the app'} -> Configure -> Repository access -> All repositories.`,
+      );
+    }
+
+    return {
+      accessToken: await this.createInstallationAccessToken(installation.id),
+      ownerLogin: installation.accountLogin,
+    };
   }
 
   /**

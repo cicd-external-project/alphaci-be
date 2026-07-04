@@ -1609,7 +1609,6 @@ export class ProjectsService {
 
       const context =
         await this.githubService.getOrganizationProvisioningContextByLogin(
-          userId,
           enforcedOrg,
         );
 
