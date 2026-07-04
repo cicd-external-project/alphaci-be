@@ -157,6 +157,18 @@ function requireString(env: RawEnv, key: string): string {
   return value.trim();
 }
 
+function requireStringFromAny(env: RawEnv, keys: string[]): string {
+  const value = getTrimmedString(env, keys);
+  if (!value) {
+    throw new Error(
+      `[env] Missing required environment variable: ${keys[0]}` +
+        (keys.length > 1 ? ` (or alias ${keys.slice(1).join(', ')})` : '') +
+        `. Set it in .env or your deployment secrets before starting the service.`,
+    );
+  }
+  return value;
+}
+
 function requireEnum<T extends string>(
   env: RawEnv,
   key: string,
@@ -207,12 +219,16 @@ function validateEnvProvisioningConfig(env: RawEnv): void {
 function validateProductionGithubAppConfig(env: RawEnv): void {
   if (env['NODE_ENV'] !== 'production') return;
 
-  const appId = requireString(env, 'GITHUB_APP_ID');
+  // Accept the same alias names as app.config.ts (GITHUB_APP for the App ID,
+  // GITHUB_PRIVATE_KEY for the key). If this gate rejects a name that
+  // app.config.ts would honor at runtime, a correctly configured deployment
+  // crash-loops at boot and the platform keeps serving the previous release.
+  const appId = requireStringFromAny(env, ['GITHUB_APP_ID', 'GITHUB_APP']);
   const appSlug = requireString(env, 'GITHUB_APP_SLUG');
-  const privateKey = requireString(env, 'GITHUB_APP_PRIVATE_KEY').replace(
-    /\\n/g,
-    '\n',
-  );
+  const privateKey = requireStringFromAny(env, [
+    'GITHUB_APP_PRIVATE_KEY',
+    'GITHUB_PRIVATE_KEY',
+  ]).replaceAll('\\n', '\n');
 
   if (!/^\d+$/.test(appId)) {
     throw new Error('[env] GITHUB_APP_ID must contain digits only.');

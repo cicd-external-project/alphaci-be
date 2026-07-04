@@ -466,7 +466,11 @@ describe('AuthService', () => {
       const { service, usersRepo } = await createService(
         true,
         undefined,
-        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
         undefined,
         'acme-internal',
       );
@@ -498,7 +502,11 @@ describe('AuthService', () => {
       const { service, usersRepo } = await createService(
         true,
         undefined,
-        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
         undefined,
         'acme-internal',
       );
@@ -524,7 +532,11 @@ describe('AuthService', () => {
       const { service, usersRepo } = await createService(
         true,
         undefined,
-        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
         undefined,
         'acme-internal',
       );
@@ -553,7 +565,11 @@ describe('AuthService', () => {
       const { service, usersRepo } = await createService(
         true,
         undefined,
-        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
         undefined,
         'acme-internal',
       );
@@ -577,7 +593,11 @@ describe('AuthService', () => {
       const { service, usersRepo } = await createService(
         true,
         undefined,
-        { findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null) },
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
         // internalOrg defaults to '' → gating disabled, no membership check.
       );
       const req = makeRequest();
