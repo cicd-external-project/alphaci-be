@@ -15,6 +15,14 @@ export interface HealthDeployInfo {
    * tip to confirm a redeploy actually picked up the expected commit. */
   gitCommit: string;
   githubEnforcedOrg: string;
+  /** Ground-truth view of the GitHub App wiring the RUNNING process sees.
+   * githubAppConfigured mirrors GithubService.hasAppCredentials() (App ID +
+   * private key both present); appId/slug are public identifiers, not secrets.
+   * Lets a deployment confirm the App creds actually loaded without exposing
+   * the private key or reading logs. */
+  githubAppConfigured: boolean;
+  githubAppId: string;
+  githubAppSlug: string;
 }
 
 export interface HealthResponse {
@@ -37,8 +45,7 @@ export class HealthService {
     const database = dbResult.status === 'fulfilled' ? dbResult.value : false;
 
     const status: HealthStatus = database ? 'ok' : 'error';
-    const enforcedOrg =
-      this.configService.get<AppConfig>('app')?.github.enforcedOrg;
+    const github = this.configService.get<AppConfig>('app')?.github;
 
     return {
       status,
@@ -46,7 +53,10 @@ export class HealthService {
       checks: { database, apiCenter: true },
       deploy: {
         gitCommit: process.env['RENDER_GIT_COMMIT'] ?? 'unknown',
-        githubEnforcedOrg: enforcedOrg || '(empty)',
+        githubEnforcedOrg: github?.enforcedOrg || '(empty)',
+        githubAppConfigured: Boolean(github?.appId && github?.appPrivateKey),
+        githubAppId: github?.appId || '(empty)',
+        githubAppSlug: github?.appSlug || '(empty)',
       },
     };
   }

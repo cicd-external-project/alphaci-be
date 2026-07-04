@@ -613,7 +613,7 @@ export class GithubService {
     const github = this.configService?.get<AppConfig>('app')?.github;
     return Boolean(
       (github?.appId ?? this.appId) &&
-        (github?.appPrivateKey ?? this.appPrivateKey),
+      (github?.appPrivateKey ?? this.appPrivateKey),
     );
   }
 
@@ -721,7 +721,10 @@ export class GithubService {
       );
     }
 
-    return this.getOrganizationProvisioningContext(userId, match.installationId);
+    return this.getOrganizationProvisioningContext(
+      userId,
+      match.installationId,
+    );
   }
 
   /**

@@ -497,7 +497,11 @@ export class AuthService {
       // NOT the same situation — see AccountState's 'unauthorized' comment —
       // so the reason is threaded through to produce an accurate message.
       if (membership !== 'member') {
-        return { kind: 'unauthorized', login: profile.login, reason: membership };
+        return {
+          kind: 'unauthorized',
+          login: profile.login,
+          reason: membership,
+        };
       }
       isInternal = true;
     }

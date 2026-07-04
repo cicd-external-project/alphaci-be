@@ -194,6 +194,29 @@ describe('validateEnv', () => {
       });
     }
 
+    it('accepts the GITHUB_APP alias for GITHUB_APP_ID in production', () => {
+      const env = validEnv({ NODE_ENV: 'production', GITHUB_APP: '4114943' });
+      delete env['GITHUB_APP_ID'];
+      expect(() => validateEnv(env)).not.toThrow();
+    });
+
+    it('accepts the GITHUB_PRIVATE_KEY alias for GITHUB_APP_PRIVATE_KEY in production', () => {
+      const env = validEnv({
+        NODE_ENV: 'production',
+        GITHUB_PRIVATE_KEY:
+          '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
+      });
+      delete env['GITHUB_APP_PRIVATE_KEY'];
+      expect(() => validateEnv(env)).not.toThrow();
+    });
+
+    it('names both accepted variables when the App ID is missing in production', () => {
+      const env = validEnv({ NODE_ENV: 'production' });
+      delete env['GITHUB_APP_ID'];
+      delete env['GITHUB_APP'];
+      expect(() => validateEnv(env)).toThrow(/GITHUB_APP_ID.*GITHUB_APP/);
+    });
+
     it('rejects the placeholder GitHub App slug in production', () => {
       expect(() =>
         validateEnv(
