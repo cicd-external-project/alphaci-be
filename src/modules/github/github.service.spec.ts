@@ -837,7 +837,11 @@ describe('GithubService', () => {
       },
     );
 
-    it('throws without any network call when no destination org can be resolved', async () => {
+    it('falls back to the default enforced org when config resolves empty', async () => {
+      // Defense in depth: even if the `app` config namespace yields an empty
+      // enforcedOrg (misconfiguration or a config/DI failure), creation must
+      // still lock to the hardcoded default org rather than surfacing the
+      // misleading "no destination org configured" error.
       const unconfiguredService = new GithubService(
         makeConfigService({
           ...appConfig,
@@ -845,16 +849,30 @@ describe('GithubService', () => {
         }),
         installationsRepository,
       );
-
-      await expect(
-        unconfiguredService.createRepo('gh-token', {
-          repoName: 'orders-api',
-          private: true,
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
+          name: 'orders-api',
         }),
-      ).rejects.toThrow(
-        'Repository creation is locked to a GitHub organization',
+      } as unknown as Response);
+
+      await unconfiguredService.createRepo('gh-token', {
+        repoName: 'orders-api',
+        private: true,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/Alpha-Explora/repos',
+        expect.objectContaining({ method: 'POST' }),
       );
-      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns the default enforced org from getEnforcedOrg even without ConfigService', () => {
+      const noConfigService = new GithubService(null, installationsRepository);
+      expect(noConfigService.getEnforcedOrg()).toBe('Alpha-Explora');
     });
 
     it('creates an organization repository with a user OAuth token when an owner is selected', async () => {
