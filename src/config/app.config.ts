@@ -150,6 +150,12 @@ export interface AppConfig {
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
   const isProduction = env['NODE_ENV'] === 'production';
+  const defaultEnforcedOrg = 'Alpha-Explora';
+  const rawEnforcedOrg = env['GITHUB_ENFORCED_ORG']?.trim();
+  const resolvedEnforcedOrg =
+    rawEnforcedOrg && rawEnforcedOrg in env
+      ? env[rawEnforcedOrg]?.trim()
+      : rawEnforcedOrg;
 
   const seededPlans: Record<string, SubscriptionPlan> = {};
   try {
@@ -185,7 +191,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
       // Force every created repository into this org. Defaults to Alpha-Explora
       // and, by using `||`, treats an empty or unset GITHUB_ENFORCED_ORG as the
       // default too — the product can never provision into personal accounts.
-      enforcedOrg: env['GITHUB_ENFORCED_ORG']?.trim() || 'Alpha-Explora',
+      enforcedOrg: resolvedEnforcedOrg || defaultEnforcedOrg,
     },
     templates: {
       repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',

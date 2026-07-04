@@ -90,9 +90,11 @@ describe('appConfig factory', () => {
     ['whitespace only', '   ', 'Alpha-Explora'],
     ['a custom org', 'My-Org', 'My-Org'],
     ['a padded custom org', '  My-Org  ', 'My-Org'],
+    ['a variable reference', 'GITHUB_INTERNAL_ORG', 'Alpha-Explora'],
   ])(
     'always resolves a non-empty enforced org (never personal accounts) when GITHUB_ENFORCED_ORG is %s',
     (_label, value, expected) => {
+      process.env['GITHUB_INTERNAL_ORG'] = 'Alpha-Explora';
       if (value === undefined) {
         delete process.env['GITHUB_ENFORCED_ORG'];
       } else {
@@ -103,6 +105,7 @@ describe('appConfig factory', () => {
 
       expect(config.github.enforcedOrg).toBe(expected);
       delete process.env['GITHUB_ENFORCED_ORG'];
+      delete process.env['GITHUB_INTERNAL_ORG'];
     },
   );
 
