@@ -179,13 +179,19 @@ export const appConfig = registerAs('app', (): AppConfig => {
       // read:org is required so the OAuth token can query the signed-in user's
       // org membership (GET /user/memberships/orgs/{org}) for internal gating.
       scope: env['GITHUB_SCOPE'] ?? 'repo,workflow,read:org',
-      appId: env['GITHUB_APP_ID'] ?? '',
+      // Accept GITHUB_APP_ID with a plain GITHUB_APP alias, and the private key
+      // under either GITHUB_APP_PRIVATE_KEY or the shorter GITHUB_PRIVATE_KEY
+      // used by the sibling deployment — so a key provisioned under that naming
+      // convention still enables the App (hasAppCredentials) here instead of
+      // silently falling through to "GitHub App installations are unavailable".
+      appId: (env['GITHUB_APP_ID'] ?? env['GITHUB_APP'] ?? '').trim(),
       appSlug:
         env['GITHUB_APP_SLUG']?.trim() || (isProduction ? '' : 'my-github-app'),
-      appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
-        /\\n/g,
-        '\n',
-      ),
+      appPrivateKey: (
+        env['GITHUB_APP_PRIVATE_KEY'] ??
+        env['GITHUB_PRIVATE_KEY'] ??
+        ''
+      ).replace(/\\n/g, '\n'),
       appWebhookSecret: env['GITHUB_APP_WEBHOOK_SECRET'] ?? '',
       internalOrg: env['GITHUB_INTERNAL_ORG']?.trim() ?? '',
       // Force every created repository into this org. Defaults to Alpha-Explora
