@@ -14,6 +14,7 @@ function makeServiceMock(
       status,
       uptimeSeconds: 42,
       checks: { database, apiCenter: true },
+      deploy: { gitCommit: 'test-sha', githubEnforcedOrg: 'Alpha-Explora' },
     } satisfies HealthResponse),
   };
 }
