@@ -3,10 +3,10 @@ import { createHmac, createSign, timingSafeEqual } from 'node:crypto';
 import {
   BadGatewayException,
   ForbiddenException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
-  Optional,
   ServiceUnavailableException,
   UnprocessableEntityException,
   UnauthorizedException,
@@ -92,9 +92,15 @@ export class GithubService {
   private readonly appPrivateKey: string;
   private readonly appWebhookSecret: string;
 
+  // Explicit @Inject tokens are required here: the `| null` union types make
+  // emitDecoratorMetadata serialize these params as `Object`, so token-less
+  // injection silently resolves to undefined (with @Optional) or fails. The
+  // `| null` in the type exists only so unit tests can construct the service
+  // without a Nest container; at runtime both dependencies must resolve.
   constructor(
-    @Optional() private readonly configService: ConfigService | null,
-    @Optional()
+    @Inject(ConfigService)
+    private readonly configService: ConfigService | null,
+    @Inject(GithubInstallationsRepository)
     private readonly githubInstallationsRepository: GithubInstallationsRepository | null,
   ) {
     const config = this.configService?.get<AppConfig>('app');
