@@ -72,6 +72,17 @@ export interface GitHubRepo {
   updatedAt: string;
 }
 
+/**
+ * Organization every product-created repository is locked to when no
+ * GITHUB_ENFORCED_ORG override is configured. This is the same default as
+ * app.config.ts, duplicated here on purpose: getEnforcedOrg() falls back to it
+ * directly so the org-only guarantee survives even if ConfigService is
+ * unavailable or the `app` namespace failed to load. Without this, a config/DI
+ * failure would make getEnforcedOrg() return '' and surface the misleading
+ * "no destination org is configured" error despite the code being correct.
+ */
+const DEFAULT_ENFORCED_ORG = 'Alpha-Explora';
+
 @Injectable()
 export class GithubService {
   private readonly logger = new Logger(GithubService.name);
@@ -121,15 +132,18 @@ export class GithubService {
   }
 
   /**
-   * Login of the org that every created repository must belong to, or '' when
-   * the deployment allows personal/per-request ownership. Repository creation
-   * reads this so no caller can silently provision into a personal account.
+   * Login of the org that every created repository must belong to. Never empty:
+   * resolves the configured GITHUB_ENFORCED_ORG override when present, otherwise
+   * falls back to DEFAULT_ENFORCED_ORG — even if ConfigService is null or the
+   * `app` config namespace failed to load. Repository creation reads this so no
+   * caller can ever provision into a personal account, and so the
+   * "no destination org is configured" guard in createRepo() is unreachable.
    */
   getEnforcedOrg(): string {
-    return (
-      this.configService?.get<AppConfig>('app')?.github.enforcedOrg?.trim() ??
-      ''
-    );
+    const configured = this.configService
+      ?.get<AppConfig>('app')
+      ?.github.enforcedOrg?.trim();
+    return configured || DEFAULT_ENFORCED_ORG;
   }
 
   /**
