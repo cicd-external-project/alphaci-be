@@ -488,6 +488,43 @@ describe('AuthService', () => {
       expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
     });
 
+    it('surfaces a pending org invitation distinctly, with the org login for the accept link', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → 200 with state 'pending' (the
+      // user was invited to the org but has not accepted the invitation).
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ state: 'pending' }),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_invite_pending');
+      expect(url).toContain('org=acme-internal');
+      expect(url).not.toContain('auth=not_authorized');
+      // Still denied: no session, no account row.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
     it('blocks with a distinct reason when org membership cannot be verified (e.g. 403)', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
       // Third fetch: org membership check → 403 (missing scope, or the org

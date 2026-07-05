@@ -53,17 +53,25 @@ type AccountState =
       // users who are not members of the company org. No session is created.
       //  - 'not_member': GitHub confirmed (404) the user is not an active
       //    member of the org.
+      //  - 'invitation_pending': GitHub confirmed the user has been INVITED to
+      //    the org but has not accepted the invitation yet. Denied, but the
+      //    remedy is on the user (accept the invite), not the administrator —
+      //    telling them to "ask to be added" would send them in a circle.
       //  - 'verification_failed': GitHub membership could not be confirmed
       //    (403, 5xx, network error) — denied fail-closed, but this is NOT the
       //    same as a confirmed non-member and should not tell the user to ask
       //    to be added to the org.
       kind: 'unauthorized';
       login: string;
-      reason: 'not_member' | 'verification_failed';
+      reason: 'not_member' | 'invitation_pending' | 'verification_failed';
     };
 
-/** Tri-state result of checking GitHub org membership for the internal gate. */
-type OrgMembershipCheck = 'member' | 'not_member' | 'verification_failed';
+/** Result of checking GitHub org membership for the internal gate. */
+type OrgMembershipCheck =
+  | 'member'
+  | 'not_member'
+  | 'invitation_pending'
+  | 'verification_failed';
 
 export interface PendingAccountInfo {
   pending: true;
@@ -369,17 +377,32 @@ export class AuthService {
       if (accountState.kind === 'unauthorized') {
         // Internal deployment gate rejected this sign-in. No session, no DB
         // write. The reason maps to a distinct auth= code so the FE can tell
-        // a confirmed non-member apart from an unverifiable membership check
-        // (see AccountState's 'unauthorized' comment) instead of always
-        // telling the user to "ask to be added to the org".
+        // a confirmed non-member, a pending invitation, and an unverifiable
+        // membership check apart (see AccountState's 'unauthorized' comment)
+        // instead of always telling the user to "ask to be added to the org".
         this.logger.warn(
           `Blocked sign-in for "${accountState.login}" (GITHUB_INTERNAL_ORG gate, reason: ${accountState.reason}).`,
         );
-        const authCode =
-          accountState.reason === 'verification_failed'
-            ? 'org_verification_failed'
-            : 'not_authorized';
-        return this.withQuery(returnTo, 'auth', authCode);
+        const authCodeByReason = {
+          not_member: 'not_authorized',
+          invitation_pending: 'org_invite_pending',
+          verification_failed: 'org_verification_failed',
+        } as const;
+        let redirect = this.withQuery(
+          returnTo,
+          'auth',
+          authCodeByReason[accountState.reason],
+        );
+        if (accountState.reason === 'invitation_pending') {
+          // The org login lets the FE link straight to GitHub's invitation
+          // acceptance page (github.com/orgs/{org}/invitation). Public info.
+          redirect = this.withQuery(
+            redirect,
+            'org',
+            this.config.github.internalOrg,
+          );
+        }
+        return redirect;
       }
 
       if (accountState.kind === 'archived') {
@@ -531,13 +554,14 @@ export class AuthService {
   /**
    * Checks whether the OAuth-authenticated user is an active member of the
    * configured internal org (GITHUB_INTERNAL_ORG), using the user's own token
-   * against GET /user/memberships/orgs/{org}. Returns a tri-state result
-   * rather than a boolean because "not a member" and "could not verify" are
-   * different situations that call for different operator/user messaging,
-   * even though both deny access (fail-closed):
-   *   - 200 + state 'active' → 'member'
-   *   - 404                  → 'not_member' (confirmed; includes pending
-   *                            invites that have not been accepted yet)
+   * against GET /user/memberships/orgs/{org}. Returns a multi-state result
+   * rather than a boolean because "not a member", "invited but not accepted",
+   * and "could not verify" are different situations that call for different
+   * operator/user messaging, even though all deny access (fail-closed):
+   *   - 200 + state 'active'  → 'member'
+   *   - 200 + state 'pending' → 'invitation_pending' (invited, must accept
+   *                             the invitation on GitHub before signing in)
+   *   - 404                   → 'not_member' (confirmed non-member)
    *   - anything else (403/5xx) or a network error → 'verification_failed'
    *     (e.g. missing read:org scope, or the org has OAuth App access
    *     restrictions and has not approved this app)
@@ -578,7 +602,23 @@ export class AuthService {
       }
 
       const payload = (await response.json()) as { state?: string };
-      return payload.state === 'active' ? 'member' : 'not_member';
+      if (payload.state === 'active') {
+        return 'member';
+      }
+      // GET /user/memberships/orgs/{org} returns 200 with state 'pending' for
+      // a user who was invited but has not accepted the invitation yet. This
+      // is the most common "I was added but can't log in" situation, so it is
+      // surfaced distinctly instead of being folded into 'not_member'.
+      if (payload.state === 'pending') {
+        this.logger.log(
+          `Org membership check: "${org}" invitation is pending acceptance.`,
+        );
+        return 'invitation_pending';
+      }
+      this.logger.log(
+        `Org membership check: "${org}" returned state "${payload.state ?? 'unknown'}"; treating as non-member.`,
+      );
+      return 'not_member';
     } catch (err) {
       this.logger.warn(
         `Org membership check for "${org}" failed: ${err instanceof Error ? err.message : String(err)}; could not verify, denying access.`,
