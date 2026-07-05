@@ -1568,6 +1568,7 @@ jobs:
       '.github/workflows/00-flowci-access.yml',
       '.github/workflows/10-flowci-quality.yml',
       '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/05-flowci-env-guard.yml',
     ]);
     expect(result.workflowFiles[0]?.yaml).toContain('alphaCI Access Gate');
     expect(result.diffSummary).toEqual(
@@ -1743,7 +1744,7 @@ jobs:
       expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
       'main',
     );
-    expect(githubWrites.putFileContent).toHaveBeenCalledTimes(3);
+    expect(githubWrites.putFileContent).toHaveBeenCalledTimes(4);
     const putFileContentCalls = githubWrites.putFileContent.mock.calls as Array<
       [string, string, string, string, string, string, string]
     >;
@@ -1751,6 +1752,7 @@ jobs:
       '.github/workflows/00-flowci-access.yml',
       '.github/workflows/10-flowci-quality.yml',
       '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/05-flowci-env-guard.yml',
     ]);
     expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
       'app-token',

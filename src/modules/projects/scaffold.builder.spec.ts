@@ -66,6 +66,50 @@ describe('buildProjectScaffold', () => {
     expect(paths).toContain('frontend/package.json');
     expect(paths).toContain('frontend/src/app/page.tsx');
   });
+
+  it('renders a real React scaffold for the react stack', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'orders-web',
+      stack: 'react',
+      includeDocker: false,
+    });
+    const paths = files.map((file) => file.path);
+
+    expect(paths).toContain('src/App.tsx');
+    expect(paths).toContain('src/App.spec.tsx');
+
+    const pkg = JSON.parse(
+      files.find((file) => file.path === 'package.json')!.content,
+    ) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    expect(pkg.dependencies?.['react']).toBeDefined();
+    expect(pkg.dependencies?.['react-dom']).toBeDefined();
+    expect(pkg.devDependencies?.['@types/react']).toBeDefined();
+
+    // jest must pick up the .tsx spec or coverage collapses to zero
+    const jestConfig = files.find(
+      (file) => file.path === 'jest.config.ts',
+    )!.content;
+    expect(jestConfig).toContain("'**/*.spec.tsx'");
+
+    const app = files.find((file) => file.path === 'src/App.tsx')!.content;
+    expect(app).toContain("title = 'orders-web'");
+  });
+
+  it('renders a react frontend/ subdirectory for microservices', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'microservices',
+      frontendStack: 'react',
+      frontendServiceName: 'orders-web',
+    });
+    const paths = files.map((file) => file.path);
+
+    expect(paths).toContain('frontend/src/App.tsx');
+    expect(paths).toContain('frontend/src/App.spec.tsx');
+  });
 });
 
 describe('defaultIncludeDocker', () => {

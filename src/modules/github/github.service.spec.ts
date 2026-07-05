@@ -1310,6 +1310,44 @@ describe('GithubService', () => {
       );
     });
 
+    it('requires the env-guard status check on protected branches by default', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+
+      await service.applyBranchProtection(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'test',
+      );
+
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      const body = JSON.parse(init.body) as {
+        required_status_checks: { strict: boolean; contexts: string[] } | null;
+      };
+      expect(body.required_status_checks).toEqual({
+        strict: false,
+        contexts: ['env-guard'],
+      });
+    });
+
+    it('omits required status checks when explicitly given none', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+
+      await service.applyBranchProtection(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'test',
+        [],
+      );
+
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      const body = JSON.parse(init.body) as {
+        required_status_checks: unknown;
+      };
+      expect(body.required_status_checks).toBeNull();
+    });
+
     it('does not throw when branch protection fails', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,

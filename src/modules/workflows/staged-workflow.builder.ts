@@ -3,7 +3,7 @@ import yaml from 'js-yaml';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import type { GenerateWorkflowDto } from './dto/generate-workflow.dto';
 
-export type WorkflowStage = 'access' | 'quality' | 'package';
+export type WorkflowStage = 'access' | 'quality' | 'package' | 'guard';
 
 export interface StagedWorkflowFile {
   stage: WorkflowStage;
@@ -27,6 +27,18 @@ export interface StagedWorkflowBundle {
 
 const CENTRAL_WORKFLOW_REF =
   'cicd-external-project/cicd-workflow/.github/workflows';
+
+/**
+ * Check-run name of the env-guard job. Branch protection on provisioned repos
+ * requires this context so a pull request that adds an environment file can
+ * never be merged into a protected branch.
+ */
+export const ENV_GUARD_CHECK_CONTEXT = 'env-guard';
+
+export const ENV_GUARD_WORKFLOW_NAME = 'alphaCI Env Guard';
+
+export const ENV_GUARD_WORKFLOW_PATH =
+  '.github/workflows/05-flowci-env-guard.yml';
 
 /**
  * Git ref (tag/branch) of the central reusable workflows that generated
@@ -341,6 +353,14 @@ export function buildStagedWorkflowBundle(
     },
   ];
 
+  // The env guard is repo-wide, not per-pipeline: in microservices repos both
+  // the backend and frontend chains are generated into the same repository, so
+  // it is emitted with the backend (or unsuffixed) bundle only — two copies
+  // would race each other pushing rollback commits.
+  if (dto.workflowVariant !== 'frontend') {
+    files.push(buildEnvGuardWorkflowFile());
+  }
+
   return {
     workflowFiles: files,
     metadata: files.map((file) => ({
@@ -349,6 +369,155 @@ export function buildStagedWorkflowBundle(
       path: file.path,
       gated: file.gated,
     })),
+  };
+}
+
+/**
+ * Standalone secret-protection workflow seeded into every provisioned repo.
+ *
+ * Unlike the staged access/quality/package chain (which only watches
+ * test/uat/main and authenticates against the platform), the env guard runs on
+ * EVERY branch push and on every pull request, needs no platform secrets, and
+ * is fully self-contained:
+ *
+ *   1. Detect — scans the tracked tree for dotenv-style files (`.env`,
+ *      `.env.local`, `backend/.env.production`, …) while allowing the
+ *      committable placeholders `.env.example` / `.env.sample` /
+ *      `.env.template` that the scaffold ships.
+ *   2. Roll back — on push events it removes the offending file(s) in an
+ *      automated follow-up commit (`[skip ci]` so the rollback does not
+ *      re-trigger the full pipeline chain). If branch protection rejects the
+ *      push, it degrades to a warning.
+ *   3. Warn — opens (or comments on) a repo issue telling the committer the
+ *      values remain in git history and every exposed secret must be rotated.
+ *   4. Fail — the check itself fails on the offending commit, and because
+ *      branch protection requires the `env-guard` context, a PR containing an
+ *      environment file cannot be merged into develop/test/uat/main.
+ *
+ * The rollback commit triggers one more guard run which finds a clean tree and
+ * passes, so the loop always terminates. On fork pull requests the token is
+ * read-only; the write steps are gated to `push` events so the guard still
+ * detects and fails without attempting writes.
+ */
+export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
+  const detectScript = [
+    "MATCHES=$(git ls-files | grep -E '(^|/)\\.env(\\.[^/]*)?$' | grep -Ev '(^|/)\\.env\\.(example|sample|template)$' || true)",
+    'if [ -z "$MATCHES" ]; then',
+    '  echo "found=false" >> "$GITHUB_OUTPUT"',
+    '  echo "No environment files are tracked on this ref."',
+    'else',
+    '  {',
+    '    echo "found=true"',
+    "    echo 'files<<ALPHACI_ENV_GUARD_EOF'",
+    '    printf \'%s\\n\' "$MATCHES"',
+    "    echo 'ALPHACI_ENV_GUARD_EOF'",
+    '  } >> "$GITHUB_OUTPUT"',
+    '  printf \'%s\\n\' "$MATCHES" | while IFS= read -r file; do',
+    '    echo "::warning file=$file::Environment file is committed to the repository: $file"',
+    '  done',
+    'fi',
+  ].join('\n');
+
+  const rollbackScript = [
+    'git config user.name "alphaci-env-guard"',
+    'git config user.email "env-guard@alphaci.invalid"',
+    'printf \'%s\\n\' "$MATCHED_FILES" | while IFS= read -r file; do',
+    '  [ -n "$file" ] && git rm --quiet --ignore-unmatch -- "$file"',
+    'done',
+    'if git diff --cached --quiet; then',
+    '  echo "No tracked environment files left to remove."',
+    '  exit 0',
+    'fi',
+    'git commit --quiet -m "chore(env-guard): remove committed environment file(s) [skip ci]" -m "Automated rollback by alphaCI Env Guard. The removed values remain in git history - rotate any exposed secrets."',
+    'if git push origin "HEAD:$GUARD_BRANCH"; then',
+    '  echo "Environment file(s) removed from $GUARD_BRANCH."',
+    'else',
+    '  echo "::warning::Rollback push was rejected (branch protection may forbid direct pushes). Remove the file(s) from the branch manually."',
+    'fi',
+  ].join('\n');
+
+  const issueScript = [
+    'TITLE="Security: environment file committed - rotate exposed secrets"',
+    'BODY=$(printf \'alphaCI Env Guard detected environment file(s) pushed to `%s` (commit %s):\\n\\n```\\n%s\\n```\\n\\nThe guard removed the file(s) in an automated follow-up commit where the branch allowed it, but the contents remain in git history.\\n\\n**Action required**\\n1. Rotate every credential the file(s) contained.\\n2. Keep runtime secrets in your deployment provider or GitHub Actions secrets, never in the repository.\\n3. Commit only `.env.example` placeholders.\' "$GUARD_BRANCH" "$GUARD_SHA" "$MATCHED_FILES")',
+    'EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq \'.[0].number // empty\' || true)',
+    'if [ -n "$EXISTING" ]; then',
+    '  gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY" || echo "::warning::Could not comment on the existing env-guard issue"',
+    'else',
+    '  gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY" || echo "::warning::Could not open the env-guard warning issue"',
+    'fi',
+  ].join('\n');
+
+  const failScript = [
+    "echo \"::error::Environment files must never be committed. Detected: $(printf '%s' \"$MATCHED_FILES\" | tr '\\n' ' ')\"",
+    'exit 1',
+  ].join('\n');
+
+  const foundEnvFiles = "steps.detect.outputs.found == 'true'";
+  const isPushEvent = "github.event_name == 'push'";
+
+  return {
+    stage: 'guard',
+    name: ENV_GUARD_WORKFLOW_NAME,
+    path: ENV_GUARD_WORKFLOW_PATH,
+    gated: false,
+    yaml: dumpWorkflow({
+      name: ENV_GUARD_WORKFLOW_NAME,
+      on: {
+        push: { branches: ['**'] },
+        pull_request: {},
+      },
+      permissions: {
+        contents: 'write',
+        issues: 'write',
+      },
+      // Serialize runs per ref so two rapid pushes cannot race each other
+      // with conflicting rollback commits.
+      concurrency: {
+        group: 'alphaci-env-guard-${{ github.ref }}',
+        'cancel-in-progress': false,
+      },
+      jobs: {
+        [ENV_GUARD_CHECK_CONTEXT]: {
+          runs_on: 'ubuntu-latest',
+          steps: [
+            { uses: 'actions/checkout@v6' },
+            {
+              name: 'Detect committed environment files',
+              id: 'detect',
+              run: detectScript,
+            },
+            {
+              name: 'Roll back committed environment files',
+              if: `\${{ ${foundEnvFiles} && ${isPushEvent} }}`,
+              env: {
+                MATCHED_FILES: '${{ steps.detect.outputs.files }}',
+                GUARD_BRANCH: '${{ github.ref_name }}',
+              },
+              run: rollbackScript,
+            },
+            {
+              name: 'Warn the committer',
+              if: `\${{ ${foundEnvFiles} && ${isPushEvent} }}`,
+              env: {
+                GH_TOKEN: '${{ github.token }}',
+                MATCHED_FILES: '${{ steps.detect.outputs.files }}',
+                GUARD_BRANCH: '${{ github.ref_name }}',
+                GUARD_SHA: '${{ github.sha }}',
+              },
+              run: issueScript,
+            },
+            {
+              name: 'Fail when environment files were committed',
+              if: `\${{ ${foundEnvFiles} }}`,
+              env: {
+                MATCHED_FILES: '${{ steps.detect.outputs.files }}',
+              },
+              run: failScript,
+            },
+          ],
+        },
+      },
+    }),
   };
 }
 
