@@ -159,6 +159,13 @@ function buildPackageJson(packageName: string, stack: string): string {
     pkg.devDependencies['@types/react-dom'] = '^19.0.0';
   }
 
+  if (stack === 'react') {
+    pkg.dependencies['react'] = '^19.0.0';
+    pkg.dependencies['react-dom'] = '^19.0.0';
+    pkg.devDependencies['@types/react'] = '^19.0.0';
+    pkg.devDependencies['@types/react-dom'] = '^19.0.0';
+  }
+
   if (!isNextJs && !isNestJs) {
     pkg.devDependencies['ts-node'] = '^10.9.2';
   }
@@ -199,7 +206,12 @@ function buildJestConfig(): string {
     'const config: Config = {',
     "  preset: 'ts-jest',",
     "  testEnvironment: 'node',",
-    "  testMatch: ['**/*.spec.ts', '**/*.test.ts'],",
+    '  testMatch: [',
+    "    '**/*.spec.ts',",
+    "    '**/*.test.ts',",
+    "    '**/*.spec.tsx',",
+    "    '**/*.test.tsx',",
+    '  ],',
     '};',
     '',
     'export default config;',
@@ -212,9 +224,9 @@ function buildSonarProperties(serviceName: string): string {
     `sonar.projectName=${serviceName}`,
     'sonar.sources=src',
     'sonar.tests=src',
-    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
     'sonar.typescript.lcov.reportPaths=coverage/lcov.info',
-    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
   ].join('\n');
 }
 
@@ -317,6 +329,47 @@ function buildNextConfig(): string {
     '',
     'const config: NextConfig = {};',
     'export default config;',
+  ].join('\n');
+}
+
+// ─── React-specific files (plain React, no framework) ────────────────────────
+//
+// The React starter is intentionally bundler-free: it ships a typed component
+// plus a react-dom/server smoke test so lint/test/build/coverage all pass in
+// CI (jest stays on testEnvironment 'node') without pinning the customer to
+// Vite/CRA. The customer adds their bundler of choice on top.
+
+function buildReactApp(serviceName: string): string {
+  return [
+    'export interface AppProps {',
+    '  title?: string;',
+    '}',
+    '',
+    `export function App({ title = '${serviceName}' }: AppProps) {`,
+    '  return (',
+    '    <main>',
+    '      <h1>{title}</h1>',
+    '    </main>',
+    '  );',
+    '}',
+  ].join('\n');
+}
+
+function buildReactAppSpec(serviceName: string): string {
+  return [
+    "import { renderToString } from 'react-dom/server';",
+    '',
+    "import { App } from './App';",
+    '',
+    "describe('App', () => {",
+    "  it('renders the default service title', () => {",
+    `    expect(renderToString(<App />)).toContain('${serviceName}');`,
+    '  });',
+    '',
+    "  it('renders a custom title', () => {",
+    '    expect(renderToString(<App title="custom" />)).toContain(\'custom\');',
+    '  });',
+    '});',
   ].join('\n');
 }
 
@@ -429,9 +482,9 @@ function buildMonorepoSonarProperties(serviceName: string): string {
     `sonar.projectName=${serviceName}`,
     'sonar.sources=packages',
     'sonar.tests=packages',
-    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
     'sonar.typescript.lcov.reportPaths=packages/*/coverage/lcov.info',
-    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
   ].join('\n');
 }
 
@@ -505,9 +558,9 @@ function buildMicroservicesSonarProperties(serviceName: string): string {
     `sonar.projectName=${serviceName}`,
     'sonar.sources=backend/src,frontend/src',
     'sonar.tests=backend/src,frontend/src',
-    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
     'sonar.typescript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info',
-    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts',
+    'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
   ].join('\n');
 }
 
@@ -534,32 +587,34 @@ function buildServiceSubdirFiles(
   ];
 
   if (stack === 'nestjs') {
-    files.push({
-      path: `${dir}/src/app.module.ts`,
-      content: buildNestAppModule(),
-    });
-    files.push({ path: `${dir}/src/main.ts`, content: buildNestMain() });
-    files.push({
-      path: `${dir}/Dockerfile`,
-      content: buildDockerfile(nodeVersion),
-    });
-    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
+    files.push(
+      { path: `${dir}/src/app.module.ts`, content: buildNestAppModule() },
+      { path: `${dir}/src/main.ts`, content: buildNestMain() },
+      { path: `${dir}/Dockerfile`, content: buildDockerfile(nodeVersion) },
+      { path: `${dir}/.dockerignore`, content: buildDockerignore() },
+    );
   } else if (stack === 'nodejs') {
-    files.push({
-      path: `${dir}/Dockerfile`,
-      content: buildDockerfile(nodeVersion),
-    });
-    files.push({ path: `${dir}/.dockerignore`, content: buildDockerignore() });
+    files.push(
+      { path: `${dir}/Dockerfile`, content: buildDockerfile(nodeVersion) },
+      { path: `${dir}/.dockerignore`, content: buildDockerignore() },
+    );
   } else if (stack === 'nextjs') {
-    files.push({
-      path: `${dir}/src/app/layout.tsx`,
-      content: buildNextLayout(serviceName),
-    });
-    files.push({
-      path: `${dir}/src/app/page.tsx`,
-      content: buildNextPage(serviceName),
-    });
-    files.push({ path: `${dir}/next.config.ts`, content: buildNextConfig() });
+    files.push(
+      {
+        path: `${dir}/src/app/layout.tsx`,
+        content: buildNextLayout(serviceName),
+      },
+      { path: `${dir}/src/app/page.tsx`, content: buildNextPage(serviceName) },
+      { path: `${dir}/next.config.ts`, content: buildNextConfig() },
+    );
+  } else if (stack === 'react') {
+    files.push(
+      { path: `${dir}/src/App.tsx`, content: buildReactApp(serviceName) },
+      {
+        path: `${dir}/src/App.spec.tsx`,
+        content: buildReactAppSpec(serviceName),
+      },
+    );
   }
 
   return files;
@@ -599,6 +654,11 @@ function buildStandaloneScaffold(
       { path: 'src/app/layout.tsx', content: buildNextLayout(serviceName) },
       { path: 'src/app/page.tsx', content: buildNextPage(serviceName) },
       { path: 'next.config.ts', content: buildNextConfig() },
+    ];
+  } else if (stack === 'react') {
+    stackFiles = [
+      { path: 'src/App.tsx', content: buildReactApp(serviceName) },
+      { path: 'src/App.spec.tsx', content: buildReactAppSpec(serviceName) },
     ];
   } else {
     stackFiles = [];

@@ -55,7 +55,7 @@ const makeOutboxRepo = () =>
   }) as unknown as OutboxRepository;
 
 const toWorkflowMetadata = (file: {
-  stage: 'access' | 'quality' | 'package';
+  stage: 'access' | 'quality' | 'package' | 'guard';
   name: string;
   path: string;
   gated: boolean;
@@ -116,7 +116,7 @@ describe('WorkflowsService', () => {
       expect(result.metadata.outputFileName).toBe('my-service-nestjs-be.yml');
     });
 
-    it('returns a three-stage workflow bundle with every stage gated', async () => {
+    it('returns the staged workflow bundle plus env guard with every stage gated', async () => {
       const result = await service.generate('user-1', {
         templateId: 'nestjs-be',
         serviceName: 'my-service',
@@ -124,18 +124,25 @@ describe('WorkflowsService', () => {
         nodeVersion: '24',
       });
 
-      expect(result.workflowFiles).toHaveLength(3);
+      expect(result.workflowFiles).toHaveLength(4);
       expect(result.workflowFiles.map((file) => file.stage)).toEqual([
         'access',
         'quality',
         'package',
+        'guard',
       ]);
       expect(result.workflowFiles.map((file) => file.path)).toEqual([
         '.github/workflows/00-flowci-access.yml',
         '.github/workflows/10-flowci-quality.yml',
         '.github/workflows/20-flowci-package.yml',
+        '.github/workflows/05-flowci-env-guard.yml',
       ]);
-      expect(result.workflowFiles.every((file) => file.gated)).toBe(true);
+      // the staged chain is platform-gated; the env guard is self-contained
+      expect(
+        result.workflowFiles
+          .filter((file) => file.stage !== 'guard')
+          .every((file) => file.gated),
+      ).toBe(true);
       expect(result.workflowFiles[1]?.yaml).toContain('workflow_run:');
       expect(result.workflowFiles[1]?.yaml).toContain('workflows:');
       expect(result.workflowFiles[1]?.yaml).toContain('alphaCI Access Gate');

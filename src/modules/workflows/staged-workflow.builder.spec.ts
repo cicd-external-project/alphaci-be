@@ -79,7 +79,7 @@ describe('buildStagedWorkflowBundle', () => {
     expect(allYaml).not.toContain('lint-check.yml@v1');
   });
 
-  it('emits the three-stage bundle with unsuffixed names and paths by default', () => {
+  it('emits the staged bundle plus env guard with unsuffixed names and paths by default', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -89,11 +89,13 @@ describe('buildStagedWorkflowBundle', () => {
       '.github/workflows/00-flowci-access.yml',
       '.github/workflows/10-flowci-quality.yml',
       '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/05-flowci-env-guard.yml',
     ]);
     expect(bundle.workflowFiles.map((file) => file.name)).toEqual([
       'alphaCI Access Gate',
       'alphaCI Quality',
       'alphaCI Package',
+      'alphaCI Env Guard',
     ]);
   });
 
@@ -103,7 +105,10 @@ describe('buildStagedWorkflowBundle', () => {
       serviceName: 'orders-api',
     });
 
-    for (const file of bundle.workflowFiles) {
+    // the standalone env guard never reports to the platform
+    for (const file of bundle.workflowFiles.filter(
+      (item) => item.stage !== 'guard',
+    )) {
       const wf = yaml.load(file.yaml) as ParsedWorkflow;
       const reportJob = wf.jobs['report-results'];
 
@@ -162,7 +167,9 @@ describe('buildStagedWorkflowBundle', () => {
       serviceName: 'orders-api',
     });
 
-    for (const file of bundle.workflowFiles) {
+    for (const file of bundle.workflowFiles.filter(
+      (item) => item.stage !== 'guard',
+    )) {
       expect(file.yaml).toContain('CI_REPORT_URL');
       // graceful degradation: curl failure must not fail the pipeline
       expect(file.yaml).toContain(
@@ -183,6 +190,8 @@ describe('buildStagedWorkflowBundle', () => {
       '.github/workflows/00-flowci-access-backend.yml',
       '.github/workflows/10-flowci-quality-backend.yml',
       '.github/workflows/20-flowci-package-backend.yml',
+      // repo-wide env guard rides with the backend bundle, unsuffixed
+      '.github/workflows/05-flowci-env-guard.yml',
     ]);
 
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
@@ -406,5 +415,59 @@ describe('buildStagedWorkflowBundle', () => {
 
     expect(toUat?.needs).toEqual(['build']);
     expect(toUat?.if).not.toContain('deploy-render');
+  });
+
+  describe('env guard workflow', () => {
+    const guardOf = (variant?: 'backend' | 'frontend') => {
+      const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+        templateId: 'be-nestjs',
+        serviceName: 'orders-api',
+        ...(variant !== undefined && { workflowVariant: variant }),
+      });
+      return bundle.workflowFiles.find((file) => file.stage === 'guard');
+    };
+
+    it('is included once per repo: default and backend variants only', () => {
+      expect(guardOf()).toBeDefined();
+      expect(guardOf('backend')).toBeDefined();
+      expect(guardOf('frontend')).toBeUndefined();
+    });
+
+    it('watches every branch push and pull request with write permissions', () => {
+      const guard = guardOf()!;
+      const wf = yaml.load(guard.yaml) as Record<string, unknown>;
+
+      expect(wf['on']).toEqual({
+        push: { branches: ['**'] },
+        pull_request: {},
+      });
+      expect(wf['permissions']).toEqual({
+        contents: 'write',
+        issues: 'write',
+      });
+      // job id must match the branch-protection required context
+      const jobs = wf['jobs'] as Record<string, unknown>;
+      expect(Object.keys(jobs)).toEqual(['env-guard']);
+    });
+
+    it('detects dotenv files but allows committable placeholders', () => {
+      const guard = guardOf()!;
+      expect(guard.yaml).toContain('git ls-files');
+      // .env, .env.local, nested backend/.env.production are all matched
+      expect(guard.yaml).toContain('(^|/)\\.env(\\.[^/]*)?$');
+      // the scaffold ships .env.example and must never trip the guard
+      expect(guard.yaml).toContain('(^|/)\\.env\\.(example|sample|template)$');
+    });
+
+    it('rolls back on push, skips CI on the rollback commit, and fails the run', () => {
+      const guard = guardOf()!;
+      expect(guard.yaml).toContain('git rm --quiet --ignore-unmatch');
+      expect(guard.yaml).toContain('[skip ci]');
+      expect(guard.yaml).toContain('rotate any exposed secrets');
+      expect(guard.yaml).toContain('gh issue create');
+      expect(guard.yaml).toContain('exit 1');
+      // write steps must never run for pull_request events (fork tokens are read-only)
+      expect(guard.yaml).toContain("github.event_name == 'push'");
+    });
   });
 });

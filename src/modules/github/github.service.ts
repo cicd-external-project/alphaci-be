@@ -15,6 +15,7 @@ import { ConfigService } from '@nestjs/config';
 import sodium from 'libsodium-wrappers';
 
 import type { AppConfig } from '../../config/app.config';
+import { ENV_GUARD_CHECK_CONTEXT } from '../workflows/staged-workflow.builder';
 import type { CreateRepoDto } from './dto/create-repo.dto';
 import {
   GithubInstallationsRepository,
@@ -1253,11 +1254,18 @@ export class GithubService {
     );
   }
 
+  /**
+   * Every protected branch requires the env-guard check by default so a pull
+   * request that adds a `.env`-style file can never be merged; the guard
+   * workflow runs on all pushes and pull requests, so the context is always
+   * present on PR head commits of provisioned repos.
+   */
   async applyBranchProtection(
     accessToken: string,
     owner: string,
     repo: string,
     branch: string,
+    requiredStatusChecks: string[] = [ENV_GUARD_CHECK_CONTEXT],
   ): Promise<void> {
     const res = await this.fetchWithRetry(
       `https://api.github.com/repos/${owner}/${repo}/branches/${branch}/protection`,
@@ -1270,7 +1278,10 @@ export class GithubService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          required_status_checks: null,
+          required_status_checks:
+            requiredStatusChecks.length > 0
+              ? { strict: false, contexts: requiredStatusChecks }
+              : null,
           enforce_admins: false,
           required_pull_request_reviews: {
             dismiss_stale_reviews: true,

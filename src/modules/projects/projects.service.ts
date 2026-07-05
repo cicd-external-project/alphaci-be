@@ -2175,21 +2175,20 @@ export class ProjectsService {
 
     const scaffoldFiles = buildProjectScaffold(scaffoldOptions);
 
+    // Scaffold pushes are strict on purpose: a repo missing package.json,
+    // jest.config.ts, or eslint.config.mjs is born with permanently red
+    // checks. Failing here lets the caller's compensation path delete the
+    // half-created repo so every repo that survives provisioning starts with
+    // a fully green pipeline.
     for (const file of scaffoldFiles) {
-      try {
-        await this.pushWorkflowFile(
-          accessToken,
-          owner,
-          repo,
-          file.path,
-          file.content,
-          'chore: initialize project scaffold',
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Failed to push scaffold file ${file.path}: ${String(err)}`,
-        );
-      }
+      await this.pushWorkflowFile(
+        accessToken,
+        owner,
+        repo,
+        file.path,
+        file.content,
+        'chore: initialize project scaffold',
+      );
     }
 
     // Always push README.md (.gitignore is included in the scaffold above)
