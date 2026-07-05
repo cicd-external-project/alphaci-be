@@ -71,6 +71,7 @@ import { NotificationEventsService } from '../notifications/notification-events.
 import {
   buildProjectScaffold,
   defaultIncludeDocker,
+  normalizeProjectStack,
   normalizeRepoShape,
 } from './scaffold.builder';
 import type {
@@ -2130,6 +2131,162 @@ export class ProjectsService {
     return { commitSha, commitUrl };
   }
 
+  private describeGeneratedStack(stack: string | undefined): string {
+    switch (normalizeProjectStack(stack)) {
+      case 'nestjs':
+        return 'NestJS API';
+      case 'nextjs':
+        return 'Next.js app';
+      case 'react':
+        return 'React app';
+      case 'nodejs':
+      default:
+        return 'Node.js service';
+    }
+  }
+
+  private generatedStructureLines(opts: {
+    projectName: string;
+    stack: string;
+    repoShape?: string;
+    frontendStack?: string;
+    frontendServiceName?: string;
+    backendServiceName?: string;
+  }): string[] {
+    const stack = normalizeProjectStack(opts.stack);
+    const repoShape = normalizeRepoShape(opts.repoShape);
+
+    if (repoShape === 'monorepo') {
+      return [
+        '- `package.json`, `tsconfig.json`, `jest.config.ts`, and `eslint.config.mjs` define the workspace-level toolchain.',
+        `- \`packages/core/\` contains the ${this.describeGeneratedStack(opts.stack)} starter package and tests.`,
+        '- Add more packages under `packages/` when the project grows beyond the initial core package.',
+      ];
+    }
+
+    if (repoShape === 'microservices') {
+      return [
+        `- \`backend/\` contains ${opts.backendServiceName ?? opts.projectName} as a ${this.describeGeneratedStack(opts.stack)}.`,
+        `- \`frontend/\` contains ${opts.frontendServiceName ?? `${opts.projectName}-fe`} as a ${this.describeGeneratedStack(opts.frontendStack ?? 'nextjs')}.`,
+        '- Each service owns its own `package.json`, TypeScript config, Jest config, ESLint config, and source folder.',
+        '- `docker-compose.yml` is included when Docker scaffolding is enabled for the backend service.',
+      ];
+    }
+
+    if (stack === 'nestjs') {
+      return [
+        '- `src/main.ts` boots the NestJS app.',
+        '- `src/app.module.ts` is the initial application module.',
+        '- `src/index.ts` and `src/index.spec.ts` provide a tiny exported sanity check for the generated pipeline.',
+      ];
+    }
+
+    if (stack === 'nextjs') {
+      return [
+        '- `src/app/layout.tsx` provides the App Router root layout.',
+        '- `src/app/page.tsx` is the starter page.',
+        '- `next.config.ts` and the shared TypeScript/Jest/ESLint configs are ready for the generated workflow.',
+      ];
+    }
+
+    if (stack === 'react') {
+      return [
+        '- `src/App.tsx` contains the starter React component.',
+        '- `src/App.spec.tsx` renders the component with `react-dom/server` so unit tests pass without choosing a bundler for you.',
+        '- Add Vite, Next.js, or another bundler when you are ready to build the real app shell.',
+      ];
+    }
+
+    return [
+      '- `src/index.ts` is the starter Node.js entrypoint.',
+      '- `src/index.spec.ts` verifies the exported service name.',
+      '- Docker scaffolding starts `dist/index.js`, matching the TypeScript build output.',
+    ];
+  }
+
+  private gettingStartedCommands(repoShape?: string): string[] {
+    if (normalizeRepoShape(repoShape) === 'microservices') {
+      return [
+        '```bash',
+        'cd backend',
+        'npm install',
+        'npm run lint',
+        'npm test',
+        'npm run build',
+        '',
+        'cd ../frontend',
+        'npm install',
+        'npm run lint',
+        'npm test',
+        'npm run build',
+        '```',
+      ];
+    }
+
+    return [
+      '```bash',
+      'npm install',
+      'npm run lint',
+      'npm test',
+      'npm run build',
+      '```',
+    ];
+  }
+
+  private repoShapeLabel(repoShape?: string): string {
+    switch (normalizeRepoShape(repoShape)) {
+      case 'monorepo':
+        return 'monorepo workspace';
+      case 'microservices':
+        return 'microservices repository';
+      case 'multi-repo':
+        return 'single-service repository in a multi-repo project';
+      case 'standalone':
+      default:
+        return 'standalone repository';
+    }
+  }
+
+  private buildGeneratedRepoReadme(opts: {
+    projectName: string;
+    stack: string;
+    repoShape?: string;
+    frontendStack?: string;
+    frontendServiceName?: string;
+    backendServiceName?: string;
+  }): string {
+    return [
+      `# ${opts.projectName}`,
+      '',
+      `Created by alphaCI Studio as a ${this.describeGeneratedStack(opts.stack)} ${this.repoShapeLabel(opts.repoShape)}.`,
+      '',
+      'This starter already includes source files, package scripts, TypeScript, ESLint, Jest coverage, SonarQube metadata, branch protections, and alphaCI workflow files that match the selected stack. Use it as the first working baseline, then replace the starter code with your application code.',
+      '',
+      '## Project structure',
+      '',
+      ...this.generatedStructureLines(opts),
+      '',
+      '## Branch strategy',
+      '',
+      '| Branch  | Purpose |',
+      '|---------|---------|',
+      '| main    | Stable baseline - protected |',
+      '| uat     | Pre-production gate - protected |',
+      '| test    | Integration target - protected |',
+      '| develop | Staging/integration branch - protected, no CI pipeline |',
+      '',
+      '## CI/CD',
+      '',
+      'Workflow files live in `.github/workflows/`. The CI pipeline runs on `test`, `uat`, and `main` only; `develop` is a protected staging branch with no pipeline. Push to `test` to trigger your first run.',
+      '',
+      '## Getting started',
+      '',
+      ...this.gettingStartedCommands(opts.repoShape),
+      '',
+      'Create a feature branch, open a pull request into `test`, and let alphaCI promote green changes through `uat` and `main`.',
+    ].join('\n');
+  }
+
   /**
    * Push a full project scaffold to the repository on main, then add README.md.
    * Called immediately after createRepo() so that all downstream branches
@@ -2192,28 +2349,14 @@ export class ProjectsService {
     }
 
     // Always push README.md (.gitignore is included in the scaffold above)
-    const readmeContent = [
-      `# ${projectName}`,
-      '',
-      'This repository was created and configured by alphaCI Studio.',
-      '',
-      '## Branch strategy',
-      '',
-      '| Branch  | Purpose |',
-      '|---------|---------|',
-      '| main    | Stable baseline — protected |',
-      '| uat     | Pre-production gate — protected |',
-      '| test    | Integration target — protected |',
-      '| develop | Staging/integration branch — protected, no CI pipeline |',
-      '',
-      '## CI/CD',
-      '',
-      'Workflow files live in `.github/workflows/`. The CI pipeline runs on `test`, `uat`, and `main` only; `develop` is a protected staging branch with no pipeline. Push to `test` to trigger your first run.',
-      '',
-      '## Getting started',
-      '',
-      'Clone this repository, install dependencies, and push your code to a feature branch targeting `test` to activate the CI pipeline.',
-    ].join('\n');
+    const readmeContent = this.buildGeneratedRepoReadme({
+      projectName,
+      stack,
+      ...(repoShape ? { repoShape } : {}),
+      ...(frontendStack ? { frontendStack } : {}),
+      ...(frontendServiceName ? { frontendServiceName } : {}),
+      ...(backendServiceName ? { backendServiceName } : {}),
+    });
 
     await this.pushWorkflowFile(
       accessToken,

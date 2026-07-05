@@ -1006,6 +1006,44 @@ jobs:
       >
     ).map((call) => call[3]);
     expect(pushedPaths).toContain('packages/core/package.json');
+
+    const readmeContent = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).find((call) => call[3] === 'README.md')?.[4];
+    expect(readmeContent).toContain(
+      'Created by alphaCI Studio as a NestJS API monorepo workspace.',
+    );
+    expect(readmeContent).toContain('`packages/core/` contains');
+  });
+
+  it('normalizes legacy project type IDs when creating starter files', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    const pushedPaths = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).map((call) => call[3]);
+    expect(pushedPaths).toContain('src/main.ts');
+    expect(pushedPaths).toContain('src/app.module.ts');
+
+    const readmeContent = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).find((call) => call[3] === 'README.md')?.[4];
+    expect(readmeContent).toContain(
+      'Created by alphaCI Studio as a NestJS API standalone repository.',
+    );
+    expect(readmeContent).toContain('`src/main.ts` boots the NestJS app.');
   });
 
   it('pushes variant-suffixed workflow files for the microservices shape so the slots do not collide', async () => {

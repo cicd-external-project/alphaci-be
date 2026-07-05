@@ -1,6 +1,7 @@
 import {
   buildProjectScaffold,
   defaultIncludeDocker,
+  normalizeProjectStack,
   normalizeRepoShape,
 } from './scaffold.builder';
 
@@ -21,6 +22,21 @@ describe('normalizeRepoShape', () => {
     expect(normalizeRepoShape(undefined)).toBe('standalone');
     expect(normalizeRepoShape(null)).toBe('standalone');
     expect(normalizeRepoShape('something-else')).toBe('standalone');
+  });
+});
+
+describe('normalizeProjectStack', () => {
+  it('maps catalog stack IDs and legacy project type IDs to canonical stacks', () => {
+    expect(normalizeProjectStack('nextjs')).toBe('nextjs');
+    expect(normalizeProjectStack('react-app')).toBe('react');
+    expect(normalizeProjectStack('nestjs-api')).toBe('nestjs');
+    expect(normalizeProjectStack('nodejs-api')).toBe('nodejs');
+  });
+
+  it('falls back to nodejs for unknown or missing stack IDs', () => {
+    expect(normalizeProjectStack(undefined)).toBe('nodejs');
+    expect(normalizeProjectStack(null)).toBe('nodejs');
+    expect(normalizeProjectStack('unknown')).toBe('nodejs');
   });
 });
 
@@ -67,6 +83,35 @@ describe('buildProjectScaffold', () => {
     expect(paths).toContain('frontend/src/app/page.tsx');
   });
 
+  it('normalizes legacy NestJS project type IDs before rendering files', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'orders-api',
+      stack: 'nestjs-api',
+      includeDocker: true,
+    });
+    const paths = files.map((file) => file.path);
+
+    expect(paths).toContain('src/main.ts');
+    expect(paths).toContain('src/app.module.ts');
+    expect(paths).toContain('Dockerfile');
+    expect(files.find((file) => file.path === 'Dockerfile')!.content).toContain(
+      'CMD ["node", "dist/main.js"]',
+    );
+  });
+
+  it('uses the Node.js entrypoint in generated Node Dockerfiles', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'orders-worker',
+      stack: 'nodejs',
+      includeDocker: true,
+    });
+
+    expect(files.map((file) => file.path)).toContain('src/index.ts');
+    expect(files.find((file) => file.path === 'Dockerfile')!.content).toContain(
+      'CMD ["node", "dist/index.js"]',
+    );
+  });
+
   it('renders a real React scaffold for the react stack', () => {
     const files = buildProjectScaffold({
       serviceName: 'orders-web',
@@ -81,9 +126,11 @@ describe('buildProjectScaffold', () => {
     const pkg = JSON.parse(
       files.find((file) => file.path === 'package.json')!.content,
     ) as {
+      scripts?: Record<string, string>;
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
+    expect(pkg.scripts?.typecheck).toBe('tsc --noEmit');
     expect(pkg.dependencies?.['react']).toBeDefined();
     expect(pkg.dependencies?.['react-dom']).toBeDefined();
     expect(pkg.devDependencies?.['@types/react']).toBeDefined();
@@ -115,6 +162,7 @@ describe('buildProjectScaffold', () => {
 describe('defaultIncludeDocker', () => {
   it('includes Docker for backend stacks only', () => {
     expect(defaultIncludeDocker('nestjs')).toBe(true);
+    expect(defaultIncludeDocker('nestjs-api')).toBe(true);
     expect(defaultIncludeDocker('nodejs')).toBe(true);
     expect(defaultIncludeDocker('nextjs')).toBe(false);
     expect(defaultIncludeDocker('react')).toBe(false);
