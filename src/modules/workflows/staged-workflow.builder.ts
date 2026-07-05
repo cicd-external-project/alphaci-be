@@ -247,6 +247,7 @@ export function buildStagedWorkflowBundle(
               'checkout-ref': HEAD_SHA_EXPR,
             },
           },
+          typecheck: typecheckJob(servicePath, nodeVersion),
           security: {
             needs: ['validate-access'],
             uses: `${CENTRAL_WORKFLOW_REF}/security-scan.yml@${centralWorkflowRef}`,
@@ -290,6 +291,7 @@ export function buildStagedWorkflowBundle(
               'branch-policy',
               testJobId,
               'lint',
+              'typecheck',
               'security',
               'sonar',
             ],
@@ -603,6 +605,44 @@ function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
           '  echo "sonar-gate-wait=$SONAR_GATE_WAIT"',
           '} >> "$GITHUB_OUTPUT"',
           'echo "Branch policy: branch=$BRANCH coverage>=$COVERAGE_THRESHOLD failOnWarning=$FAIL_ON_WARNING sonar=$SONAR_CONFIGURED gateWait=$SONAR_GATE_WAIT"',
+        ].join('\n'),
+      },
+    ],
+  };
+}
+
+function typecheckJob(servicePath: string, nodeVersion: string) {
+  return {
+    needs: ['branch-policy'],
+    runs_on: 'ubuntu-latest',
+    defaults: {
+      run: {
+        'working-directory': `./${servicePath}`,
+      },
+    },
+    steps: [
+      {
+        uses: 'actions/checkout@v6',
+        with: {
+          ref: HEAD_SHA_EXPR,
+        },
+      },
+      {
+        uses: 'actions/setup-node@v6',
+        with: {
+          'node-version': Number(nodeVersion),
+        },
+      },
+      {
+        name: 'Install dependencies',
+        run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
+      },
+      {
+        name: 'Run TypeScript type check',
+        run: [
+          "TYPECHECK_CMD=$(node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); process.stdout.write(pkg.scripts && pkg.scripts.typecheck ? 'npm run typecheck' : 'npx tsc --noEmit');\")",
+          'echo "Running ${TYPECHECK_CMD}"',
+          'bash -lc "${TYPECHECK_CMD}"',
         ].join('\n'),
       },
     ],

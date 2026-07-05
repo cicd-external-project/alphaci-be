@@ -125,6 +125,7 @@ describe('buildStagedWorkflowBundle', () => {
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     expect(quality.jobs['report-results']?.needs).toContain('backend-tests');
     expect(quality.jobs['report-results']?.needs).toContain('sonar');
+    expect(quality.jobs['report-results']?.needs).toContain('typecheck');
 
     // package: needs validate-access + build
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
@@ -237,6 +238,7 @@ describe('buildStagedWorkflowBundle', () => {
       'backend',
     );
     expect(quality.jobs['lint']?.with?.['working-directory']).toBe('backend');
+    expect(quality.jobs['typecheck']).toBeDefined();
   });
 
   it('selects the backend or frontend test workflow based on the template stack', () => {
@@ -276,6 +278,27 @@ describe('buildStagedWorkflowBundle', () => {
     );
     expect(quality.jobs['lint']?.with?.['fail-on-warning']).toBe(
       '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
+    );
+  });
+
+  it('adds a dedicated typecheck job to the quality stage', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
+      templateId: 'fe-nextjs',
+      serviceName: 'orders-web',
+      servicePath: 'frontend',
+      nodeVersion: '24',
+    });
+
+    const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
+    const typecheck = quality.jobs['typecheck'];
+    const qualityYaml = bundle.workflowFiles[1]!.yaml;
+
+    expect(typecheck?.needs).toEqual(['branch-policy']);
+    expect(qualityYaml).toContain('working-directory: ./frontend');
+    expect(qualityYaml).toContain('npm run typecheck');
+    expect(qualityYaml).toContain('npx tsc --noEmit');
+    expect(qualityYaml).toContain(
+      'github.event.workflow_run.head_sha || github.sha',
     );
   });
 
