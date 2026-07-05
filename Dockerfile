@@ -13,6 +13,10 @@ FROM node:22-alpine AS builder
 
 ARG NPM_TOKEN
 ARG TEMPLATE_CLONE_TOKEN
+# Git ref (branch/tag) of cicd-workflow whose catalog + templates get baked
+# into this image. Defaults to main; set to `test`/`uat` on pre-production
+# deploys so those environments see catalog changes before they reach main.
+ARG TEMPLATE_REPO_REF=main
 
 WORKDIR /app
 
@@ -34,7 +38,7 @@ RUN npm run build
 # Clone workflow templates — uses a separate fine-grained PAT (contents:read only)
 # scoped to ImplementSprint/cicd-workflow. Remove .git to avoid leaking the
 # credentialed remote URL into any downstream layer.
-RUN git clone --depth 1 \
+RUN git clone --depth 1 --branch "${TEMPLATE_REPO_REF}" \
     "https://x-access-token:${TEMPLATE_CLONE_TOKEN}@github.com/cicd-external-project/cicd-workflow.git" \
     /tmp/cicd-workflow \
   && rm -rf /tmp/cicd-workflow/.git
