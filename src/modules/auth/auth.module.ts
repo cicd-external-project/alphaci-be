@@ -8,12 +8,23 @@ import { ProjectsModule } from '../projects/projects.module';
 import { AdminModule } from '../admin/admin.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailCodeDeliveryService } from './email-code-delivery.service';
+import { EmailCodeTemplateService } from './email-code-template.service';
 import { IdentityService } from './identity.service';
+import { PasswordHasherService } from './password-hasher.service';
 
 @Module({
   imports: [SubscriptionModule, PersistenceModule, ProjectsModule, AdminModule],
   controllers: [AuthController],
-  providers: [AuthService, IdentityService, DevOnlyGuard, SessionAuthGuard],
+  providers: [
+    AuthService,
+    IdentityService,
+    PasswordHasherService,
+    EmailCodeTemplateService,
+    EmailCodeDeliveryService,
+    DevOnlyGuard,
+    SessionAuthGuard,
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

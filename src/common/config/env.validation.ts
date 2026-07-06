@@ -59,6 +59,7 @@ export interface EnvironmentVariables {
   LEGACY_VERCEL_PROVIDER_ENABLED?: string;
   LEGACY_RENDER_PROVIDER_ENABLED?: string;
   BYO_DEPLOYMENT_PROVIDER_ENABLED?: string;
+  AUTH_EMAIL_CODE_DELIVERY?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -304,6 +305,16 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';
+  const rawEmailDelivery = env['AUTH_EMAIL_CODE_DELIVERY'];
+  if (
+    rawEmailDelivery !== undefined &&
+    rawEmailDelivery !== 'log' &&
+    rawEmailDelivery !== 'provider'
+  ) {
+    throw new Error(
+      "[env] AUTH_EMAIL_CODE_DELIVERY must be 'log' or 'provider' when set.",
+    );
+  }
   validateEnvProvisioningConfig(env);
 
   // Pass all raw env vars through first so appConfig and other factories can

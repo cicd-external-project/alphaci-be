@@ -4,6 +4,9 @@ import type { SubscriptionPlan } from '../common/interfaces/session-user.interfa
 
 export interface AppConfig {
   frontendUrl: string;
+  auth?: {
+    emailCodeDelivery: 'log' | 'provider';
+  };
   github: {
     clientId: string;
     clientSecret: string;
@@ -154,6 +157,10 @@ export const appConfig = registerAs('app', (): AppConfig => {
 
   return {
     frontendUrl: env['FRONTEND_URL'] ?? 'http://localhost:3000',
+    auth: {
+      emailCodeDelivery:
+        env['AUTH_EMAIL_CODE_DELIVERY'] === 'provider' ? 'provider' : 'log',
+    },
     github: {
       clientId: env['GITHUB_CLIENT_ID'] ?? '',
       clientSecret: env['GITHUB_CLIENT_SECRET'] ?? '',
