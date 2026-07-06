@@ -48,6 +48,11 @@ const makeConfig = (withGitHub = true) =>
     getOrThrow: jest.fn().mockReturnValue({
       frontendUrl: 'http://localhost:3000',
       archivedAccountRetentionDays: 30,
+      google: {
+        clientId: 'google-client-id',
+        clientSecret: 'google-client-secret',
+        callbackUrl: 'http://localhost:4000/api/v1/auth/google/callback',
+      },
       github: {
         clientId: withGitHub ? 'gh-client-id' : '',
         clientSecret: withGitHub ? 'gh-client-secret' : '',
@@ -250,6 +255,24 @@ function mockSuccessfulGitHubFetch(
     } as unknown as Response);
 }
 
+function makeGoogleIdToken(
+  claims: Record<string, unknown> = {},
+): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: 'google-sub-1',
+      email: 'test@example.com',
+      email_verified: true,
+      name: 'Test User',
+      picture: 'https://example.com/avatar.png',
+      aud: 'google-client-id',
+      iss: 'https://accounts.google.com',
+      ...claims,
+    }),
+  ).toString('base64url');
+
+  return `header.${payload}.signature`;
+}
 interface GitHubProfilePayload {
   id: number;
   login: string;
@@ -388,6 +411,101 @@ describe('AuthService', () => {
     });
   });
 
+  describe('startGoogleAuth', () => {
+    it('saves google OAuth state and returns Google auth URL', async () => {
+      const { service, oauthStateRepo } = await createService();
+      const req = makeRequest();
+
+      const url = await service.startGoogleAuth(req, '/signup');
+
+      expect(url).toContain('accounts.google.com/o/oauth2/v2/auth');
+      expect(oauthStateRepo.save).toHaveBeenCalledWith(
+        expect.any(String),
+        'http://localhost:3000/signup',
+        'google',
+      );
+    });
+  });
+
+  describe('handleGoogleCallback', () => {
+    let fetchMock: jest.SpyInstance;
+
+    beforeEach(() => {
+      fetchMock = jest
+        .spyOn(global as unknown as { fetch: typeof fetch }, 'fetch')
+        .mockImplementation(jest.fn());
+    });
+
+    afterEach(() => {
+      fetchMock.mockRestore();
+    });
+
+    it('returns invalid_state when DB record has wrong provider', async () => {
+      const { service } = await createService(true, {
+        findAndDelete: jest.fn().mockResolvedValue({
+          returnTo: 'http://localhost:3000',
+          provider: 'github',
+        }),
+      });
+
+      const url = await service.handleGoogleCallback(
+        makeRequest(),
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=invalid_state');
+    });
+
+    it('returns email_unverified for Google identities without verified email', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            id_token: makeGoogleIdToken({ email_verified: false }),
+          }),
+      } as unknown as Response);
+      const { service } = await createService(true, {
+        findAndDelete: jest.fn().mockResolvedValue({
+          returnTo: 'http://localhost:3000',
+          provider: 'google',
+        }),
+      });
+
+      const url = await service.handleGoogleCallback(
+        makeRequest(),
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=email_unverified');
+    });
+
+    it('establishes a session after successful Google callback', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id_token: makeGoogleIdToken() }),
+      } as unknown as Response);
+      const { service } = await createService(true, {
+        findAndDelete: jest.fn().mockResolvedValue({
+          returnTo: 'http://localhost:3000',
+          provider: 'google',
+        }),
+      });
+      const req = makeRequest();
+
+      const url = await service.handleGoogleCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
+        'user-1',
+      );
+    });
+  });
   describe('handleGitHubCallback', () => {
     let fetchMock: jest.SpyInstance;
 

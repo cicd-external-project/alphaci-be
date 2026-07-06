@@ -17,6 +17,11 @@ export interface AppConfig {
     appPrivateKey: string;
     appWebhookSecret: string;
   };
+  google?: {
+    clientId: string;
+    clientSecret: string;
+    callbackUrl: string;
+  };
   templates: {
     repoPath: string;
     workflowDir: string;
@@ -175,6 +180,13 @@ export const appConfig = registerAs('app', (): AppConfig => {
         '\n',
       ),
       appWebhookSecret: env['GITHUB_APP_WEBHOOK_SECRET'] ?? '',
+    },
+    google: {
+      clientId: env['GOOGLE_CLIENT_ID'] ?? '',
+      clientSecret: env['GOOGLE_CLIENT_SECRET'] ?? '',
+      callbackUrl:
+        env['GOOGLE_CALLBACK_URL'] ??
+        'http://localhost:4000/api/v1/auth/google/callback',
     },
     templates: {
       repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',

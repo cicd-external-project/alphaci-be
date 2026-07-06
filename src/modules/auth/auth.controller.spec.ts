@@ -57,6 +57,12 @@ const makeAuthService = () =>
     handleGitHubCallback: jest
       .fn()
       .mockResolvedValue('http://localhost:3000?auth=success'),
+    startGoogleAuth: jest
+      .fn()
+      .mockReturnValue('https://accounts.google.com/o/oauth2/v2/auth?mock=1'),
+    handleGoogleCallback: jest
+      .fn()
+      .mockResolvedValue('http://localhost:3000?auth=success'),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
     logout: jest.fn().mockResolvedValue(undefined),
     deleteAccount: jest.fn().mockResolvedValue(undefined),
@@ -175,6 +181,37 @@ describe('AuthController', () => {
       expect(result).toEqual({ ok: true, verificationRequired: true });
       expect(authService.resendEmailSignupCode).toHaveBeenCalledWith(
         'tone@example.test',
+      );
+    });
+  });
+  describe('googleStart', () => {
+    it('redirects to Google auth URL', async () => {
+      const req = makeRequest();
+      const res = makeResponse();
+
+      await controller.googleStart(req, res, '/signup');
+
+      expect(authService.startGoogleAuth).toHaveBeenCalledWith(req, '/signup');
+      expect(res.redirect).toHaveBeenCalledWith(
+        'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
+      );
+    });
+  });
+
+  describe('googleCallback', () => {
+    it('redirects to callback result URL', async () => {
+      const req = makeRequest();
+      const res = makeResponse();
+
+      await controller.googleCallback(req, res, 'code123', 'state123');
+
+      expect(authService.handleGoogleCallback).toHaveBeenCalledWith(
+        req,
+        'code123',
+        'state123',
+      );
+      expect(res.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000?auth=success',
       );
     });
   });

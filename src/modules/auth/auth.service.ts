@@ -22,6 +22,20 @@ interface GitHubTokenResponse {
   error?: string;
 }
 
+interface GoogleTokenResponse {
+  id_token?: string;
+  error?: string;
+}
+
+interface GoogleIdTokenClaims {
+  sub: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  picture?: string;
+  aud: string;
+  iss: string;
+}
 interface GitHubUserResponse {
   id: number;
   login: string;
@@ -129,6 +143,115 @@ export class AuthService {
     state?: string,
   ): Promise<string> {
     return this.handleOAuthProviderCallback(request, code, state);
+  }
+  async startGoogleAuth(request: Request, returnTo?: string): Promise<string> {
+    const safeReturnTo = this.normalizeReturnTo(returnTo);
+
+    if (!this.hasGoogleCredentials()) {
+      return this.withQuery(safeReturnTo, 'auth', 'unavailable');
+    }
+
+    try {
+      const state = randomUUID();
+      await this.oauthStateRepository.save(state, safeReturnTo, 'google');
+
+      const authorizationUrl = new URL(
+        'https://accounts.google.com/o/oauth2/v2/auth',
+      );
+      authorizationUrl.searchParams.set(
+        'client_id',
+        this.config.google!.clientId,
+      );
+      authorizationUrl.searchParams.set(
+        'redirect_uri',
+        this.config.google!.callbackUrl,
+      );
+      authorizationUrl.searchParams.set('response_type', 'code');
+      authorizationUrl.searchParams.set('scope', 'openid email profile');
+      authorizationUrl.searchParams.set('state', state);
+      authorizationUrl.searchParams.set('prompt', 'select_account');
+
+      return authorizationUrl.toString();
+    } catch (err) {
+      this.logger.error(
+        `Google OAuth start failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return this.withQuery(safeReturnTo, 'auth', 'failed');
+    }
+  }
+
+  async handleGoogleCallback(
+    request: Request,
+    code?: string,
+    state?: string,
+  ): Promise<string> {
+    const fallbackReturnTo = `${this.config.frontendUrl}/auth/callback`;
+
+    try {
+      const oauthRecord =
+        code && state
+          ? await this.oauthStateRepository.findAndDelete(state)
+          : null;
+      const returnTo = oauthRecord?.returnTo ?? fallbackReturnTo;
+
+      if (!code || !state || oauthRecord?.provider !== 'google') {
+        return this.withQuery(returnTo, 'auth', 'invalid_state');
+      }
+
+      if (!this.hasGoogleCredentials()) {
+        return this.withQuery(returnTo, 'auth', 'unavailable');
+      }
+
+      const idToken = await this.exchangeCodeForGoogleIdToken(code);
+      const claims = this.decodeGoogleIdToken(idToken);
+      this.validateGoogleClaims(claims);
+
+      if (!claims.email || claims.email_verified !== true) {
+        return this.withQuery(returnTo, 'auth', 'email_unverified');
+      }
+
+      const login = claims.email.split('@')[0] ?? claims.email;
+      const identityResult = await this.identityService.resolveVerifiedProvider(
+        {
+          provider: 'google',
+          providerUserId: claims.sub,
+          login,
+          ...(claims.name !== undefined && { name: claims.name }),
+          email: claims.email,
+          emailVerified: true,
+          ...(claims.picture !== undefined && { avatarUrl: claims.picture }),
+        },
+      );
+
+      if (identityResult.kind === 'blocked') {
+        return this.withQuery(returnTo, 'auth', identityResult.reason);
+      }
+
+      if (identityResult.kind === 'archived') {
+        return this.withQuery(returnTo, 'auth', 'archived_choice');
+      }
+
+      await this.establishSession(request, identityResult.user);
+      await this.saveSession(request);
+      await this.outboxRepository.publishLater({
+        topic: 'user.signed_in',
+        aggregateType: 'user',
+        aggregateId: identityResult.user.id,
+        payload: {
+          provider: 'google',
+          login: identityResult.user.login,
+        },
+      });
+
+      return this.withQuery(returnTo, 'auth', 'success');
+    } catch (err) {
+      this.logger.error(
+        `Google OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return this.withQuery(fallbackReturnTo, 'auth', 'failed');
+    }
   }
 
   /**
@@ -671,6 +794,54 @@ export class AuthService {
     return authorizationUrl.toString();
   }
 
+  private async exchangeCodeForGoogleIdToken(code: string): Promise<string> {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body: new URLSearchParams({
+        client_id: this.config.google!.clientId,
+        client_secret: this.config.google!.clientSecret,
+        code,
+        redirect_uri: this.config.google!.callbackUrl,
+        grant_type: 'authorization_code',
+      }).toString(),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to exchange Google OAuth code');
+    }
+
+    const payload = (await response.json()) as GoogleTokenResponse;
+    if (!payload.id_token || payload.error) {
+      throw new Error('Google did not return an ID token');
+    }
+
+    return payload.id_token;
+  }
+
+  private decodeGoogleIdToken(idToken: string): GoogleIdTokenClaims {
+    const [, payload] = idToken.split('.');
+    if (!payload) {
+      throw new Error('Invalid Google ID token');
+    }
+
+    return JSON.parse(
+      Buffer.from(payload, 'base64url').toString('utf8'),
+    ) as GoogleIdTokenClaims;
+  }
+
+  private validateGoogleClaims(claims: GoogleIdTokenClaims): void {
+    if (claims.aud !== this.config.google!.clientId) {
+      throw new Error('Invalid Google audience');
+    }
+
+    if (!['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss)) {
+      throw new Error('Invalid Google issuer');
+    }
+  }
   private async exchangeCodeForGitHubToken(code: string): Promise<string> {
     const response = await fetch(
       'https://github.com/login/oauth/access_token',
@@ -874,6 +1045,12 @@ export class AuthService {
         resolve();
       });
     });
+  }
+
+  private hasGoogleCredentials(): boolean {
+    return Boolean(
+      this.config.google!.clientId && this.config.google!.clientSecret,
+    );
   }
 
   private hasGitHubCredentials(): boolean {

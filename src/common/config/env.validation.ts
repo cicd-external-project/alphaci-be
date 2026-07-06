@@ -47,6 +47,9 @@ export interface EnvironmentVariables {
   FLOWCI_VERCEL_TOKEN?: string;
   FLOWCI_VERCEL_TEAM_ID?: string;
   FLOWCI_VERCEL_TEAM_SLUG?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_CALLBACK_URL?: string;
   GCP_DEPLOYMENTS_ENABLED?: string;
   GCP_SHARED_PROJECT_ID?: string;
   GCP_REGION?: string;
