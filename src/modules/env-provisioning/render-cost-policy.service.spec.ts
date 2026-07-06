@@ -33,37 +33,37 @@ describe('RenderCostPolicyService', () => {
     });
   });
 
-  it('uses trimmed explicit values before config defaults', () => {
+  it('uses trimmed explicit free values before config defaults', () => {
     const service = new RenderCostPolicyService(makeConfigService());
 
     expect(
       service.resolveDefaults({
         ownershipMode: 'byo',
-        serviceType: 'background_worker',
-        instanceType: ' starter ',
+        serviceType: 'web_service',
+        instanceType: ' free ',
         region: ' oregon ',
       }),
     ).toEqual({
-      serviceType: 'background_worker',
-      instanceType: 'starter',
+      serviceType: 'web_service',
+      instanceType: 'free',
       region: 'oregon',
     });
   });
 
-  it('rejects managed instance types outside the allowed list', () => {
+  it('rejects Render instance types outside the free tier', () => {
     const service = new RenderCostPolicyService(makeConfigService());
 
-    expect(() =>
-      service.assertManagedAllowed('web_service', 'starter'),
-    ).toThrow(BadRequestException);
+    expect(() => service.assertAllowed('web_service', 'starter')).toThrow(
+      BadRequestException,
+    );
   });
 
-  it('rejects free managed non-web Render service types', () => {
+  it('rejects free non-web Render service types', () => {
     const service = new RenderCostPolicyService(makeConfigService());
 
-    expect(() =>
-      service.assertManagedAllowed('background_worker', 'free'),
-    ).toThrow(BadRequestException);
+    expect(() => service.assertAllowed('background_worker', 'free')).toThrow(
+      BadRequestException,
+    );
   });
 
   it('rejects managed paid provisioning when disabled', () => {
