@@ -100,6 +100,29 @@ describe('UsersRepository', () => {
     });
   });
 
+  describe('createFederatedUser', () => {
+    it('creates a canonical user for a verified provider profile', async () => {
+      const result = await repo.createFederatedUser({
+        login: 'Tone User',
+        name: 'Tone User',
+        email: 'tone@example.test',
+        avatarUrl: 'https://example.test/avatar.png',
+        provider: 'google',
+      });
+
+      expect(result.id).toBe('user-uuid-1');
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO app_users'),
+        expect.arrayContaining([
+          'tone-user',
+          'Tone User',
+          'tone@example.test',
+          'https://example.test/avatar.png',
+          'google',
+        ]),
+      );
+    });
+  });
   describe('findById', () => {
     it('returns a SessionUser when found', async () => {
       const result = await repo.findById('user-uuid-1');

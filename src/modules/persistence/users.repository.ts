@@ -19,6 +19,14 @@ interface UpsertGoogleUserInput {
   avatarUrl?: string;
 }
 
+interface CreateFederatedUserInput {
+  login: string;
+  name?: string;
+  email: string;
+  avatarUrl?: string;
+  provider: 'email' | 'google' | 'github';
+}
+
 interface PersistedUserRow {
   id: string;
   login: string;
@@ -139,6 +147,53 @@ export class UsersRepository {
     return this.toSessionUser(row);
   }
 
+  async createFederatedUser(
+    input: CreateFederatedUserInput,
+  ): Promise<SessionUser> {
+    const normalizedLogin = this.normalizeLogin(
+      input.login,
+      input.email,
+      input.provider,
+    );
+
+    const result = await this.databaseService.query<PersistedUserRow>(
+      `
+        WITH candidate AS (
+          SELECT CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM app_users
+              WHERE login = $1
+            )
+              THEN CONCAT($1, '-', SUBSTRING(md5($3) FROM 1 FOR 6))
+              ELSE $1
+          END AS safe_login
+        )
+        INSERT INTO app_users (
+          login,
+          display_name,
+          email,
+          avatar_url,
+          provider,
+          is_dummy,
+          last_login_at
+        )
+        VALUES ((SELECT safe_login FROM candidate), $2, $3, $4, $5, false, NOW())
+        RETURNING id, login, display_name, email, avatar_url, onboarding_completed_at;
+      `,
+      [
+        normalizedLogin,
+        input.name ?? input.login,
+        input.email,
+        input.avatarUrl ?? null,
+        input.provider,
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) throw new Error('Federated user insert returned no row');
+    return this.toSessionUser(row);
+  }
   async deleteById(userId: string): Promise<void> {
     await this.databaseService.query(`DELETE FROM app_users WHERE id = $1;`, [
       userId,
