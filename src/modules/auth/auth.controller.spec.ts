@@ -257,7 +257,11 @@ describe('AuthController', () => {
 
       expect(result).toEqual({
         methods: [
-          { provider: 'github', email: 'tone@example.test', emailVerified: true },
+          {
+            provider: 'github',
+            email: 'tone@example.test',
+            emailVerified: true,
+          },
         ],
       });
       expect(authService.listConnectedIdentities).toHaveBeenCalledWith(req);

@@ -62,7 +62,11 @@ describe('IdentityService', () => {
     const { service, identities } = makeService({
       identities: {
         listForUser: jest.fn().mockResolvedValue([
-          { provider: 'github', email: 'tone@example.test', emailVerified: true },
+          {
+            provider: 'github',
+            email: 'tone@example.test',
+            emailVerified: true,
+          },
         ]),
       },
     });

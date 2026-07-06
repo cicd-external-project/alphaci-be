@@ -59,7 +59,6 @@ interface GitHubNormalizedUser {
   emailVerified: boolean;
 }
 
-
 export interface PendingAccountInfo {
   pending: true;
   login: string;
@@ -374,7 +373,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired verification code');
     }
 
-    const verified = await this.passwordHasher.verify(input.code, record.codeHash);
+    const verified = await this.passwordHasher.verify(
+      input.code,
+      record.codeHash,
+    );
     if (!verified) {
       await this.emailVerificationCodesRepository.incrementAttempt(record.id);
       throw new UnauthorizedException('Invalid or expired verification code');
@@ -855,7 +857,11 @@ export class AuthService {
       throw new Error('Invalid Google audience');
     }
 
-    if (!['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss)) {
+    if (
+      !['accounts.google.com', 'https://accounts.google.com'].includes(
+        claims.iss,
+      )
+    ) {
       throw new Error('Invalid Google issuer');
     }
   }

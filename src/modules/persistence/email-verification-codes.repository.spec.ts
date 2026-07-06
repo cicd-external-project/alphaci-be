@@ -23,9 +23,7 @@ describe('EmailVerificationCodesRepository', () => {
 
     expect(result).toEqual({ id: 'code-1' });
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'INSERT INTO identity.email_verification_codes',
-      ),
+      expect.stringContaining('INSERT INTO identity.email_verification_codes'),
       ['tone@example.test', 'hash', 'signup', 'identity-1', expiresAt],
     );
   });

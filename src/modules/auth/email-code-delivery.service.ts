@@ -27,6 +27,8 @@ export class EmailCodeDeliveryService {
       expiresInMinutes: 10,
     });
 
+    await Promise.resolve();
+
     if (mode === 'log' && nodeEnv !== 'production') {
       console.info(
         [

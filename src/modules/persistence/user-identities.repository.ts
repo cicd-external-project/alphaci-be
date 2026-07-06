@@ -210,7 +210,9 @@ export class UserIdentitiesRepository {
       provider: row.provider,
       providerUserId: row.provider_user_id,
       ...(row.email ? { email: row.email } : {}),
-      ...(row.normalized_email ? { normalizedEmail: row.normalized_email } : {}),
+      ...(row.normalized_email
+        ? { normalizedEmail: row.normalized_email }
+        : {}),
       emailVerified: row.email_verified,
       ...(row.password_hash ? { passwordHash: row.password_hash } : {}),
       ...(row.display_name ? { displayName: row.display_name } : {}),

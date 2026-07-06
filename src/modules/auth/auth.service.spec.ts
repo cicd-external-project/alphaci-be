@@ -255,9 +255,7 @@ function mockSuccessfulGitHubFetch(
     } as unknown as Response);
 }
 
-function makeGoogleIdToken(
-  claims: Record<string, unknown> = {},
-): string {
+function makeGoogleIdToken(claims: Record<string, unknown> = {}): string {
   const payload = Buffer.from(
     JSON.stringify({
       sub: 'google-sub-1',
@@ -501,9 +499,9 @@ describe('AuthService', () => {
       );
 
       expect(url).toContain('auth=success');
-      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
-        'user-1',
-      );
+      expect(
+        (req.session as unknown as Record<string, unknown>)['userId'],
+      ).toBe('user-1');
     });
   });
   describe('handleGitHubCallback', () => {
@@ -600,9 +598,9 @@ describe('AuthService', () => {
       );
 
       expect(url).toContain('auth=success');
-      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
-        'user-1',
-      );
+      expect(
+        (req.session as unknown as Record<string, unknown>)['userId'],
+      ).toBe('user-1');
     });
 
     it('returns email_required for a new GitHub identity without verified email', async () => {
@@ -884,8 +882,12 @@ describe('AuthService', () => {
 
   describe('email password auth', () => {
     it('starts email signup without establishing a session', async () => {
-      const { service, userIdentitiesRepo, emailCodesRepo, emailCodeDeliveryService } =
-        await createService();
+      const {
+        service,
+        userIdentitiesRepo,
+        emailCodesRepo,
+        emailCodeDeliveryService,
+      } = await createService();
 
       const result = await service.startEmailSignup({
         firstName: 'Test',
@@ -910,14 +912,23 @@ describe('AuthService', () => {
         }),
       );
       expect(emailCodeDeliveryService.sendCode).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'test@example.com', purpose: 'signup' }),
+        expect.objectContaining({
+          email: 'test@example.com',
+          purpose: 'signup',
+        }),
       );
     });
 
     it('verifies signup code and establishes a session', async () => {
-      const { service, userIdentitiesRepo, subsRepo, exampleProjectSeederService } =
-        await createService();
-      (userIdentitiesRepo.findByProviderIdentity as jest.Mock).mockResolvedValue({
+      const {
+        service,
+        userIdentitiesRepo,
+        subsRepo,
+        exampleProjectSeederService,
+      } = await createService();
+      (
+        userIdentitiesRepo.findByProviderIdentity as jest.Mock
+      ).mockResolvedValue({
         id: 'identity-1',
         userId: 'user-1',
         provider: 'email',
@@ -935,9 +946,9 @@ describe('AuthService', () => {
       });
 
       expect(result).toMatchObject({ ok: true, authenticated: true });
-      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
-        'user-1',
-      );
+      expect(
+        (req.session as unknown as Record<string, unknown>)['userId'],
+      ).toBe('user-1');
       expect(subsRepo.ensureDefaultFreeSubscription).toHaveBeenCalledWith(
         'user-1',
       );

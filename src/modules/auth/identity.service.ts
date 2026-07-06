@@ -44,9 +44,7 @@ export class IdentityService {
         return this.toArchived(profile);
       }
 
-      const user = await this.usersRepository.findById(
-        existingIdentity.userId,
-      );
+      const user = await this.usersRepository.findById(existingIdentity.userId);
       if (!user) {
         return { kind: 'blocked', reason: 'ambiguous_identity' };
       }

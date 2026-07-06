@@ -14,7 +14,9 @@ export interface RenderedEmail {
 
 @Injectable()
 export class EmailCodeTemplateService {
-  renderVerificationCodeEmail(input: VerificationCodeEmailInput): RenderedEmail {
+  renderVerificationCodeEmail(
+    input: VerificationCodeEmailInput,
+  ): RenderedEmail {
     const subject = 'Verify your email address';
     const email = escapeHtml(input.email);
     const code = escapeHtml(input.code);

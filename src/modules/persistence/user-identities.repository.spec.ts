@@ -51,9 +51,8 @@ describe('UserIdentitiesRepository', () => {
     });
 
     const repo = new UserIdentitiesRepository(db);
-    const result = await repo.findActiveUserIdsByVerifiedEmail(
-      'Tone@Example.Test',
-    );
+    const result =
+      await repo.findActiveUserIdsByVerifiedEmail('Tone@Example.Test');
 
     expect(result).toEqual(['user-1']);
     expect(db.query).toHaveBeenCalledWith(
@@ -123,16 +122,19 @@ describe('UserIdentitiesRepository', () => {
     });
 
     expect(result.userId).toBe('user-1');
-    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('ON CONFLICT'), [
-      'user-1',
-      'google',
-      'google-sub',
-      'tone@example.test',
-      'tone@example.test',
-      true,
-      null,
-      'Tone',
-      'https://example.test/a.png',
-    ]);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('ON CONFLICT'),
+      [
+        'user-1',
+        'google',
+        'google-sub',
+        'tone@example.test',
+        'tone@example.test',
+        true,
+        null,
+        'Tone',
+        'https://example.test/a.png',
+      ],
+    );
   });
 });
