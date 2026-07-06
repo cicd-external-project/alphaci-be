@@ -6,12 +6,16 @@ import type { Request } from 'express';
 
 import type { AppConfig } from '../../config/app.config';
 import type { SessionUser } from '../../common/interfaces/session-user.interface';
+import { EmailVerificationCodesRepository } from '../persistence/email-verification-codes.repository';
 import { OAuthStateRepository } from '../persistence/oauth-state.repository';
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
+import { UserIdentitiesRepository } from '../persistence/user-identities.repository';
 import { UsersRepository } from '../persistence/users.repository';
 import { ExampleProjectSeederService } from '../projects/example-project-seeder.service';
+import { EmailCodeDeliveryService } from './email-code-delivery.service';
 import { IdentityService } from './identity.service';
+import { PasswordHasherService } from './password-hasher.service';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -65,6 +69,10 @@ export class AuthService {
     private readonly oauthStateRepository: OAuthStateRepository,
     private readonly exampleProjectSeederService: ExampleProjectSeederService,
     private readonly identityService: IdentityService,
+    private readonly userIdentitiesRepository: UserIdentitiesRepository,
+    private readonly emailVerificationCodesRepository: EmailVerificationCodesRepository,
+    private readonly passwordHasher: PasswordHasherService,
+    private readonly emailCodeDeliveryService: EmailCodeDeliveryService,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
     this.returnToOrigins = this.buildReturnToOrigins(
@@ -184,6 +192,158 @@ export class AuthService {
     return user;
   }
 
+  async startEmailSignup(input: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    password: string;
+  }): Promise<{ ok: true; verificationRequired: true }> {
+    const normalizedEmail = this.normalizeEmail(input.email);
+    const displayName = `${input.firstName} ${input.lastName}`.trim();
+    const userId = await this.getOrCreatePendingUserId(
+      normalizedEmail,
+      input.firstName,
+      input.lastName,
+    );
+    const passwordHash = await this.passwordHasher.hash(input.password);
+
+    await this.userIdentitiesRepository.upsertIdentity({
+      userId,
+      provider: 'email',
+      providerUserId: normalizedEmail,
+      email: normalizedEmail,
+      emailVerified: false,
+      passwordHash,
+      displayName,
+    });
+
+    await this.sendEmailSignupCode(normalizedEmail);
+    return { ok: true, verificationRequired: true };
+  }
+
+  async verifyEmailSignupCode(
+    request: Request,
+    input: { email: string; code: string },
+  ): Promise<{ ok: true; authenticated: true; user: SessionUser }> {
+    const normalizedEmail = this.normalizeEmail(input.email);
+    const record = await this.emailVerificationCodesRepository.findLatestActive(
+      normalizedEmail,
+      'signup',
+    );
+
+    if (!record) {
+      throw new UnauthorizedException('Invalid or expired verification code');
+    }
+
+    const verified = await this.passwordHasher.verify(input.code, record.codeHash);
+    if (!verified) {
+      await this.emailVerificationCodesRepository.incrementAttempt(record.id);
+      throw new UnauthorizedException('Invalid or expired verification code');
+    }
+
+    const identity = await this.userIdentitiesRepository.findByProviderIdentity(
+      'email',
+      normalizedEmail,
+    );
+    if (!identity || identity.archivedAt) {
+      throw new UnauthorizedException('Invalid or expired verification code');
+    }
+
+    await this.emailVerificationCodesRepository.consume(record.id);
+    await this.userIdentitiesRepository.upsertIdentity({
+      userId: identity.userId,
+      provider: 'email',
+      providerUserId: normalizedEmail,
+      email: normalizedEmail,
+      emailVerified: true,
+      ...(identity.passwordHash !== undefined && {
+        passwordHash: identity.passwordHash,
+      }),
+      ...(identity.displayName !== undefined && {
+        displayName: identity.displayName,
+      }),
+    });
+
+    const user = await this.usersRepository.findById(identity.userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    await this.subscriptionsRepository.ensureDefaultFreeSubscription(user.id);
+    await this.seedExampleProjectSafelyFor(user.id);
+    await this.establishSession(request, user);
+    await this.saveSession(request);
+
+    await this.outboxRepository.publishLater({
+      topic: 'user.signed_in',
+      aggregateType: 'user',
+      aggregateId: user.id,
+      payload: { provider: 'email', login: user.login },
+    });
+
+    return { ok: true, authenticated: true, user };
+  }
+
+  async loginWithEmail(
+    request: Request,
+    input: { email: string; password: string },
+  ): Promise<{ ok: true; authenticated: true; user: SessionUser }> {
+    const normalizedEmail = this.normalizeEmail(input.email);
+    const identity = await this.userIdentitiesRepository.findByProviderIdentity(
+      'email',
+      normalizedEmail,
+    );
+
+    if (
+      !identity ||
+      identity.archivedAt ||
+      !identity.emailVerified ||
+      !identity.passwordHash
+    ) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const passwordOk = await this.passwordHasher.verify(
+      input.password,
+      identity.passwordHash,
+    );
+    if (!passwordOk) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const user = await this.usersRepository.findById(identity.userId);
+    if (!user) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    await this.establishSession(request, user);
+    await this.saveSession(request);
+
+    await this.outboxRepository.publishLater({
+      topic: 'user.signed_in',
+      aggregateType: 'user',
+      aggregateId: user.id,
+      payload: { provider: 'email', login: user.login },
+    });
+
+    return { ok: true, authenticated: true, user };
+  }
+
+  async resendEmailSignupCode(
+    email: string,
+  ): Promise<{ ok: true; verificationRequired: true }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const identity = await this.userIdentitiesRepository.findByProviderIdentity(
+      'email',
+      normalizedEmail,
+    );
+
+    if (identity && !identity.emailVerified && !identity.archivedAt) {
+      await this.sendEmailSignupCode(normalizedEmail);
+    }
+
+    return { ok: true, verificationRequired: true };
+  }
   async completeOnboarding(request: Request): Promise<void> {
     const user = await this.getSessionUser(request);
     if (!user) {
@@ -416,6 +576,59 @@ export class AuthService {
     }
   }
 
+  private async getOrCreatePendingUserId(
+    normalizedEmail: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<string> {
+    const matches =
+      await this.userIdentitiesRepository.findActiveUserIdsByVerifiedEmail(
+        normalizedEmail,
+      );
+
+    if (matches.length === 1) {
+      return matches[0]!;
+    }
+
+    if (matches.length > 1) {
+      throw new UnauthorizedException('Ambiguous email identity');
+    }
+
+    const pendingUser = await this.usersRepository.createFederatedUser({
+      login: normalizedEmail.split('@')[0] ?? normalizedEmail,
+      name: `${firstName} ${lastName}`.trim(),
+      email: normalizedEmail,
+      provider: 'email',
+    });
+
+    return pendingUser.id;
+  }
+
+  private async sendEmailSignupCode(normalizedEmail: string): Promise<void> {
+    const code = this.generateSixDigitCode();
+    const codeHash = await this.passwordHasher.hash(code);
+
+    await this.emailVerificationCodesRepository.create({
+      normalizedEmail,
+      codeHash,
+      purpose: 'signup',
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    await this.emailCodeDeliveryService.sendCode({
+      email: normalizedEmail,
+      code,
+      purpose: 'signup',
+    });
+  }
+
+  private generateSixDigitCode(): string {
+    return String(randomInt(0, 1_000_000)).padStart(6, '0');
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
   private async seedExampleProjectSafelyFor(userId: string): Promise<void> {
     try {
       await this.exampleProjectSeederService.ensureExampleProjectSeeded(userId);

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -19,6 +20,12 @@ import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { PlatformAdminsRepository } from '../admin/platform-admins.repository';
 import { AuthService } from './auth.service';
+import {
+  EmailLoginDto,
+  EmailSignupDto,
+  ResendEmailCodeDto,
+  VerifyEmailCodeDto,
+} from './dto/email-auth.dto';
 
 @Throttle({ default: { ttl: 60_000, limit: 10 } })
 @Controller('auth')
@@ -62,6 +69,25 @@ export class AuthController {
   }
 
   /** GET /auth/config-check — non-sensitive config diagnostic (no secrets exposed) */
+  @Post('email/signup')
+  async emailSignup(@Body() body: EmailSignupDto) {
+    return this.authService.startEmailSignup(body);
+  }
+
+  @Post('email/verify-code')
+  async verifyEmailCode(@Req() req: Request, @Body() body: VerifyEmailCodeDto) {
+    return this.authService.verifyEmailSignupCode(req, body);
+  }
+
+  @Post('email/login')
+  async emailLogin(@Req() req: Request, @Body() body: EmailLoginDto) {
+    return this.authService.loginWithEmail(req, body);
+  }
+
+  @Post('email/resend-code')
+  async resendEmailCode(@Body() body: ResendEmailCodeDto) {
+    return this.authService.resendEmailSignupCode(body.email);
+  }
   @SkipThrottle()
   @UseGuards(DevOnlyGuard)
   @Get('config-check')

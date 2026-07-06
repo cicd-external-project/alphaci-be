@@ -3,10 +3,13 @@ import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
+import { EmailCodeDeliveryService } from './email-code-delivery.service.js';
 import { IdentityService } from './identity.service.js';
+import { PasswordHasherService } from './password-hasher.service.js';
 import { UsersRepository } from '../persistence/users.repository.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
 import { OutboxRepository } from '../persistence/outbox.repository.js';
+import { EmailVerificationCodesRepository } from '../persistence/email-verification-codes.repository.js';
 import { OAuthStateRepository } from '../persistence/oauth-state.repository.js';
 import { UserIdentitiesRepository } from '../persistence/user-identities.repository.js';
 import { ExampleProjectSeederService } from '../projects/example-project-seeder.service.js';
@@ -116,6 +119,41 @@ const makeUserIdentitiesRepo = (
     }),
     ...overrides,
   }) as unknown as UserIdentitiesRepository;
+const makeEmailCodesRepo = (
+  overrides?: Partial<EmailVerificationCodesRepository>,
+) =>
+  ({
+    create: jest.fn().mockResolvedValue('code-1'),
+    findLatestActive: jest.fn().mockResolvedValue({
+      id: 'code-1',
+      normalizedEmail: 'test@example.com',
+      codeHash: 'hash-123456',
+      purpose: 'signup',
+      attemptCount: 0,
+      expiresAt: new Date(Date.now() + 600_000),
+      consumedAt: null,
+    }),
+    incrementAttempt: jest.fn().mockResolvedValue(undefined),
+    consume: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  }) as unknown as EmailVerificationCodesRepository;
+
+const makePasswordHasher = (overrides?: Partial<PasswordHasherService>) =>
+  ({
+    hash: jest.fn((secret: string) => Promise.resolve(`hash-${secret}`)),
+    verify: jest.fn((secret: string, hash: string) =>
+      Promise.resolve(hash === `hash-${secret}`),
+    ),
+    ...overrides,
+  }) as unknown as PasswordHasherService;
+
+const makeEmailCodeDeliveryService = (
+  overrides?: Partial<EmailCodeDeliveryService>,
+) =>
+  ({
+    sendCode: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  }) as unknown as EmailCodeDeliveryService;
 
 const makeSession = (data: Record<string, unknown> = {}) => ({
   ...data,
@@ -140,6 +178,9 @@ async function createService(
   const outboxRepo = makeOutboxRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
   const userIdentitiesRepo = makeUserIdentitiesRepo();
+  const emailCodesRepo = makeEmailCodesRepo();
+  const passwordHasher = makePasswordHasher();
+  const emailCodeDeliveryService = makeEmailCodeDeliveryService();
   const exampleProjectSeederService = makeExampleProjectSeederService(
     exampleProjectSeederOverrides,
   );
@@ -155,6 +196,15 @@ async function createService(
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
       { provide: UserIdentitiesRepository, useValue: userIdentitiesRepo },
       {
+        provide: EmailVerificationCodesRepository,
+        useValue: emailCodesRepo,
+      },
+      { provide: PasswordHasherService, useValue: passwordHasher },
+      {
+        provide: EmailCodeDeliveryService,
+        useValue: emailCodeDeliveryService,
+      },
+      {
         provide: ExampleProjectSeederService,
         useValue: exampleProjectSeederService,
       },
@@ -168,6 +218,9 @@ async function createService(
     outboxRepo,
     oauthStateRepo,
     userIdentitiesRepo,
+    emailCodesRepo,
+    passwordHasher,
+    emailCodeDeliveryService,
     exampleProjectSeederService,
   };
 }
@@ -711,6 +764,70 @@ describe('AuthService', () => {
     });
   });
 
+  describe('email password auth', () => {
+    it('starts email signup without establishing a session', async () => {
+      const { service, userIdentitiesRepo, emailCodesRepo, emailCodeDeliveryService } =
+        await createService();
+
+      const result = await service.startEmailSignup({
+        firstName: 'Test',
+        lastName: 'User',
+        email: 'TEST@example.com ',
+        password: 'password123',
+      });
+
+      expect(result).toEqual({ ok: true, verificationRequired: true });
+      expect(userIdentitiesRepo.upsertIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'email',
+          providerUserId: 'test@example.com',
+          emailVerified: false,
+          passwordHash: 'hash-password123',
+        }),
+      );
+      expect(emailCodesRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          normalizedEmail: 'test@example.com',
+          purpose: 'signup',
+        }),
+      );
+      expect(emailCodeDeliveryService.sendCode).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'test@example.com', purpose: 'signup' }),
+      );
+    });
+
+    it('verifies signup code and establishes a session', async () => {
+      const { service, userIdentitiesRepo, subsRepo, exampleProjectSeederService } =
+        await createService();
+      (userIdentitiesRepo.findByProviderIdentity as jest.Mock).mockResolvedValue({
+        id: 'identity-1',
+        userId: 'user-1',
+        provider: 'email',
+        providerUserId: 'test@example.com',
+        email: 'test@example.com',
+        emailVerified: false,
+        passwordHash: 'hash-password123',
+        archivedAt: null,
+      });
+      const req = makeRequest();
+
+      const result = await service.verifyEmailSignupCode(req, {
+        email: 'test@example.com',
+        code: '123456',
+      });
+
+      expect(result).toMatchObject({ ok: true, authenticated: true });
+      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
+        'user-1',
+      );
+      expect(subsRepo.ensureDefaultFreeSubscription).toHaveBeenCalledWith(
+        'user-1',
+      );
+      expect(
+        exampleProjectSeederService.ensureExampleProjectSeeded,
+      ).toHaveBeenCalledWith('user-1');
+    });
+  });
   describe('deleteAccount', () => {
     it('calls archiveById (not deleteById or hardDeleteByGithubUserId) and destroys session', async () => {
       const { service, usersRepo } = await createService();

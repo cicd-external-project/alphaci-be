@@ -63,6 +63,24 @@ const makeAuthService = () =>
     getPendingArchivedAccount: jest.fn().mockResolvedValue({ pending: false }),
     restoreArchivedAccount: jest.fn().mockResolvedValue(undefined),
     startFreshAccount: jest.fn().mockResolvedValue(undefined),
+    startEmailSignup: jest.fn().mockResolvedValue({
+      ok: true,
+      verificationRequired: true,
+    }),
+    verifyEmailSignupCode: jest.fn().mockResolvedValue({
+      ok: true,
+      authenticated: true,
+      user: fakeUser,
+    }),
+    loginWithEmail: jest.fn().mockResolvedValue({
+      ok: true,
+      authenticated: true,
+      user: fakeUser,
+    }),
+    resendEmailSignupCode: jest.fn().mockResolvedValue({
+      ok: true,
+      verificationRequired: true,
+    }),
   }) as unknown as AuthService;
 
 const makeSubscriptionService = () =>
@@ -114,6 +132,52 @@ describe('AuthController', () => {
     expect(controller).toBeDefined();
   });
 
+  describe('email auth endpoints', () => {
+    it('starts email signup', async () => {
+      const body = {
+        firstName: 'Tone',
+        lastName: 'User',
+        email: 'tone@example.test',
+        password: 'password123',
+      };
+
+      const result = await controller.emailSignup(body);
+
+      expect(result).toEqual({ ok: true, verificationRequired: true });
+      expect(authService.startEmailSignup).toHaveBeenCalledWith(body);
+    });
+
+    it('verifies an email code', async () => {
+      const req = makeRequest();
+      const body = { email: 'tone@example.test', code: '123456' };
+
+      const result = await controller.verifyEmailCode(req, body);
+
+      expect(result).toMatchObject({ ok: true, authenticated: true });
+      expect(authService.verifyEmailSignupCode).toHaveBeenCalledWith(req, body);
+    });
+
+    it('logs in with email and password', async () => {
+      const req = makeRequest();
+      const body = { email: 'tone@example.test', password: 'password123' };
+
+      const result = await controller.emailLogin(req, body);
+
+      expect(result).toMatchObject({ ok: true, authenticated: true });
+      expect(authService.loginWithEmail).toHaveBeenCalledWith(req, body);
+    });
+
+    it('resends an email code', async () => {
+      const result = await controller.resendEmailCode({
+        email: 'tone@example.test',
+      });
+
+      expect(result).toEqual({ ok: true, verificationRequired: true });
+      expect(authService.resendEmailSignupCode).toHaveBeenCalledWith(
+        'tone@example.test',
+      );
+    });
+  });
   describe('githubStart', () => {
     it('redirects to GitHub auth URL', async () => {
       const req = makeRequest();
