@@ -20,6 +20,7 @@ function makeService(
   const identities = {
     findByProviderIdentity: jest.fn().mockResolvedValue(null),
     findActiveUserIdsByVerifiedEmail: jest.fn().mockResolvedValue([]),
+    listForUser: jest.fn().mockResolvedValue([]),
     upsertIdentity: jest.fn().mockResolvedValue({
       id: 'identity-1',
       userId: 'user-1',
@@ -57,6 +58,22 @@ function makeService(
 }
 
 describe('IdentityService', () => {
+  it('lists connected identities for a user', async () => {
+    const { service, identities } = makeService({
+      identities: {
+        listForUser: jest.fn().mockResolvedValue([
+          { provider: 'github', email: 'tone@example.test', emailVerified: true },
+        ]),
+      },
+    });
+
+    await expect(service.listForUser('user-1')).resolves.toEqual({
+      methods: [
+        { provider: 'github', email: 'tone@example.test', emailVerified: true },
+      ],
+    });
+    expect(identities.listForUser).toHaveBeenCalledWith('user-1');
+  });
   it('signs in by exact linked provider identity', async () => {
     const { service, identities, users } = makeService({
       identities: {

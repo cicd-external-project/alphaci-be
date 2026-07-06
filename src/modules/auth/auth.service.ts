@@ -144,6 +144,7 @@ export class AuthService {
   ): Promise<string> {
     return this.handleOAuthProviderCallback(request, code, state);
   }
+
   async startGoogleAuth(request: Request, returnTo?: string): Promise<string> {
     const safeReturnTo = this.normalizeReturnTo(returnTo);
 
@@ -315,6 +316,21 @@ export class AuthService {
     return user;
   }
 
+  async listConnectedIdentities(request: Request): Promise<{
+    methods: Array<{
+      provider: 'email' | 'google' | 'github';
+      email?: string;
+      emailVerified: boolean;
+    }>;
+  }> {
+    const user = await this.getSessionUser(request);
+    if (!user) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    return this.identityService.listForUser(user.id);
+  }
+
   async startEmailSignup(input: {
     firstName: string;
     lastName: string;
@@ -467,6 +483,7 @@ export class AuthService {
 
     return { ok: true, verificationRequired: true };
   }
+
   async completeOnboarding(request: Request): Promise<void> {
     const user = await this.getSessionUser(request);
     if (!user) {

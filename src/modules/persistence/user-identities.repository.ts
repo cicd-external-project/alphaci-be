@@ -32,6 +32,12 @@ export interface LinkedIdentity {
   archivedAt: string | null;
 }
 
+export interface ConnectedIdentity {
+  provider: IdentityProvider;
+  email?: string;
+  emailVerified: boolean;
+}
+
 export interface UpsertIdentityInput {
   userId: string;
   provider: IdentityProvider;
@@ -102,6 +108,40 @@ export class UserIdentitiesRepository {
     );
 
     return result.rows.map((row) => row.user_id);
+  }
+
+  async listForUser(userId: string): Promise<ConnectedIdentity[]> {
+    const result = await this.databaseService.query<{
+      provider: IdentityProvider;
+      email: string | null;
+      email_verified: boolean;
+    }>(
+      `
+        SELECT
+          ui.provider,
+          ui.email,
+          ui.email_verified
+        FROM identity.user_identities ui
+        JOIN identity.app_users u ON u.id = ui.user_id
+        WHERE ui.user_id = $1
+          AND u.archived_at IS NULL
+        ORDER BY
+          CASE ui.provider
+            WHEN 'email' THEN 1
+            WHEN 'google' THEN 2
+            WHEN 'github' THEN 3
+            ELSE 4
+          END,
+          ui.created_at ASC;
+      `,
+      [userId],
+    );
+
+    return result.rows.map((row) => ({
+      provider: row.provider,
+      ...(row.email ? { email: row.email } : {}),
+      emailVerified: row.email_verified,
+    }));
   }
 
   async upsertIdentity(input: UpsertIdentityInput): Promise<LinkedIdentity> {

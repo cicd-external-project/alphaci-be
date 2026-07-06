@@ -88,6 +88,7 @@ export class AuthController {
   async resendEmailCode(@Body() body: ResendEmailCodeDto) {
     return this.authService.resendEmailSignupCode(body.email);
   }
+
   @Get('google/start')
   async googleStart(
     @Req() req: Request,
@@ -113,6 +114,7 @@ export class AuthController {
     );
     return res.redirect(redirectUrl);
   }
+
   @SkipThrottle()
   @UseGuards(DevOnlyGuard)
   @Get('config-check')
@@ -132,6 +134,12 @@ export class AuthController {
       mockEnabled: cfg.subscription.mockEnabled,
       defaultPlan: cfg.subscription.defaultPlan,
     };
+  }
+
+  @UseGuards(SessionAuthGuard)
+  @Get('identities')
+  async identities(@Req() req: Request) {
+    return this.authService.listConnectedIdentities(req);
   }
 
   @SkipThrottle()

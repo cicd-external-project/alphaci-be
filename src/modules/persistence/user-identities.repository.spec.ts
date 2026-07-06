@@ -62,6 +62,35 @@ describe('UserIdentitiesRepository', () => {
     );
   });
 
+  it('lists connected identities for an active user', async () => {
+    const db = makeDatabaseService();
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          provider: 'email',
+          email: 'tone@example.test',
+          email_verified: true,
+        },
+        {
+          provider: 'github',
+          email: 'tone@example.test',
+          email_verified: true,
+        },
+      ],
+    });
+
+    const repo = new UserIdentitiesRepository(db);
+    const result = await repo.listForUser('user-1');
+
+    expect(result).toEqual([
+      { provider: 'email', email: 'tone@example.test', emailVerified: true },
+      { provider: 'github', email: 'tone@example.test', emailVerified: true },
+    ]);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE ui.user_id = $1'),
+      ['user-1'],
+    );
+  });
   it('links an oauth identity without password hash', async () => {
     const db = makeDatabaseService();
     (db.query as jest.Mock).mockResolvedValueOnce({

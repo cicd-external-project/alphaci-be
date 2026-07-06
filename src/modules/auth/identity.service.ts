@@ -18,6 +18,18 @@ export class IdentityService {
     private readonly exampleProjectSeederService: ExampleProjectSeederService,
   ) {}
 
+  async listForUser(userId: string): Promise<{
+    methods: Array<{
+      provider: 'email' | 'google' | 'github';
+      email?: string;
+      emailVerified: boolean;
+    }>;
+  }> {
+    return {
+      methods: await this.identitiesRepository.listForUser(userId),
+    };
+  }
+
   async resolveVerifiedProvider(
     profile: VerifiedProviderProfile,
   ): Promise<IdentityResolution> {

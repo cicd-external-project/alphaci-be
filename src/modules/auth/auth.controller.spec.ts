@@ -64,6 +64,11 @@ const makeAuthService = () =>
       .fn()
       .mockResolvedValue('http://localhost:3000?auth=success'),
     getSessionUser: jest.fn().mockResolvedValue(fakeUser),
+    listConnectedIdentities: jest.fn().mockResolvedValue({
+      methods: [
+        { provider: 'github', email: 'tone@example.test', emailVerified: true },
+      ],
+    }),
     logout: jest.fn().mockResolvedValue(undefined),
     deleteAccount: jest.fn().mockResolvedValue(undefined),
     getPendingArchivedAccount: jest.fn().mockResolvedValue({ pending: false }),
@@ -245,6 +250,19 @@ describe('AuthController', () => {
     });
   });
 
+  describe('identities', () => {
+    it('returns connected sign-in methods', async () => {
+      const req = makeRequest(fakeUser);
+      const result = await controller.identities(req);
+
+      expect(result).toEqual({
+        methods: [
+          { provider: 'github', email: 'tone@example.test', emailVerified: true },
+        ],
+      });
+      expect(authService.listConnectedIdentities).toHaveBeenCalledWith(req);
+    });
+  });
   describe('me', () => {
     it('returns authenticated user with subscription', async () => {
       const req = makeRequest(fakeUser);
