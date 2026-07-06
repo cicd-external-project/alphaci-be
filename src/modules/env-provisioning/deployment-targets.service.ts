@@ -70,6 +70,7 @@ export class DeploymentTargetsService {
     const project = await this.getProjectOrThrow(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
     this.assertOwnershipModeAllowed(dto);
+    this.assertProviderSlotAllowed(dto.provider, dto.slot);
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
       await this.assertWithinQuota(
         userId,
@@ -245,7 +246,14 @@ export class DeploymentTargetsService {
     }
 
     await this.assertProjectMutationAccess(projectId, userId);
-    await this.getProjectOrThrow(projectId, userId);
+    const existingTarget = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+    if (input.slot !== undefined) {
+      this.assertProviderSlotAllowed(existingTarget.provider, input.slot);
+    }
     const target =
       await this.deploymentTargetsRepository.updateDeploymentTargetMetadataForUser(
         projectId,
@@ -401,6 +409,10 @@ export class DeploymentTargetsService {
           enabled: this.providerDashboardUrl(target) !== null,
           url: this.providerDashboardUrl(target),
         },
+        openProviderConsole: {
+          enabled: this.providerConsoleUrl(target) !== null,
+          url: this.providerConsoleUrl(target),
+        },
       },
     };
   }
@@ -473,6 +485,23 @@ export class DeploymentTargetsService {
     if (dto.ownershipMode === 'flowci_managed') {
       throw new BadRequestException(
         `Managed ${dto.provider} hosting is archived. Connect your own ${dto.provider} account and use BYO hosting for new targets.`,
+      );
+    }
+  }
+
+  private assertProviderSlotAllowed(
+    provider: EnvProvider,
+    slot: EnvTargetSlot,
+  ): void {
+    if (provider === 'render' && slot !== 'backend') {
+      throw new BadRequestException(
+        'Render deployment targets are backend-only. Choose the backend slot for Render.',
+      );
+    }
+
+    if (provider === 'vercel' && slot !== 'frontend') {
+      throw new BadRequestException(
+        'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
       );
     }
   }
@@ -595,6 +624,24 @@ export class DeploymentTargetsService {
 
     if (target.provider === 'render') {
       return `https://dashboard.render.com/web/${target.providerProjectId}`;
+    }
+
+    return null;
+  }
+
+  private providerConsoleUrl(target: DeploymentTargetSummary): string | null {
+    if (target.provider === 'vercel') {
+      const teamSlug =
+        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+          ? target.providerMetadata['vercelTeamSlug'].trim()
+          : '';
+      return teamSlug
+        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
+        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
+    }
+
+    if (target.provider === 'render') {
+      return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
     }
 
     return null;

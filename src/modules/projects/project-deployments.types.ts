@@ -20,4 +20,5 @@ export interface ProjectDeploymentHistoryItem {
   createdAt: string;
   readyAt: string | null;
   providerUrl: string;
+  consoleUrl: string;
 }

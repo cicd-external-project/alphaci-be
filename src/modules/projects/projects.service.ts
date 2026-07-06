@@ -1832,7 +1832,9 @@ export class ProjectsService {
     slot: DeploymentProvisioningTargetDto['slot'],
   ): DeploymentProvider | undefined {
     if (!request?.enabled || !request.targets?.length) return undefined;
-    const provider = request.targets.find((t) => t.slot === slot)?.provider;
+    const provider = request.targets.find(
+      (t) => t.slot === slot && t.provider === 'render' && slot === 'backend',
+    )?.provider;
     return provider === 'render' ? provider : undefined;
   }
 
@@ -1849,8 +1851,11 @@ export class ProjectsService {
       .filter((target) => slots.includes(target.slot))
       .filter(
         (target) =>
-          target.provider === 'vercel' ||
+          (target.provider === 'vercel' && target.slot === 'frontend') ||
           (target.provider === 'render' &&
+            target.slot === 'backend' &&
+            (target.renderInstanceType?.trim() || 'free') === 'free' &&
+            (target.renderServiceType ?? 'web_service') === 'web_service' &&
             this.resolveRenderDeploymentStrategy(target) ===
               'render_image_pushed'),
       )

@@ -80,6 +80,7 @@ describe('ProjectDeploymentsService', () => {
         createdAt: '2026-06-12T00:00:00.000Z',
         readyAt: '2026-06-12T00:05:00.000Z',
         providerUrl: 'https://dashboard.render.com/web/srv-1',
+        consoleUrl: 'https://dashboard.render.com/web/srv-1/logs',
       },
     ]);
 

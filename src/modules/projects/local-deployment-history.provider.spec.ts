@@ -48,6 +48,7 @@ describe('LocalDeploymentHistoryProvider', () => {
         provider: 'vercel',
         status: 'ready',
         providerUrl: 'https://vercel.com/flowci-team/orders-web',
+        consoleUrl: 'https://vercel.com/flowci-team/orders-web/deployments',
       }),
     ]);
   });

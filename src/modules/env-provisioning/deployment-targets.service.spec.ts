@@ -171,6 +171,46 @@ describe('DeploymentTargetsService', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('rejects Render targets outside the backend slot before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'render',
+        providerConnectionId: 'connection-1',
+        projectName: 'demo-api',
+      }),
+    ).rejects.toThrow(
+      'Render deployment targets are backend-only. Choose the backend slot for Render.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects Vercel targets outside the frontend slot before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'backend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        projectName: 'demo-web',
+      }),
+    ).rejects.toThrow(
+      'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
   it('rejects BYO targets when the deployment centralizes on flowci_managed', async () => {
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
@@ -268,6 +308,13 @@ describe('DeploymentTargetsService', () => {
       startCommand: 'npm run start:prod',
       renderEnvironmentName: 'uat',
     };
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        ...updatedTarget,
+        provider: 'render',
+        providerMetadata: {},
+      },
+    );
     deploymentTargetsRepository.updateDeploymentTargetMetadataForUser.mockResolvedValueOnce(
       updatedTarget,
     );
@@ -318,6 +365,38 @@ describe('DeploymentTargetsService', () => {
         eventCode: 'deployment_target_updated',
       }),
     );
+  });
+
+  it('rejects slot metadata updates that violate provider ownership', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectName: 'orders-api',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.updateDeploymentTargetMetadata(
+        'project-1',
+        'target-1',
+        'user-1',
+        {
+          slot: 'frontend',
+        },
+      ),
+    ).rejects.toThrow(
+      'Render deployment targets are backend-only. Choose the backend slot for Render.',
+    );
+
+    expect(
+      deploymentTargetsRepository.updateDeploymentTargetMetadataForUser,
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects metadata updates for another user target', async () => {
@@ -385,6 +464,10 @@ describe('DeploymentTargetsService', () => {
         openProviderDashboard: {
           enabled: true,
           url: 'https://vercel.com/flowci-team/orders-web',
+        },
+        openProviderConsole: {
+          enabled: true,
+          url: 'https://vercel.com/flowci-team/orders-web/deployments',
         },
       },
     });
