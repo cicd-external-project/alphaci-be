@@ -3,10 +3,12 @@ import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
+import { IdentityService } from './identity.service.js';
 import { UsersRepository } from '../persistence/users.repository.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
 import { OutboxRepository } from '../persistence/outbox.repository.js';
 import { OAuthStateRepository } from '../persistence/oauth-state.repository.js';
+import { UserIdentitiesRepository } from '../persistence/user-identities.repository.js';
 import { ExampleProjectSeederService } from '../projects/example-project-seeder.service.js';
 import type { Request } from 'express';
 import type {
@@ -55,6 +57,7 @@ const makeConfig = (withGitHub = true) =>
 const makeUsersRepo = (overrides?: Partial<UsersRepository>) =>
   ({
     upsertGitHubUser: jest.fn().mockResolvedValue(fakeUser),
+    createFederatedUser: jest.fn().mockResolvedValue(fakeUser),
     findById: jest.fn().mockResolvedValue(fakeUser),
     archiveById: jest.fn().mockResolvedValue(undefined),
     deleteById: jest.fn().mockResolvedValue(undefined),
@@ -97,6 +100,22 @@ const makeOAuthStateRepo = (overrides?: Partial<OAuthStateRepository>) =>
     }),
     ...overrides,
   }) as unknown as OAuthStateRepository;
+const makeUserIdentitiesRepo = (
+  overrides?: Partial<UserIdentitiesRepository>,
+) =>
+  ({
+    findByProviderIdentity: jest.fn().mockResolvedValue(null),
+    findActiveUserIdsByVerifiedEmail: jest.fn().mockResolvedValue([]),
+    upsertIdentity: jest.fn().mockResolvedValue({
+      id: 'identity-1',
+      userId: 'user-1',
+      provider: 'github',
+      providerUserId: '12345',
+      emailVerified: true,
+      archivedAt: null,
+    }),
+    ...overrides,
+  }) as unknown as UserIdentitiesRepository;
 
 const makeSession = (data: Record<string, unknown> = {}) => ({
   ...data,
@@ -120,6 +139,7 @@ async function createService(
   const subsRepo = makeSubsRepo();
   const outboxRepo = makeOutboxRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
+  const userIdentitiesRepo = makeUserIdentitiesRepo();
   const exampleProjectSeederService = makeExampleProjectSeederService(
     exampleProjectSeederOverrides,
   );
@@ -127,11 +147,13 @@ async function createService(
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       AuthService,
+      IdentityService,
       { provide: ConfigService, useValue: makeConfig(withGitHub) },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
+      { provide: UserIdentitiesRepository, useValue: userIdentitiesRepo },
       {
         provide: ExampleProjectSeederService,
         useValue: exampleProjectSeederService,
@@ -145,6 +167,7 @@ async function createService(
     subsRepo,
     outboxRepo,
     oauthStateRepo,
+    userIdentitiesRepo,
     exampleProjectSeederService,
   };
 }
@@ -394,6 +417,55 @@ describe('AuthService', () => {
       expect(url).toContain('auth=invalid_state');
     });
 
+    it('keeps current GitHub login working through identity resolver', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      const { service } = await createService();
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      expect((req.session as unknown as Record<string, unknown>)['userId']).toBe(
+        'user-1',
+      );
+    });
+
+    it('returns email_required for a new GitHub identity without verified email', async () => {
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ access_token: 'gh-token' }),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id: 1,
+              login: 'user',
+              name: 'User',
+              email: null,
+            }),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve([]),
+        } as unknown as Response);
+
+      const { service } = await createService();
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=email_required');
+    });
     it('returns success after successful GitHub OAuth flow (new user)', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
       // findByGithubUserIdIncludingArchived returns null → new user path

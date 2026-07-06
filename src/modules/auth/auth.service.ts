@@ -11,6 +11,7 @@ import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 import { UsersRepository } from '../persistence/users.repository';
 import { ExampleProjectSeederService } from '../projects/example-project-seeder.service';
+import { IdentityService } from './identity.service';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -37,16 +38,9 @@ interface GitHubNormalizedUser {
   name?: string;
   avatarUrl?: string;
   email?: string;
+  emailVerified: boolean;
 }
 
-/** Discriminated union returned by resolveAccountState. */
-type AccountState =
-  | { kind: 'active' | 'new'; user: SessionUser; accessToken: string }
-  | {
-      kind: 'archived';
-      profile: GitHubNormalizedUser;
-      accessToken: string;
-    };
 
 export interface PendingAccountInfo {
   pending: true;
@@ -70,6 +64,7 @@ export class AuthService {
     private readonly outboxRepository: OutboxRepository,
     private readonly oauthStateRepository: OAuthStateRepository,
     private readonly exampleProjectSeederService: ExampleProjectSeederService,
+    private readonly identityService: IdentityService,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
     this.returnToOrigins = this.buildReturnToOrigins(
@@ -345,20 +340,43 @@ export class AuthService {
         return this.withQuery(returnTo, 'auth', 'unavailable');
       }
 
-      const accountState = await this.resolveAccountState(code);
-
-      if (accountState.kind === 'archived') {
-        // User previously archived their account. Stash a pending-choice
-        // payload in the session so the FE can present restore/start-fresh.
-        // Do NOT set userId or session.user — the user is NOT authenticated.
-        const { profile, accessToken } = accountState;
-        request.session.pendingArchived = {
-          githubUserId: profile.githubUserId,
+      const accessToken = await this.exchangeCodeForGitHubToken(code);
+      const profile = await this.fetchGitHubUser(accessToken);
+      const identityResult = await this.identityService.resolveVerifiedProvider(
+        {
+          provider: 'github',
+          providerUserId: profile.githubUserId,
           login: profile.login,
           ...(profile.name !== undefined && { name: profile.name }),
           ...(profile.email !== undefined && { email: profile.email }),
+          emailVerified: profile.emailVerified,
           ...(profile.avatarUrl !== undefined && {
             avatarUrl: profile.avatarUrl,
+          }),
+        },
+      );
+
+      if (identityResult.kind === 'blocked') {
+        return this.withQuery(returnTo, 'auth', identityResult.reason);
+      }
+
+      if (identityResult.kind === 'archived') {
+        // User previously archived their account. Stash a pending-choice
+        // payload in the session so the FE can present restore/start-fresh.
+        // Do NOT set userId or session.user: the user is NOT authenticated.
+        request.session.pendingArchived = {
+          provider: identityResult.provider,
+          providerUserId: identityResult.providerUserId,
+          githubUserId: identityResult.providerUserId,
+          login: identityResult.login,
+          ...(identityResult.name !== undefined && {
+            name: identityResult.name,
+          }),
+          ...(identityResult.email !== undefined && {
+            email: identityResult.email,
+          }),
+          ...(identityResult.avatarUrl !== undefined && {
+            avatarUrl: identityResult.avatarUrl,
           }),
           accessToken,
         };
@@ -368,15 +386,7 @@ export class AuthService {
         return this.withQuery(returnTo, 'auth', 'archived_choice');
       }
 
-      // Active or new account — establish a full authenticated session.
-      const { user: persistedUser, accessToken } = accountState;
-      await this.subscriptionsRepository.ensureDefaultFreeSubscription(
-        persistedUser.id,
-      );
-      if (accountState.kind === 'new') {
-        await this.seedExampleProjectSafelyFor(persistedUser.id);
-      }
-      await this.establishSession(request, persistedUser);
+      await this.establishSession(request, identityResult.user);
       request.session.githubAccessToken = accessToken;
       // Persist the access token to the store. `session.regenerate()` inside
       // `establishSession` saves userId + user, but subsequent writes to
@@ -389,10 +399,10 @@ export class AuthService {
       await this.outboxRepository.publishLater({
         topic: 'user.signed_in',
         aggregateType: 'user',
-        aggregateId: persistedUser.id,
+        aggregateId: identityResult.user.id,
         payload: {
           provider: 'github',
-          login: persistedUser.login,
+          login: identityResult.user.login,
         },
       });
 
@@ -431,36 +441,6 @@ export class AuthService {
         resolve();
       });
     });
-  }
-
-  /**
-   * Exchange the OAuth code for a GitHub token, fetch the user profile, then
-   * determine whether this is an active user, a new user, or an archived user.
-   *
-   * Returns a discriminated union so handleOAuthProviderCallback can branch
-   * cleanly without duplicating token-exchange or profile-fetch logic.
-   */
-  private async resolveAccountState(code: string): Promise<AccountState> {
-    const accessToken = await this.exchangeCodeForGitHubToken(code);
-    const profile = await this.fetchGitHubUser(accessToken);
-
-    const existing =
-      await this.usersRepository.findByGithubUserIdIncludingArchived(
-        profile.githubUserId,
-      );
-
-    if (existing && existing.archivedAt !== null) {
-      // Archived — do not upsert; return enough info to build pendingArchived.
-      return { kind: 'archived', profile, accessToken };
-    }
-
-    // Active or new — upsertGitHubUser handles both paths:
-    // - no existing row: INSERT (new user).
-    // - existing active row: UPDATE last_login_at + profile fields.
-    const user = await this.usersRepository.upsertGitHubUser(profile);
-
-    const kind = existing ? 'active' : 'new';
-    return { kind, user, accessToken };
   }
 
   private buildGitHubAuthorizationUrl(state: string): string {
@@ -525,9 +505,12 @@ export class AuthService {
 
     const payload = (await response.json()) as GitHubUserResponse;
 
-    let email = payload.email;
+    let email = payload.email ?? undefined;
+    let emailVerified = email !== undefined;
+
     if (!email) {
       email = await this.fetchPrimaryEmail(accessToken);
+      emailVerified = email !== undefined;
     }
 
     return {
@@ -538,6 +521,7 @@ export class AuthService {
         avatarUrl: payload.avatar_url,
       }),
       ...(email !== undefined && { email }),
+      emailVerified,
     };
   }
 

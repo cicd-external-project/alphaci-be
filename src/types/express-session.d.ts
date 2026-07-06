@@ -11,6 +11,8 @@ declare module 'express-session' {
     oauthProvider?: 'github' | 'google';
     githubAccessToken?: string;
     pendingArchived?: {
+      provider?: 'github' | 'google' | 'email';
+      providerUserId?: string;
       githubUserId: string;
       login: string;
       name?: string;
