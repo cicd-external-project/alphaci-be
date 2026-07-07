@@ -230,7 +230,7 @@ const makeOverviewReadRepositories = () => ({
     createRequest: jest.fn().mockResolvedValue({
       id: 'request-1',
       projectId: 'project-1',
-      branchName: 'flowci/workflow-update-20260612000000',
+      branchName: 'alphaci/workflow-update-20260612000000',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
       status: 'created',
@@ -1763,7 +1763,7 @@ jobs:
       'app-token',
       'tone',
       'orders-api',
-      expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+      expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
       'main',
     );
     expect(githubWrites.putFileContent).toHaveBeenCalledTimes(4);
@@ -1782,7 +1782,7 @@ jobs:
       'orders-api',
       expect.objectContaining({
         title: 'Update alphaCI workflow configuration',
-        head: expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+        head: expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
         base: 'main',
         body: expect.stringContaining(
           'Runtime environment values are not included.',

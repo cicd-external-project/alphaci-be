@@ -39,8 +39,8 @@ describe('ExampleProjectSeederService', () => {
     expect(projectsRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'user-1',
-        repoFullName: 'flowci-demo/flowci-demo-app',
-        serviceName: 'flowci-demo-backend',
+        repoFullName: 'alphaci-demo/alphaci-demo-app',
+        serviceName: 'alphaci-demo-backend',
         status: 'provisioned',
         visibility: 'public',
         isExample: true,

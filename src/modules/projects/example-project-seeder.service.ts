@@ -7,10 +7,10 @@ import { ProjectsRepository } from './projects.repository';
  * Not a real GitHub repository — purely a placeholder row so new users see a
  * populated dashboard instead of an empty state.
  */
-const DEMO_REPO_FULL_NAME = 'flowci-demo/flowci-demo-app';
-const DEMO_SERVICE_NAME = 'flowci-demo-backend';
+const DEMO_REPO_FULL_NAME = 'alphaci-demo/alphaci-demo-app';
+const DEMO_SERVICE_NAME = 'alphaci-demo-backend';
 const DEMO_WORKFLOW_PATH =
-  '.github/workflows/flowci-demo-backend-nest-service-pipeline.yml';
+  '.github/workflows/alphaci-demo-backend-nest-service-pipeline.yml';
 
 // 'nest-service-pipeline' is a real entry in the catalog's static + engine
 // template list (see CatalogService STATIC_PROJECT_OPTIONS.recipes / stacks.json

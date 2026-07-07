@@ -24,7 +24,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
           id: 'request-1',
           project_id: 'project-1',
           requested_by: 'user-1',
-          branch_name: 'flowci/workflow-update-20260612000000',
+          branch_name: 'alphaci/workflow-update-20260612000000',
           base_branch: 'main',
           pull_request_number: 42,
           pull_request_url: 'https://github.com/tone/orders-api/pull/42',
@@ -42,7 +42,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
     const result = await repository.createRequest({
       projectId: 'project-1',
       requestedBy: 'user-1',
-      branchName: 'flowci/workflow-update-20260612000000',
+      branchName: 'alphaci/workflow-update-20260612000000',
       baseBranch: 'main',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
@@ -58,7 +58,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
       [
         'project-1',
         'user-1',
-        'flowci/workflow-update-20260612000000',
+        'alphaci/workflow-update-20260612000000',
         'main',
         42,
         'https://github.com/tone/orders-api/pull/42',

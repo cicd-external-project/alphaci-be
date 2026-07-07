@@ -93,7 +93,7 @@ export class ExistingReposService {
       dto.coverageThreshold,
       dto.outputFileName,
     );
-    const branchName = `flowci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`;
+    const branchName = `alphaci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`;
     const workflowPath = `.github/workflows/${outputFileName}`;
 
     await this.githubService.createBranch(

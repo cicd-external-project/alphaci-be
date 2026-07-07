@@ -1257,7 +1257,7 @@ export class ProjectsService {
 
     const repoInfo = await this.githubService.getRepo(token, owner, repo);
     const baseBranch = repoInfo.defaultBranch || 'main';
-    const branchName = `flowci/workflow-update-${this.timestampForBranch()}`;
+    const branchName = `alphaci/workflow-update-${this.timestampForBranch()}`;
     await this.githubService.createBranch(
       token,
       owner,
