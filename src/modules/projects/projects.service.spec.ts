@@ -812,8 +812,8 @@ jobs:
     expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-  it('uses a linked GitHub App installation token for existing private repo setup', async () => {
-    await service.setupProject('user-1', null, {
+  it('uses a linked GitHub App installation token for existing private repo setup without provider provisioning', async () => {
+    const result = await service.setupProject('user-1', null, {
       repoFullName: 'tone/orders-api',
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -831,16 +831,12 @@ jobs:
     );
     expect(
       projectDeploymentProvisioningService.provisionForProject,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        githubAccessToken: 'app-token',
-        repoFullName: 'tone/orders-api',
-      }),
-    );
+    ).not.toHaveBeenCalled();
+    expect(result.deploymentProvisioning.status).toBe('skipped');
   });
 
-  it('provisions deployment targets after the GitHub project row exists', async () => {
-    await service.createProject('user-1', 'tone', 'oauth-token', {
+  it('skips legacy deployment provisioning during GitHub project creation', async () => {
+    const result = await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-api',
       visibility: 'private',
       projectTypeId: 'nestjs-api',
@@ -861,26 +857,11 @@ jobs:
 
     expect(
       projectDeploymentProvisioningService.provisionForProject,
-    ).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      userId: 'user-1',
-      repoFullName: 'tone/orders-api',
-      githubAccessToken: 'oauth-token',
-      request: {
-        enabled: true,
-        targets: [
-          {
-            slot: 'backend',
-            provider: 'render',
-            ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-          },
-        ],
-      },
-    });
+    ).not.toHaveBeenCalled();
+    expect(result.deploymentProvisioning.status).toBe('skipped');
   });
 
-  it('returns the GitHub project when provider provisioning fails', async () => {
+  it('ignores legacy create-time provider provisioning failure mocks', async () => {
     projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
       {
         status: 'failed',
@@ -924,7 +905,10 @@ jobs:
     );
 
     expect(result.repoFullName).toBe('tone/orders-api');
-    expect(result.deploymentProvisioning.status).toBe('failed');
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).not.toHaveBeenCalled();
+    expect(result.deploymentProvisioning.status).toBe('skipped');
   });
 
   it('records the actual staged workflow path even when a custom outputFileName is supplied', async () => {

@@ -398,10 +398,6 @@ export class ProjectsService {
       dto.workflowRecipeId,
     );
 
-    const deploymentSlots = this.resolveSingleRepoDeploymentSlots(
-      dto.deploymentProvisioning,
-    );
-
     // 2. Load template and build workflow YAML
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
       templateId,
@@ -410,15 +406,6 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
-      deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
-        deploymentSlots[0] ?? 'standalone',
-      ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
-        deploymentSlots,
-        dto.servicePath,
-      ),
     });
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
@@ -536,14 +523,7 @@ export class ProjectsService {
       // Repo is now fully usable; failures past this point must not delete it.
       provisioningComplete = true;
 
-      const deploymentProvisioning =
-        await this.projectDeploymentProvisioningService.provisionForProject({
-          projectId: row.id,
-          userId,
-          repoFullName,
-          githubAccessToken: provisioningToken,
-          request: dto.deploymentProvisioning,
-        });
+      const deploymentProvisioning = this.skippedDeploymentProvisioning();
 
       await this.recordProductEvent({
         userId,
@@ -625,15 +605,6 @@ export class ProjectsService {
       servicePath: backend.servicePath ?? 'backend',
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
-      deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
-        'backend',
-      ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
-        ['backend'],
-        backend.servicePath ?? 'backend',
-      ),
       workflowVariant: 'backend',
     });
 
@@ -646,15 +617,6 @@ export class ProjectsService {
       servicePath: frontend.servicePath ?? 'frontend',
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
-      deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
-        'frontend',
-      ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
-        ['frontend'],
-        frontend.servicePath ?? 'frontend',
-      ),
       workflowVariant: 'frontend',
     });
 
@@ -795,19 +757,6 @@ export class ProjectsService {
       // Repo is now fully usable; failures past this point must not delete it.
       provisioningComplete = true;
 
-      const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
-        await this.projectDeploymentProvisioningService.provisionForProject({
-          projectId: backendRow.id,
-          userId,
-          repoFullName,
-          githubAccessToken: provisioningToken,
-          request: this.filterDeploymentProvisioningRequest(
-            dto.deploymentProvisioning,
-            ['backend'],
-          ),
-        }),
-      ];
-
       // 10. Save frontend DB row if the push succeeded
       if (frontendPushResult !== undefined) {
         try {
@@ -831,21 +780,6 @@ export class ProjectsService {
               workflowFiles: this.workflowFileMetadata(frontendWorkflowFiles),
             },
           });
-
-          deploymentProvisioningResults.push(
-            await this.projectDeploymentProvisioningService.provisionForProject(
-              {
-                projectId: frontendRow.id,
-                userId,
-                repoFullName,
-                githubAccessToken: provisioningToken,
-                request: this.filterDeploymentProvisioningRequest(
-                  dto.deploymentProvisioning,
-                  ['frontend'],
-                ),
-              },
-            ),
-          );
         } catch (err) {
           this.logger.warn(
             `Microservices project: frontend DB row save failed: ${String(err)}`,
@@ -878,9 +812,7 @@ export class ProjectsService {
         projectTypeId: backend.projectTypeId,
         workflowRecipeId: backend.workflowRecipeId ?? '',
         additionalWorkflowPaths,
-        deploymentProvisioning: this.combineDeploymentProvisioningResults(
-          deploymentProvisioningResults,
-        ),
+        deploymentProvisioning: this.skippedDeploymentProvisioning(),
       };
     } catch (error) {
       if (!provisioningComplete) {
@@ -903,10 +835,6 @@ export class ProjectsService {
     oauthAccessToken: string | null | undefined,
     dto: SetupProjectDto,
   ): Promise<SetupProjectResponse> {
-    const deploymentSlots = this.resolveSingleRepoDeploymentSlots(
-      dto.deploymentProvisioning,
-    );
-
     // 1. Build workflow YAML from the given templateId
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
       templateId: dto.templateId,
@@ -916,15 +844,6 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
       enhancements: dto.enhancements,
-      deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
-        deploymentSlots[0] ?? 'standalone',
-      ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
-        deploymentSlots,
-        dto.servicePath,
-      ),
     });
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
@@ -1001,14 +920,7 @@ export class ProjectsService {
       throw error;
     }
 
-    const deploymentProvisioning =
-      await this.projectDeploymentProvisioningService.provisionForProject({
-        projectId: row.id,
-        userId,
-        repoFullName: dto.repoFullName,
-        githubAccessToken: accessToken,
-        request: dto.deploymentProvisioning,
-      });
+    const deploymentProvisioning = this.skippedDeploymentProvisioning();
 
     await this.recordProductEvent({
       userId,
@@ -1741,6 +1653,10 @@ export class ProjectsService {
     };
   }
 
+  private skippedDeploymentProvisioning(): DeploymentProvisioningResult {
+    return { status: 'skipped', targets: [] };
+  }
+
   /**
    * Load the template from the catalog, apply substitutions, and return the
    * generated YAML string plus the derived output file name.
@@ -2417,15 +2333,6 @@ export class ProjectsService {
       servicePath: '.',
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
-      deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
-        'backend',
-      ),
-      deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
-        ['backend'],
-        '.',
-      ),
     });
 
     const {
@@ -2563,19 +2470,6 @@ export class ProjectsService {
 
     // ── Frontend repository (non-fatal on failure) ──────────────────────────
 
-    const deploymentProvisioningResults: DeploymentProvisioningResult[] = [
-      await this.projectDeploymentProvisioningService.provisionForProject({
-        projectId: backendRow.id,
-        userId,
-        repoFullName: beRepoFullName,
-        githubAccessToken: provisioningToken,
-        request: this.filterDeploymentProvisioningRequest(
-          dto.deploymentProvisioning,
-          ['backend'],
-        ),
-      }),
-    ];
-
     let feRepoFullName: string | undefined;
     let feRepoUrl: string | undefined;
     let feRepoCreated: { owner: string; repo: string } | undefined;
@@ -2596,15 +2490,6 @@ export class ProjectsService {
         servicePath: '.',
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
-        deploymentProvider: this.extractDeploymentProvider(
-          dto.deploymentProvisioning,
-          'frontend',
-        ),
-        deploymentTargets: this.resolveDeploymentWorkflowTargets(
-          dto.deploymentProvisioning,
-          ['frontend'],
-          '.',
-        ),
       });
 
       const {
@@ -2714,18 +2599,6 @@ export class ProjectsService {
 
       feProvisioningComplete = true;
 
-      deploymentProvisioningResults.push(
-        await this.projectDeploymentProvisioningService.provisionForProject({
-          projectId: feRow.id,
-          userId,
-          repoFullName: feRepoFullName,
-          githubAccessToken: provisioningToken,
-          request: this.filterDeploymentProvisioningRequest(
-            dto.deploymentProvisioning,
-            ['frontend'],
-          ),
-        }),
-      );
     } catch (err) {
       this.logger.warn(
         `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
@@ -2761,9 +2634,7 @@ export class ProjectsService {
         secondaryRepoFullName: feRepoFullName,
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
-      deploymentProvisioning: this.combineDeploymentProvisioningResults(
-        deploymentProvisioningResults,
-      ),
+      deploymentProvisioning: this.skippedDeploymentProvisioning(),
     };
   }
 
