@@ -226,7 +226,7 @@ describe('VercelEnvClient', () => {
     );
   });
 
-  it('omits Git repository linking for CI-pushed Vercel projects', async () => {
+  it('links Git repository metadata for CI-pushed Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -250,17 +250,22 @@ describe('VercelEnvClient', () => {
       string,
       { body: string },
     ];
-    expect(JSON.parse(init.body)).not.toHaveProperty('gitRepository');
+    expect(JSON.parse(init.body)).toMatchObject({
+      gitRepository: {
+        type: 'github',
+        repo: 'owner/web-app',
+      },
+    });
     expect(target.metadata).toEqual(
       expect.objectContaining({
         deploymentStrategy: 'vercel_ci_pushed',
-        gitConnected: false,
+        gitConnected: true,
         vercelOrgId: 'user_123',
       }),
     );
   });
 
-  it('omits Git repository linking for ALPHACI-managed CI-pushed Vercel projects', async () => {
+  it('links Git repository metadata for ALPHACI-managed CI-pushed Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -288,11 +293,16 @@ describe('VercelEnvClient', () => {
       { body: string },
     ];
     expect(url).toBe('https://api.vercel.com/v11/projects?teamId=team_flowci');
-    expect(JSON.parse(init.body)).not.toHaveProperty('gitRepository');
+    expect(JSON.parse(init.body)).toMatchObject({
+      gitRepository: {
+        type: 'github',
+        repo: 'owner/web-app',
+      },
+    });
     expect(target.metadata).toEqual(
       expect.objectContaining({
         deploymentStrategy: 'vercel_ci_pushed',
-        gitConnected: false,
+        gitConnected: true,
         vercelOrgId: 'team_flowci',
         vercelTeamId: 'team_flowci',
       }),
