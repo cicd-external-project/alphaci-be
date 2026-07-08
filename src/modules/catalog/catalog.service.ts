@@ -79,11 +79,14 @@ export interface ProjectOptionsResult {
 
 // Order matters: the FE preselects the first enabled shape, so the simplest
 // option (standalone) must come first. 'microservices' (backend + frontend in
-// one repo) is archived: the product offers exactly two shapes — a single
-// application or backend + frontend as two repositories. 'mono' is parked as
-// disabled until the monorepo scaffold produces a real multi-package workspace
-// with per-package pipelines — today it would mislead users into a generic TS
-// workspace.
+// one repo) is archived and intentionally omitted from this list — not just
+// disabled — so it never appears in the create-project picker at all; the
+// product surfaces exactly two shapes: a single application, or backend +
+// frontend as two repositories. The backend still recognizes the id
+// internally (existing projects, normalizeRepoShape) for back-compat. 'mono'
+// is parked as disabled (shown, greyed out) until the monorepo scaffold
+// produces a real multi-package workspace with per-package pipelines — today
+// it would mislead users into a generic TS workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
     {
@@ -92,13 +95,6 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       enabled: true,
       description:
         'One repository with one app. The simplest way to start — best for most projects.',
-    },
-    {
-      id: 'microservices',
-      label: 'Backend + frontend (one repo)',
-      enabled: false,
-      description:
-        'Archived. Use "Backend + frontend (two repos)" instead — each service gets its own repository and pipeline.',
     },
     {
       id: 'multi',

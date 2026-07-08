@@ -1192,7 +1192,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).resolves.toEqual({
@@ -1211,7 +1211,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).rejects.toThrow(
@@ -1228,7 +1228,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).rejects.toThrow('GitHub pull request response was incomplete');
@@ -1242,7 +1242,7 @@ describe('GithubService', () => {
           null,
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).resolves.toBeUndefined();
@@ -1255,7 +1255,7 @@ describe('GithubService', () => {
           undefined,
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
           {
             throwOnFailure: true,
@@ -1276,7 +1276,7 @@ describe('GithubService', () => {
           'gh-token',
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).resolves.toBeUndefined();
@@ -1294,7 +1294,7 @@ describe('GithubService', () => {
           'gh-token',
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).rejects.toThrow('setActionsSecret: failed to fetch public key');

@@ -115,7 +115,7 @@ const makeOverviewReadRepositories = () => ({
   ciTokensRepository: {
     findProjectTokenStatus: jest.fn().mockResolvedValue({
       status: 'active',
-      tokenPrefix: 'fci_test',
+      tokenPrefix: 'aci_test',
       createdAt: '2026-06-12T00:00:00.000Z',
       updatedAt: '2026-06-12T00:00:00.000Z',
       revokedAt: null,
@@ -170,11 +170,11 @@ const makeOverviewReadRepositories = () => ({
         templateName: 'Backend API',
         stack: 'nestjs',
         serviceName: 'orders-api',
-        outputFileName: '00-flowci-access.yml',
+        outputFileName: '00-alphaci-access.yml',
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: alphaCI Access Gate',
+        yaml: 'name: ALPHACI Access Gate',
       },
       {
         id: 'history-other',
@@ -198,11 +198,11 @@ const makeOverviewReadRepositories = () => ({
         templateName: 'Backend API',
         stack: 'nestjs',
         serviceName: 'orders-api',
-        outputFileName: '00-flowci-access.yml',
+        outputFileName: '00-alphaci-access.yml',
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: alphaCI Access Gate',
+        yaml: 'name: ALPHACI Access Gate',
       },
     ]),
   },
@@ -377,7 +377,7 @@ jobs:
       'installation-token',
       'tone',
       'orders-api',
-      'CI_TOKEN',
+      'ALPHACI_TOKEN',
       'flowci-token',
     );
   });
@@ -728,14 +728,16 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
-    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-  it('omits archived managed Vercel deploy jobs for frontend single-repo creation', async () => {
+  it('emits managed Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
       visibility: 'private',
@@ -766,14 +768,16 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
-    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
   });
 
-  it('omits Vercel deploy jobs for frontend single-repo setup', async () => {
+  it('emits Vercel deploy jobs for frontend single-repo setup', async () => {
     await service.setupProject('user-1', 'oauth-token', {
       repoFullName: 'tone/orders-ui',
       templateId: 'be-nestjs',
@@ -805,11 +809,13 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend');
-    expect(packageWorkflow?.[4]).not.toContain('vercel-deploy.yml');
-    expect(packageWorkflow?.[4]).not.toContain('VERCEL_FRONTEND_TOKEN');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
+    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
   });
 
   it('uses a linked GitHub App installation token for existing private repo setup without provider provisioning', async () => {
@@ -826,7 +832,7 @@ jobs:
       'app-token',
       'tone',
       'orders-api',
-      'CI_TOKEN',
+      'ALPHACI_TOKEN',
       'flowci-token',
     );
     expect(
@@ -995,7 +1001,7 @@ jobs:
       },
     );
 
-    expect(result.workflowPath).toBe('.github/workflows/00-flowci-access.yml');
+    expect(result.workflowPath).toBe('.github/workflows/00-alphaci-access.yml');
   });
 
   it("dispatches the catalog shape ID 'multi' to the multi-repo flow (two repos)", async () => {
@@ -1066,7 +1072,7 @@ jobs:
       >
     ).find((call) => call[3] === 'README.md')?.[4];
     expect(readmeContent).toContain(
-      'Created by alphaCI Studio as a NestJS API monorepo workspace.',
+      'Created by ALPHACI as a NestJS API monorepo workspace.',
     );
     expect(readmeContent).toContain('`packages/core/` contains');
   });
@@ -1094,7 +1100,7 @@ jobs:
       >
     ).find((call) => call[3] === 'README.md')?.[4];
     expect(readmeContent).toContain(
-      'Created by alphaCI Studio as a NestJS API standalone repository.',
+      'Created by ALPHACI as a NestJS API standalone repository.',
     );
     expect(readmeContent).toContain('`src/main.ts` boots the NestJS app.');
   });
@@ -1131,21 +1137,23 @@ jobs:
 
     expect(pushedPaths).toEqual(
       expect.arrayContaining([
-        '.github/workflows/00-flowci-access-backend.yml',
-        '.github/workflows/10-flowci-quality-backend.yml',
-        '.github/workflows/20-flowci-package-backend.yml',
-        '.github/workflows/00-flowci-access-frontend.yml',
-        '.github/workflows/10-flowci-quality-frontend.yml',
-        '.github/workflows/20-flowci-package-frontend.yml',
+        '.github/workflows/00-alphaci-access-backend.yml',
+        '.github/workflows/10-alphaci-quality-backend.yml',
+        '.github/workflows/20-alphaci-package-backend.yml',
+        '.github/workflows/00-alphaci-access-frontend.yml',
+        '.github/workflows/10-alphaci-quality-frontend.yml',
+        '.github/workflows/20-alphaci-package-frontend.yml',
       ]),
     );
     // The unsuffixed paths would mean one slot overwrote the other.
-    expect(pushedPaths).not.toContain('.github/workflows/00-flowci-access.yml');
     expect(pushedPaths).not.toContain(
-      '.github/workflows/10-flowci-quality.yml',
+      '.github/workflows/00-alphaci-access.yml',
     );
     expect(pushedPaths).not.toContain(
-      '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+    );
+    expect(pushedPaths).not.toContain(
+      '.github/workflows/20-alphaci-package.yml',
     );
   });
 
@@ -1159,7 +1167,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1174,14 +1182,14 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'alphaCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
             {
               stage: 'quality',
-              name: 'alphaCI Quality',
-              path: '.github/workflows/10-flowci-quality.yml',
+              name: 'ALPHACI Quality',
+              path: '.github/workflows/10-alphaci-quality.yml',
               gated: true,
             },
           ],
@@ -1244,8 +1252,8 @@ jobs:
     });
     expect(overview.workflow.stageCount).toBe(2);
     expect(overview.workflow.files.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
     ]);
     expect(overview.deploymentTargets.count).toBe(1);
     expect(overview.environment.items).toEqual([
@@ -1387,7 +1395,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1402,8 +1410,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'alphaCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1508,7 +1516,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1589,7 +1597,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1604,8 +1612,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'alphaCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1656,20 +1664,20 @@ jobs:
     expect(githubWithWrites.createBranch).not.toHaveBeenCalled();
     expect(githubWithWrites.pushWorkflowFile).not.toHaveBeenCalled();
     expect(result.workflowFiles.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
-      '.github/workflows/20-flowci-package.yml',
-      '.github/workflows/05-flowci-env-guard.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+      '.github/workflows/20-alphaci-package.yml',
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
-    expect(result.workflowFiles[0]?.yaml).toContain('alphaCI Access Gate');
+    expect(result.workflowFiles[0]?.yaml).toContain('ALPHACI Access Gate');
     expect(result.diffSummary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
           status: 'changed',
         }),
         expect.objectContaining({
-          path: '.github/workflows/10-flowci-quality.yml',
+          path: '.github/workflows/10-alphaci-quality.yml',
           status: 'new',
         }),
       ]),
@@ -1687,7 +1695,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1751,7 +1759,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1765,8 +1773,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'alphaCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1840,17 +1848,17 @@ jobs:
       [string, string, string, string, string, string, string]
     >;
     expect(putFileContentCalls.map((call) => call[3])).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
-      '.github/workflows/20-flowci-package.yml',
-      '.github/workflows/05-flowci-env-guard.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+      '.github/workflows/20-alphaci-package.yml',
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
     expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
       'app-token',
       'tone',
       'orders-api',
       expect.objectContaining({
-        title: 'Update alphaCI workflow configuration',
+        title: 'Update ALPHACI workflow configuration',
         head: expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
         base: 'main',
         body: expect.stringContaining(
@@ -1891,7 +1899,7 @@ jobs:
     expect(result).toMatchObject({
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
-      workflowPath: '.github/workflows/00-flowci-access.yml',
+      workflowPath: '.github/workflows/00-alphaci-access.yml',
     });
   });
 
@@ -1905,7 +1913,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1985,7 +1993,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,

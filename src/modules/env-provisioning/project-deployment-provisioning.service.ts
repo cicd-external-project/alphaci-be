@@ -41,9 +41,14 @@ export class ProjectDeploymentProvisioningService {
     }
 
     const targets: DeploymentProvisioningResult['targets'] = [];
+    const requestedTargets = this.expandManagedRenderTargets(input.request);
 
-    for (const requestedTarget of input.request.targets) {
+    for (const requestedTarget of requestedTargets) {
       try {
+        const defaultImageUrl = this.defaultManagedRenderImageUrl(
+          input.repoFullName,
+          requestedTarget,
+        );
         const targetRequest: CreateDeploymentTargetDto = {
           action:
             requestedTarget.action ??
@@ -101,7 +106,9 @@ export class ProjectDeploymentProvisioningService {
             : {}),
           ...(requestedTarget.imageUrl
             ? { imageUrl: requestedTarget.imageUrl }
-            : {}),
+            : defaultImageUrl
+              ? { imageUrl: defaultImageUrl }
+              : {}),
         };
 
         const target =
@@ -267,7 +274,101 @@ export class ProjectDeploymentProvisioningService {
         environment,
         vars: [...varsByKey.values()],
       }))
+      .filter((envSet) => envSet.environment === this.targetEnvironment(target))
       .filter((envSet) => envSet.vars.length > 0);
+  }
+
+  private expandManagedRenderTargets(
+    request: DeploymentProvisioningRequestDto,
+  ): DeploymentProvisioningTargetDto[] {
+    return request.targets.flatMap((target) => {
+      if (!this.shouldFanOutRenderTarget(target, request.targets)) {
+        return [target];
+      }
+
+      return (['test', 'uat', 'main'] as const).map((branchName) => {
+        const projectName = this.renderProjectNameForBranch(target, branchName);
+        return {
+          ...target,
+          branchName,
+          ...(projectName ? { projectName } : {}),
+          renderEnvironmentName:
+            branchName === 'main' ? 'production' : branchName,
+        };
+      });
+    });
+  }
+
+  private shouldFanOutRenderTarget(
+    target: DeploymentProvisioningTargetDto,
+    allTargets: DeploymentProvisioningTargetDto[],
+  ): boolean {
+    if (
+      target.provider !== 'render' ||
+      target.ownershipMode !== 'flowci_managed' ||
+      target.renderDeployMethod === 'existing_service'
+    ) {
+      return false;
+    }
+
+    const renderSiblings = allTargets.filter(
+      (candidate) =>
+        candidate.provider === 'render' &&
+        candidate.ownershipMode === target.ownershipMode &&
+        candidate.slot === target.slot,
+    );
+    const explicitlyStaged = new Set(
+      renderSiblings
+        .map((candidate) => candidate.branchName)
+        .filter((branch): branch is string => Boolean(branch)),
+    );
+
+    return explicitlyStaged.size <= 1 && !explicitlyStaged.has('uat');
+  }
+
+  private renderProjectNameForBranch(
+    target: DeploymentProvisioningTargetDto,
+    branchName: 'test' | 'uat' | 'main',
+  ): string | undefined {
+    const raw = target.projectName?.trim();
+    if (!raw) {
+      return undefined;
+    }
+
+    const base = raw.replace(/-(test|uat|main|production)$/i, '');
+    return `${base}-${branchName}`;
+  }
+
+  private defaultManagedRenderImageUrl(
+    repoFullName: string,
+    target: DeploymentProvisioningTargetDto,
+  ): string | null {
+    if (
+      target.provider !== 'render' ||
+      target.ownershipMode !== 'flowci_managed' ||
+      target.renderDeployMethod === 'native_git' ||
+      target.renderDeployMethod === 'existing_service'
+    ) {
+      return null;
+    }
+
+    const [owner] = repoFullName.split('/');
+    if (!owner) {
+      return null;
+    }
+
+    const branchName =
+      target.branchName === 'uat' || target.branchName === 'main'
+        ? target.branchName
+        : 'test';
+    const imageName = `alphaci-${target.slot}-${branchName}-${
+      target.projectName ?? target.slot
+    }`
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
+
+    return `ghcr.io/${owner.toLowerCase()}/${imageName}:${branchName}`;
   }
 
   private variableGroupAppliesToTarget(
@@ -289,6 +390,22 @@ export class ProjectDeploymentProvisioningService {
 
   private targetBranchKey(target: DeploymentProvisioningTargetDto): string {
     return `${target.slot}:${target.provider}:${target.branchName ?? 'test'}`;
+  }
+
+  private targetEnvironment(
+    target: DeploymentProvisioningTargetDto,
+  ): DeploymentProvisioningEnvSetDto['environment'] {
+    if (target.renderEnvironmentName) {
+      return target.renderEnvironmentName;
+    }
+    if (target.branchName === 'main') {
+      return 'production';
+    }
+    if (target.branchName === 'uat') {
+      return 'uat';
+    }
+
+    return 'test';
   }
 
   private mergeEnvSet(

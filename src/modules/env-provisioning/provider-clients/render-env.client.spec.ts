@@ -17,7 +17,7 @@ describe('RenderEnvClient', () => {
           {
             owner: {
               id: 'usr-owner-1',
-              name: 'alphaCI Test',
+              name: 'ALPHACI Test',
             },
           },
         ]),
@@ -27,10 +27,10 @@ describe('RenderEnvClient', () => {
 
     expect(account).toEqual({
       id: 'usr-owner-1',
-      name: 'alphaCI Test',
+      name: 'ALPHACI Test',
       metadata: {
         ownerId: 'usr-owner-1',
-        ownerName: 'alphaCI Test',
+        ownerName: 'ALPHACI Test',
       },
     });
   });
@@ -152,7 +152,7 @@ describe('RenderEnvClient', () => {
           {
             owner: {
               id: 'tea-1',
-              name: 'alphaCI workspace',
+              name: 'ALPHACI workspace',
             },
           },
         ]),
@@ -229,7 +229,7 @@ describe('RenderEnvClient', () => {
           {
             owner: {
               id: 'tea-1',
-              name: 'alphaCI workspace',
+              name: 'ALPHACI workspace',
             },
           },
         ]),
@@ -288,7 +288,7 @@ describe('RenderEnvClient', () => {
           {
             owner: {
               id: 'tea-1',
-              name: 'alphaCI workspace',
+              name: 'ALPHACI workspace',
             },
           },
         ]),
@@ -410,7 +410,7 @@ describe('RenderEnvClient', () => {
     });
   });
 
-  it('uses configured alphaCI Render owner id when creating services', async () => {
+  it('uses configured ALPHACI Render owner id when creating services', async () => {
     const fetchMock = jest
       .fn()
       .mockResolvedValueOnce(
@@ -582,7 +582,7 @@ describe('RenderEnvClient', () => {
       const fetchMock = jest
         .fn()
         .mockResolvedValueOnce(
-          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+          jsonResponse([{ owner: { id: 'tea-1', name: 'ALPHACI' } }]),
         )
         .mockResolvedValueOnce(
           jsonResponse([{ project: { id: 'prj-hr', name: 'hr-be' } }]),
@@ -627,7 +627,7 @@ describe('RenderEnvClient', () => {
       const fetchMock = jest
         .fn()
         .mockResolvedValueOnce(
-          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+          jsonResponse([{ owner: { id: 'tea-1', name: 'ALPHACI' } }]),
         )
         .mockResolvedValueOnce(
           jsonResponse([{ project: { id: 'prj-hr', name: 'hr-be' } }]),
@@ -671,7 +671,7 @@ describe('RenderEnvClient', () => {
       const fetchMock = jest
         .fn()
         .mockResolvedValueOnce(
-          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+          jsonResponse([{ owner: { id: 'tea-1', name: 'ALPHACI' } }]),
         )
         .mockResolvedValueOnce(jsonResponse([]))
         .mockResolvedValueOnce(jsonResponse({ project: { id: 'prj-new' } }))

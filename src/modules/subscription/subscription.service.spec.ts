@@ -224,7 +224,7 @@ describe('SubscriptionService', () => {
               {
                 currency: 'PHP',
                 amount: 30000,
-                name: 'alphaCI Studio Pro Monthly',
+                name: 'ALPHACI Pro Monthly',
                 quantity: 1,
               },
             ],

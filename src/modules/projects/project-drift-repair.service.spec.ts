@@ -50,14 +50,14 @@ describe('ProjectDriftRepairService', () => {
       resolvedAt: null,
     });
     ciService.issueProjectToken.mockResolvedValue({
-      token: 'fci_secret_raw_token',
-      tokenPrefix: 'fci_prefix',
+      token: 'aci_secret_raw_token',
+      tokenPrefix: 'aci_prefix',
     });
     deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValue(
       true,
     );
     projectsService.previewWorkflowSettings.mockResolvedValue({
-      workflowFiles: [{ path: '.github/workflows/00-flowci-access.yml' }],
+      workflowFiles: [{ path: '.github/workflows/00-alphaci-access.yml' }],
       validationWarnings: [],
     });
     projectsService.createWorkflowUpdatePullRequest.mockResolvedValue({
@@ -97,8 +97,8 @@ describe('ProjectDriftRepairService', () => {
       'finding-1',
       'resolved',
     );
-    expect(JSON.stringify(response)).toContain('fci_prefix');
-    expect(JSON.stringify(response)).not.toContain('fci_secret_raw_token');
+    expect(JSON.stringify(response)).toContain('aci_prefix');
+    expect(JSON.stringify(response)).not.toContain('aci_secret_raw_token');
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: 'user-1',
@@ -115,7 +115,7 @@ describe('ProjectDriftRepairService', () => {
     );
   });
 
-  it('detaches a target from alphaCI without deleting provider resources', async () => {
+  it('detaches a target from ALPHACI without deleting provider resources', async () => {
     findingsRepository.findByIdForProject.mockResolvedValueOnce({
       id: 'finding-2',
       projectId: 'project-1',
@@ -346,7 +346,7 @@ describe('ProjectDriftRepairService', () => {
     ).resolves.toMatchObject({
       status: 'completed',
       result: {
-        workflowFiles: [{ path: '.github/workflows/00-flowci-access.yml' }],
+        workflowFiles: [{ path: '.github/workflows/00-alphaci-access.yml' }],
       },
     });
   });

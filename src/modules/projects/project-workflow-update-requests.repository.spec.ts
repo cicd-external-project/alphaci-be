@@ -31,7 +31,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
           status: 'created',
           settings_json: { nodeVersion: '24' },
           workflow_files_json: [
-            { path: '.github/workflows/00-flowci-access.yml' },
+            { path: '.github/workflows/00-alphaci-access.yml' },
           ],
           created_at: '2026-06-12T00:00:00.000Z',
           updated_at: '2026-06-12T00:00:00.000Z',
@@ -48,7 +48,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
       status: 'created',
       settings: { nodeVersion: '24' },
-      workflowFiles: [{ path: '.github/workflows/00-flowci-access.yml' }],
+      workflowFiles: [{ path: '.github/workflows/00-alphaci-access.yml' }],
     });
 
     expect(query).toHaveBeenCalledWith(
@@ -64,7 +64,7 @@ describe('ProjectWorkflowUpdateRequestsRepository', () => {
         'https://github.com/tone/orders-api/pull/42',
         'created',
         JSON.stringify({ nodeVersion: '24' }),
-        JSON.stringify([{ path: '.github/workflows/00-flowci-access.yml' }]),
+        JSON.stringify([{ path: '.github/workflows/00-alphaci-access.yml' }]),
       ],
     );
     expect(result).toMatchObject({

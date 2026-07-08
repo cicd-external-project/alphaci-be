@@ -26,7 +26,7 @@ describe('CiService', () => {
 
     const result = await service.issueProjectToken('project-1');
 
-    expect(result.token).toMatch(/^fci_[A-Za-z0-9_-]{32,}$/);
+    expect(result.token).toMatch(/^aci_[A-Za-z0-9_-]{32,}$/);
     expect(result.tokenPrefix).toBe(result.token.slice(0, 12));
     expect(repository.upsertProjectToken).toHaveBeenCalledWith({
       projectId: 'project-1',
@@ -49,7 +49,7 @@ describe('CiService', () => {
     });
 
     const result = await service.validateRun({
-      token: 'fci_valid-token',
+      token: 'aci_valid-token',
       repoFullName: 'owner/repo',
       stage: 'quality',
     });
@@ -77,7 +77,7 @@ describe('CiService', () => {
 
     await expect(
       service.validateRun({
-        token: 'fci_valid-token',
+        token: 'aci_valid-token',
         repoFullName: 'other/repo',
         stage: 'quality',
       }),
@@ -96,7 +96,7 @@ describe('CiService', () => {
 
     await expect(
       service.validateRun({
-        token: 'fci_valid-token',
+        token: 'aci_valid-token',
         repoFullName: 'owner/repo',
         stage: 'quality',
       }),

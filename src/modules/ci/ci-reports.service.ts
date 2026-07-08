@@ -55,7 +55,7 @@ export class CiReportsService {
   ) {}
 
   /**
-   * Ingest a CI run report from the generated workflow via CI_TOKEN auth.
+   * Ingest a CI run report from the generated workflow via ALPHACI_TOKEN auth.
    * Resolves user ownership from the provisioned project, translates results
    * into friendly messages, then upserts the row.
    */

@@ -87,10 +87,27 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const payload = (await response.json()) as {
       id?: string;
       name?: string;
-      service?: { id?: string; name?: string };
+      service?: {
+        id?: string;
+        name?: string;
+        serviceDetails?: { url?: string };
+        details?: { url?: string };
+        url?: string;
+      };
+      serviceDetails?: { url?: string };
+      details?: { url?: string };
+      url?: string;
     };
     const serviceId = payload.service?.id ?? payload.id;
     const serviceName = payload.service?.name ?? payload.name;
+    const serviceUrl =
+      payload.service?.serviceDetails?.url ??
+      payload.service?.details?.url ??
+      payload.service?.url ??
+      payload.serviceDetails?.url ??
+      payload.details?.url ??
+      payload.url ??
+      null;
     if (!serviceId || !serviceName) {
       throw new Error('Render service creation returned an invalid response');
     }
@@ -116,6 +133,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         renderEnvironmentName,
         renderEnvironmentId: environmentId,
         renderProjectName,
+        renderServiceUrl: serviceUrl,
         renderRegistryCredentialId: this.getRegistryCredentialId(),
         dockerContext,
         dockerfilePath,

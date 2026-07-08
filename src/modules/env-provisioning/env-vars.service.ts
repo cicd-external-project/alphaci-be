@@ -374,7 +374,7 @@ export class EnvVarsService {
       );
       if (!token) {
         throw new BadRequestException(
-          `alphaCI-managed ${target.provider} token is not configured`,
+          `ALPHACI-managed ${target.provider} token is not configured`,
         );
       }
 

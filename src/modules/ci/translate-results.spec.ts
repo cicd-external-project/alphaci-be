@@ -33,7 +33,7 @@ describe('translateResults', () => {
       expect(msgs).toHaveLength(1);
       expect(msgs[0]?.severity).toBe('error');
       expect(msgs[0]?.title).toBe('Access gate failed');
-      expect(msgs[0]?.hint).toContain('CI_TOKEN');
+      expect(msgs[0]?.hint).toContain('ALPHACI_TOKEN');
     });
 
     it('returns crash message for package stage with empty results', () => {

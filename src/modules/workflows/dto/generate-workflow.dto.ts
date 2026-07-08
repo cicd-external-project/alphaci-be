@@ -16,6 +16,7 @@ export type DeploymentProvider = 'vercel' | 'render';
 export interface DeploymentWorkflowTarget {
   slot: 'backend' | 'frontend' | 'standalone';
   provider: 'vercel' | 'render';
+  branchName?: string;
   deploymentStrategy:
     | 'vercel_ci_pushed'
     | 'render_image_pushed'
@@ -35,6 +36,8 @@ export interface DeploymentWorkflowTarget {
     serviceId?: string;
     ownerId?: string;
     registryCredentialId?: string;
+    deployHookUrl?: string;
+    healthcheckUrl?: string;
   };
 }
 

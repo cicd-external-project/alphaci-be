@@ -41,7 +41,7 @@ export class LocalCiRunsProvider implements CiRunsProvider {
         workflowName: file.name,
         branch: 'test',
         commitSha: null,
-        actor: 'flowci-local',
+        actor: 'alphaci-local',
         status: 'completed' as const,
         conclusion:
           stage === 'quality' ? ('failure' as const) : ('success' as const),

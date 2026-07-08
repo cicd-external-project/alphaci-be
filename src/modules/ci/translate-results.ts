@@ -92,7 +92,7 @@ export function translateResults(
         severity: 'error',
         title: 'Access gate failed',
         detail: 'The access stage failed with no reported results.',
-        hint: 'Verify CI_TOKEN is set as a GitHub Actions secret and that the platform is reachable.',
+        hint: 'Verify ALPHACI_TOKEN is set as a GitHub Actions secret and that the platform is reachable.',
       });
     } else {
       messages.push({

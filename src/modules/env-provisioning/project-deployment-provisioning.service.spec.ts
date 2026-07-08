@@ -157,10 +157,22 @@ describe('ProjectDeploymentProvisioningService', () => {
   it('can apply a variable group to a selected Vercel target branch', async () => {
     deploymentTargetsService.createDeploymentTarget
       .mockResolvedValueOnce({
-        id: 'target-backend',
+        id: 'target-backend-test',
         provider: 'render',
         providerProjectId: 'srv-1',
         providerProjectName: 'orders-api-test',
+      })
+      .mockResolvedValueOnce({
+        id: 'target-backend-uat',
+        provider: 'render',
+        providerProjectId: 'srv-2',
+        providerProjectName: 'orders-api-uat',
+      })
+      .mockResolvedValueOnce({
+        id: 'target-backend-main',
+        provider: 'render',
+        providerProjectId: 'srv-3',
+        providerProjectName: 'orders-api-main',
       })
       .mockResolvedValueOnce({
         id: 'target-frontend',

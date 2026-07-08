@@ -146,7 +146,7 @@ describe('appConfig factory', () => {
     expect(config.session.storeDriver).toBe('memory');
   });
 
-  it('reads alphaCI-managed Render owner id when set', () => {
+  it('reads ALPHACI-managed Render owner id when set', () => {
     process.env['FLOWCI_RENDER_OWNER_ID'] = 'tea-configured';
 
     const config = appConfig();

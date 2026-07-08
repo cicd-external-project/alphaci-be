@@ -35,15 +35,15 @@ const CENTRAL_WORKFLOW_REF =
  */
 export const ENV_GUARD_CHECK_CONTEXT = 'env-guard';
 
-export const ENV_GUARD_WORKFLOW_NAME = 'alphaCI Env Guard';
+export const ENV_GUARD_WORKFLOW_NAME = 'ALPHACI Env Guard';
 
 export const ENV_GUARD_WORKFLOW_PATH =
-  '.github/workflows/05-flowci-env-guard.yml';
+  '.github/workflows/05-alphaci-env-guard.yml';
 
 /**
  * Git ref (tag/branch) of the central reusable workflows that generated
  * pipelines pin to. The external (sold) deployment uses `v1`; the internal
- * Alphaexplora deployment sets CENTRAL_WORKFLOW_REF=internal-v1 so its
+ * ALPHACI deployment sets CENTRAL_WORKFLOW_REF=internal-v1 so its
  * generated pipelines track a separate, independently-versioned tag and never
  * collide with the customer-facing `v1` line. Per-project overrides still win.
  */
@@ -85,9 +85,9 @@ export function resolvePlatformBaseUrl(
 
 const PLATFORM_BASE_URL = resolvePlatformBaseUrl();
 
-const CI_VALIDATE_URL = `${PLATFORM_BASE_URL}/api/v1/ci/validate`;
+const ALPHACI_VALIDATE_URL = `${PLATFORM_BASE_URL}/api/v1/ci/validate`;
 
-export const CI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
+export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 
 /**
  * Branch promotion model enforced by the generated pipelines:
@@ -125,6 +125,14 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   centralWorkflowRef?: string;
 }
 
+type DeployBranch = 'test' | 'uat' | 'main';
+
+interface PackageDeploymentPlan {
+  jobs: Record<string, unknown>;
+  jobIds: string[];
+  promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]>;
+}
+
 export function buildStagedWorkflowBundle(
   template: WorkflowTemplate,
   dto: StagedWorkflowOptions,
@@ -155,15 +163,21 @@ export function buildStagedWorkflowBundle(
 
   const fileSuffix = dto.workflowVariant ? `-${dto.workflowVariant}` : '';
   const nameSuffix = dto.workflowVariant ? ` (${dto.workflowVariant})` : '';
-  const accessName = `alphaCI Access Gate${nameSuffix}`;
-  const qualityName = `alphaCI Quality${nameSuffix}`;
-  const packageName = `alphaCI Package${nameSuffix}`;
+  const accessName = `ALPHACI Access Gate${nameSuffix}`;
+  const qualityName = `ALPHACI Quality${nameSuffix}`;
+  const packageName = `ALPHACI Package${nameSuffix}`;
+  const deploymentPlan = buildPackageDeploymentPlan(
+    dto.deploymentTargets ?? [],
+    serviceName,
+    servicePath,
+    centralWorkflowRef,
+  );
 
   const files: StagedWorkflowFile[] = [
     {
       stage: 'access',
       name: accessName,
-      path: `.github/workflows/00-flowci-access${fileSuffix}.yml`,
+      path: `.github/workflows/00-alphaci-access${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
         name: accessName,
@@ -174,8 +188,8 @@ export function buildStagedWorkflowBundle(
         },
         permissions: { contents: 'read' },
         env: {
-          CI_VALIDATE_URL,
-          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+          ALPHACI_VALIDATE_URL,
+          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': validationJob('access'),
@@ -186,7 +200,7 @@ export function buildStagedWorkflowBundle(
     {
       stage: 'quality',
       name: qualityName,
-      path: `.github/workflows/10-flowci-quality${fileSuffix}.yml`,
+      path: `.github/workflows/10-alphaci-quality${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
         name: qualityName,
@@ -202,8 +216,8 @@ export function buildStagedWorkflowBundle(
           'security-events': 'write',
         },
         env: {
-          CI_VALIDATE_URL,
-          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+          ALPHACI_VALIDATE_URL,
+          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -261,7 +275,7 @@ export function buildStagedWorkflowBundle(
           },
           sonar: {
             needs: ['branch-policy', testJobId],
-            // Runs only when the alphaCI-provisioned SonarCloud secrets are
+            // Runs only when the ALPHACI-provisioned SonarCloud secrets are
             // present so repos without Sonar keep passing. The quality gate
             // is advisory on test and blocking on uat/main (branch-policy
             // decides via sonar-gate-wait).
@@ -303,7 +317,7 @@ export function buildStagedWorkflowBundle(
     {
       stage: 'package',
       name: packageName,
-      path: `.github/workflows/20-flowci-package${fileSuffix}.yml`,
+      path: `.github/workflows/20-alphaci-package${fileSuffix}.yml`,
       gated: true,
       yaml: dumpWorkflow({
         name: packageName,
@@ -319,8 +333,8 @@ export function buildStagedWorkflowBundle(
           packages: 'write',
         },
         env: {
-          CI_VALIDATE_URL,
-          CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+          ALPHACI_VALIDATE_URL,
+          ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
         },
         jobs: {
           'validate-access': {
@@ -334,21 +348,25 @@ export function buildStagedWorkflowBundle(
             requireProductionApproval,
             centralWorkflowRef,
           ),
+          ...deploymentPlan.jobs,
           'promote-to-uat': promotionJob(
             'test-to-uat',
             'test',
             serviceName,
             centralWorkflowRef,
+            deploymentPlan.promotionNeeds.test,
           ),
           'promote-to-main': promotionJob(
             'uat-to-main',
             'uat',
             serviceName,
             centralWorkflowRef,
+            deploymentPlan.promotionNeeds.uat,
           ),
           'report-results': reportingJob('package', [
             'validate-access',
             'build',
+            ...deploymentPlan.jobIds,
           ]),
         },
       }),
@@ -430,7 +448,7 @@ export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
     '  echo "No tracked environment files left to remove."',
     '  exit 0',
     'fi',
-    'git commit --quiet -m "chore(env-guard): remove committed environment file(s) [skip ci]" -m "Automated rollback by alphaCI Env Guard. The removed values remain in git history - rotate any exposed secrets."',
+    'git commit --quiet -m "chore(env-guard): remove committed environment file(s) [skip ci]" -m "Automated rollback by ALPHACI Env Guard. The removed values remain in git history - rotate any exposed secrets."',
     'if git push origin "HEAD:$GUARD_BRANCH"; then',
     '  echo "Environment file(s) removed from $GUARD_BRANCH."',
     'else',
@@ -440,7 +458,7 @@ export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
 
   const issueScript = [
     'TITLE="Security: environment file committed - rotate exposed secrets"',
-    'BODY=$(printf \'alphaCI Env Guard detected environment file(s) pushed to `%s` (commit %s):\\n\\n```\\n%s\\n```\\n\\nThe guard removed the file(s) in an automated follow-up commit where the branch allowed it, but the contents remain in git history.\\n\\n**Action required**\\n1. Rotate every credential the file(s) contained.\\n2. Keep runtime secrets in your deployment provider or GitHub Actions secrets, never in the repository.\\n3. Commit only `.env.example` placeholders.\' "$GUARD_BRANCH" "$GUARD_SHA" "$MATCHED_FILES")',
+    'BODY=$(printf \'ALPHACI Env Guard detected environment file(s) pushed to `%s` (commit %s):\\n\\n```\\n%s\\n```\\n\\nThe guard removed the file(s) in an automated follow-up commit where the branch allowed it, but the contents remain in git history.\\n\\n**Action required**\\n1. Rotate every credential the file(s) contained.\\n2. Keep runtime secrets in your deployment provider or GitHub Actions secrets, never in the repository.\\n3. Commit only `.env.example` placeholders.\' "$GUARD_BRANCH" "$GUARD_SHA" "$MATCHED_FILES")',
     'EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" --json number --jq \'.[0].number // empty\' || true)',
     'if [ -n "$EXISTING" ]; then',
     '  gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY" || echo "::warning::Could not comment on the existing env-guard issue"',
@@ -538,23 +556,23 @@ function validationJob(stage: WorkflowStage) {
     runs_on: 'ubuntu-latest',
     steps: [
       {
-        name: 'Validate alphaCI access',
+        name: 'Validate ALPHACI access',
         run: [
           'RESPONSE=$(curl -sf -w "\\n%{http_code}" \\',
           '  -X POST \\',
-          '  -H "Authorization: Bearer ${{ secrets.CI_TOKEN }}" \\',
+          '  -H "Authorization: Bearer ${{ secrets.ALPHACI_TOKEN }}" \\',
           '  -H "Content-Type: application/json" \\',
           '  -d "{\\"repo\\":\\"${{ github.repository }}\\",\\"stage\\":\\"' +
             stage +
             '\\",\\"workflowRunId\\":\\"${{ github.run_id }}\\",\\"headSha\\":\\"${{ github.event.workflow_run.head_sha || github.sha }}\\"}" \\',
-          '  "$CI_VALIDATE_URL") || true',
+          '  "$ALPHACI_VALIDATE_URL") || true',
           'HTTP_CODE=$(printf \'%s\' "$RESPONSE" | tail -1)',
           'BODY=$(printf \'%s\' "$RESPONSE" | head -n -1)',
           'if [ "$HTTP_CODE" != "200" ]; then',
-          '  echo "::error::alphaCI authorization failed (HTTP $HTTP_CODE). ${BODY}"',
+          '  echo "::error::ALPHACI authorization failed (HTTP $HTTP_CODE). ${BODY}"',
           '  exit 1',
           'fi',
-          'echo "alphaCI authorization validated."',
+          'echo "ALPHACI authorization validated."',
         ].join('\n'),
       },
     ],
@@ -674,12 +692,183 @@ function buildJob(servicePath: string, nodeVersion: string) {
       },
       {
         name: 'Install dependencies',
-        // Fresh alphaCI scaffolds have no package-lock.json yet (the customer
+        // Fresh ALPHACI scaffolds have no package-lock.json yet (the customer
         // generates it on first `npm install`), so npm ci would hard-fail.
         run: 'if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi',
       },
       { run: 'npm run build' },
     ],
+  };
+}
+
+function buildPackageDeploymentPlan(
+  deploymentTargets: NonNullable<GenerateWorkflowDto['deploymentTargets']>,
+  serviceName: string,
+  servicePath: string,
+  centralWorkflowRef: string,
+): PackageDeploymentPlan {
+  const jobs: Record<string, unknown> = {};
+  const jobIds: string[] = [];
+  const promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]> = {
+    test: [],
+    uat: [],
+  };
+
+  for (const target of deploymentTargets) {
+    for (const branch of resolveDeploymentBranches(target.branchName)) {
+      const jobId = deploymentJobId(target.provider, target.slot, branch);
+      if (jobs[jobId]) {
+        continue;
+      }
+
+      if (target.provider === 'vercel') {
+        jobs[jobId] = vercelDeployJob(
+          target,
+          branch,
+          serviceName,
+          servicePath,
+          centralWorkflowRef,
+        );
+      } else if (
+        target.provider === 'render' &&
+        target.deploymentStrategy === 'render_image_pushed'
+      ) {
+        const dockerJobId = `docker-${target.slot}-${branch}`;
+        jobs[dockerJobId] = dockerBuildJob(
+          target,
+          branch,
+          servicePath,
+          centralWorkflowRef,
+        );
+        jobs[jobId] = renderDeployJob(
+          target,
+          branch,
+          serviceName,
+          centralWorkflowRef,
+          dockerJobId,
+        );
+        jobIds.push(dockerJobId);
+        if (branch === 'test' || branch === 'uat') {
+          promotionNeeds[branch].push(dockerJobId);
+        }
+      } else {
+        continue;
+      }
+
+      jobIds.push(jobId);
+      if (branch === 'test' || branch === 'uat') {
+        promotionNeeds[branch].push(jobId);
+      }
+    }
+  }
+
+  return { jobs, jobIds, promotionNeeds };
+}
+
+function resolveDeploymentBranches(
+  branchName: string | undefined,
+): DeployBranch[] {
+  if (branchName === 'test' || branchName === 'uat' || branchName === 'main') {
+    return [branchName];
+  }
+
+  return ['test', 'uat', 'main'];
+}
+
+function deploymentJobId(
+  provider: 'vercel' | 'render',
+  slot: string,
+  branch: DeployBranch,
+): string {
+  return `deploy-${provider}-${slot}-${branch}`;
+}
+
+function branchCondition(branch: DeployBranch): string {
+  return `\${{ (${BRANCH_EXPR}) == '${branch}' }}`;
+}
+
+function deploymentNeeds(branch: DeployBranch): string[] {
+  return branch === 'main' ? ['build', 'production-gate'] : ['build'];
+}
+
+function vercelDeployJob(
+  target: NonNullable<GenerateWorkflowDto['deploymentTargets']>[number],
+  branch: DeployBranch,
+  serviceName: string,
+  servicePath: string,
+  centralWorkflowRef: string,
+) {
+  const secretNames = target.secretNames ?? {};
+  return {
+    needs: deploymentNeeds(branch),
+    if: branchCondition(branch),
+    uses: `${CENTRAL_WORKFLOW_REF}/vercel-deploy.yml@${centralWorkflowRef}`,
+    with: {
+      'system-name': serviceName,
+      'working-directory': target.rootDirectory ?? servicePath,
+      environment: branch === 'main' ? 'production' : 'preview',
+      'checkout-ref': HEAD_SHA_EXPR,
+    },
+    secrets: {
+      VERCEL_TOKEN: `\${{ secrets.${secretNames.token ?? 'VERCEL_TOKEN'} }}`,
+      VERCEL_ORG_ID: `\${{ secrets.${secretNames.orgId ?? 'VERCEL_ORG_ID'} }}`,
+      VERCEL_PROJECT_ID: `\${{ secrets.${secretNames.projectId ?? 'VERCEL_PROJECT_ID'} }}`,
+      GH_PR_TOKEN:
+        "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
+    },
+  };
+}
+
+function dockerBuildJob(
+  target: NonNullable<GenerateWorkflowDto['deploymentTargets']>[number],
+  branch: DeployBranch,
+  servicePath: string,
+  centralWorkflowRef: string,
+) {
+  return {
+    needs: deploymentNeeds(branch),
+    if: branchCondition(branch),
+    uses: `${CENTRAL_WORKFLOW_REF}/docker-build.yml@${centralWorkflowRef}`,
+    with: {
+      'working-directory':
+        target.dockerContext ?? target.rootDirectory ?? servicePath,
+      'image-name': target.imageName ?? `alphaci-${target.slot}`,
+      'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
+      'push-image': true,
+      'scan-vulnerabilities': true,
+      'fail-on-vulnerabilities': branch !== 'test',
+    },
+  };
+}
+
+function renderDeployJob(
+  target: NonNullable<GenerateWorkflowDto['deploymentTargets']>[number],
+  branch: DeployBranch,
+  serviceName: string,
+  centralWorkflowRef: string,
+  dockerJobId: string,
+) {
+  const secretNames = target.secretNames ?? {};
+  return {
+    needs: [dockerJobId],
+    if: branchCondition(branch),
+    uses: `${CENTRAL_WORKFLOW_REF}/render-deploy.yml@${centralWorkflowRef}`,
+    with: {
+      'system-name': serviceName,
+      environment: branch === 'main' ? 'production' : branch,
+      branch,
+      'deploy-mode': 'auto',
+      'healthcheck-path': '/api/v1/health',
+      'require-api-center-check': true,
+    },
+    secrets: {
+      RENDER_DEPLOY_HOOK_URL_TEST: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_TEST'} }}`,
+      RENDER_DEPLOY_HOOK_URL_UAT: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_UAT'} }}`,
+      RENDER_DEPLOY_HOOK_URL_MAIN: `\${{ secrets.${secretNames.deployHookUrl ?? 'RENDER_DEPLOY_HOOK_URL_MAIN'} }}`,
+      RENDER_HEALTHCHECK_URL_TEST: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_TEST'} }}`,
+      RENDER_HEALTHCHECK_URL_UAT: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_UAT'} }}`,
+      RENDER_HEALTHCHECK_URL_MAIN: `\${{ secrets.${secretNames.healthcheckUrl ?? 'RENDER_HEALTHCHECK_URL_MAIN'} }}`,
+    },
   };
 }
 
@@ -725,11 +914,17 @@ function promotionJob(
   sourceBranch: 'test' | 'uat',
   serviceName: string,
   centralWorkflowRef: string,
+  additionalNeeds: string[] = [],
 ) {
+  const needs = ['build', ...additionalNeeds];
   const conditions = [
     '!cancelled()',
     `(${BRANCH_EXPR}) == '${sourceBranch}'`,
     "needs.build.result == 'success'",
+    ...additionalNeeds.map(
+      (need) =>
+        `(needs['${need}'].result == 'success' || needs['${need}'].result == 'skipped')`,
+    ),
   ];
 
   return {
@@ -737,7 +932,7 @@ function promotionJob(
       contents: 'read',
       'pull-requests': 'write',
     },
-    needs: ['build'],
+    needs,
     if: `\${{ ${conditions.join(' && ')} }}`,
     uses: `${CENTRAL_WORKFLOW_REF}/promotion.yml@${centralWorkflowRef}`,
     with: {
@@ -755,7 +950,7 @@ function promotionJob(
 
 /**
  * Best-effort reporting step that POSTs structured pipeline results to the
- * alphaCI platform after each stage. Runs with `if: always()` so it fires on
+ * ALPHACI platform after each stage. Runs with `if: always()` so it fires on
  * success, failure, and cancellation. The curl uses `--max-time 5` and falls
  * back to a warning annotation on any error so the pipeline never fails due to
  * a reporting outage.
@@ -785,8 +980,8 @@ function reportingJob(
 
   // env vars injected into the step — NO ${{ }} inside the run: script
   const stepEnv: Record<string, string> = {
-    CI_TOKEN: '${{ secrets.CI_TOKEN }}',
-    CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+    ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+    ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
     GH_REPO: '${{ github.repository }}',
     GH_BRANCH: `\${{ ${BRANCH_EXPR} }}`,
     GH_SHA: HEAD_SHA_EXPR,
@@ -839,11 +1034,11 @@ function reportingJob(
     '  --argjson results "$RESULTS" \\',
     "  '{repoFullName:$repo,branch:$branch,commitSha:$sha,runId:$runId,stage:$stage,conclusion:$conclusion,results:$results}')",
     'curl -sf --max-time 5 \\',
-    '  -X POST "$CI_REPORT_URL" \\',
-    '  -H "Authorization: Bearer $CI_TOKEN" \\',
+    '  -X POST "$ALPHACI_REPORT_URL" \\',
+    '  -H "Authorization: Bearer $ALPHACI_TOKEN" \\',
     '  -H "Content-Type: application/json" \\',
     '  -d "$PAYLOAD" \\',
-    '  || echo "::warning::Failed to report pipeline results to alphaCI"',
+    '  || echo "::warning::Failed to report pipeline results to ALPHACI"',
   ];
 
   return {
@@ -851,12 +1046,12 @@ function reportingJob(
     needs,
     runs_on: 'ubuntu-latest',
     env: {
-      CI_TOKEN: '${{ secrets.CI_TOKEN }}',
-      CI_REPORT_URL: '${{ secrets.CI_REPORT_URL }}',
+      ALPHACI_TOKEN: '${{ secrets.ALPHACI_TOKEN }}',
+      ALPHACI_REPORT_URL: '${{ secrets.ALPHACI_REPORT_URL }}',
     },
     steps: [
       {
-        name: 'Report stage results to alphaCI',
+        name: 'Report stage results to ALPHACI',
         env: stepEnv,
         run: scriptLines.join('\n'),
       },

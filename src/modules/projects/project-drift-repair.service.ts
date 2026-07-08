@@ -102,7 +102,7 @@ export class ProjectDriftRepairService {
         projectId,
         eventCode: 'ci_token_rotated',
         title: 'CI token rotated',
-        body: 'A project CI token was rotated in alphaCI.',
+        body: 'A project CI token was rotated in ALPHACI.',
         metadata: {
           findingId,
           action,
@@ -110,7 +110,7 @@ export class ProjectDriftRepairService {
           tokenPrefix: result.tokenPrefix,
         },
       });
-      return this.completed(findingId, action, 'CI token rotated in alphaCI', {
+      return this.completed(findingId, action, 'CI token rotated in ALPHACI', {
         tokenPrefix: result.tokenPrefix,
       });
     }
@@ -141,7 +141,7 @@ export class ProjectDriftRepairService {
         projectId,
         eventCode: 'drift_repair_completed',
         title: 'Drift repair completed',
-        body: 'Deployment target detached from alphaCI.',
+        body: 'Deployment target detached from ALPHACI.',
         metadata: {
           findingId,
           action,
@@ -152,7 +152,7 @@ export class ProjectDriftRepairService {
       return this.completed(
         findingId,
         action,
-        'Deployment target detached from alphaCI',
+        'Deployment target detached from ALPHACI',
         { targetId: finding.targetId },
       );
     }
