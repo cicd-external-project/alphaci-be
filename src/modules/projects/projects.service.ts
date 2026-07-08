@@ -481,6 +481,7 @@ export class ProjectsService {
         'CI_REPORT_URL',
         CI_REPORT_URL,
       );
+      await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
 
       // 5. Push workflow YAML to main now that the secrets exist, then record
       // the resulting commit on the project row.
@@ -523,7 +524,18 @@ export class ProjectsService {
       // Repo is now fully usable; failures past this point must not delete it.
       provisioningComplete = true;
 
-      const deploymentProvisioning = this.skippedDeploymentProvisioning();
+      // Create the requested hosting targets on the centralized platform
+      // accounts and install their Render/Vercel Actions secrets.
+      const deploymentProvisioning = await this.provisionDeploymentTargets({
+        projectId: row.id,
+        userId,
+        repoFullName,
+        githubAccessToken: provisioningToken,
+        request: dto.deploymentProvisioning,
+        slots: this.resolveSingleRepoDeploymentSlots(
+          dto.deploymentProvisioning,
+        ),
+      });
 
       await this.recordProductEvent({
         userId,
@@ -695,6 +707,7 @@ export class ProjectsService {
         'CI_REPORT_URL',
         CI_REPORT_URL,
       );
+      await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
 
       // 6. Push backend workflow file to main, then record the commit.
       const { commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
@@ -760,7 +773,7 @@ export class ProjectsService {
       // 10. Save frontend DB row if the push succeeded
       if (frontendPushResult !== undefined) {
         try {
-          const frontendRow = await this.projectsRepository.create({
+          await this.projectsRepository.create({
             userId,
             workspaceId: await this.resolveDefaultWorkspaceId(userId),
             repoFullName,
@@ -787,6 +800,18 @@ export class ProjectsService {
         }
       }
 
+      // Both slots live in this one repository, so a single provisioning pass
+      // creates the backend + frontend hosting targets and installs their
+      // centralized Render/Vercel Actions secrets.
+      const deploymentProvisioning = await this.provisionDeploymentTargets({
+        projectId: backendRow.id,
+        userId,
+        repoFullName,
+        githubAccessToken: provisioningToken,
+        request: dto.deploymentProvisioning,
+        slots: ['backend', 'frontend'],
+      });
+
       await this.recordProductEvent({
         userId,
         projectId: backendRow.id,
@@ -812,7 +837,7 @@ export class ProjectsService {
         projectTypeId: backend.projectTypeId,
         workflowRecipeId: backend.workflowRecipeId ?? '',
         additionalWorkflowPaths,
-        deploymentProvisioning: this.skippedDeploymentProvisioning(),
+        deploymentProvisioning,
       };
     } catch (error) {
       if (!provisioningComplete) {
@@ -892,6 +917,7 @@ export class ProjectsService {
         'CI_REPORT_URL',
         CI_REPORT_URL,
       );
+      await this.installSonarSecrets(accessToken, owner, repo);
 
       // 4. Push workflow file to the existing repo's default branch (main) now
       // that the secrets exist, then record the commit.
@@ -920,7 +946,14 @@ export class ProjectsService {
       throw error;
     }
 
-    const deploymentProvisioning = this.skippedDeploymentProvisioning();
+    const deploymentProvisioning = await this.provisionDeploymentTargets({
+      projectId: row.id,
+      userId,
+      repoFullName: dto.repoFullName,
+      githubAccessToken: accessToken,
+      request: dto.deploymentProvisioning,
+      slots: this.resolveSingleRepoDeploymentSlots(dto.deploymentProvisioning),
+    });
 
     await this.recordProductEvent({
       userId,
@@ -1655,6 +1688,134 @@ export class ProjectsService {
 
   private skippedDeploymentProvisioning(): DeploymentProvisioningResult {
     return { status: 'skipped', targets: [] };
+  }
+
+  /**
+   * BYO hosting is archived: every deployment target is forced onto the
+   * platform's centralized Render/Vercel credentials regardless of what the
+   * client sent, and any BYO provider-connection reference is dropped.
+   */
+  private forceManagedProvisioning(
+    request: DeploymentProvisioningRequestDto | undefined,
+  ): DeploymentProvisioningRequestDto | undefined {
+    if (!request) {
+      return undefined;
+    }
+
+    return {
+      ...request,
+      targets: request.targets.map((target) => {
+        const managedTarget = {
+          ...target,
+          ownershipMode: 'flowci_managed' as const,
+        };
+        delete managedTarget.providerConnectionId;
+        return managedTarget;
+      }),
+    };
+  }
+
+  /**
+   * Create the requested hosting targets and install their Render/Vercel
+   * GitHub Actions secrets as part of project creation. Provisioning is
+   * best-effort: the repo is already fully usable, so a hosting failure is
+   * reported in the response instead of failing the whole creation.
+   */
+  private async provisionDeploymentTargets(input: {
+    projectId: string;
+    userId: string;
+    repoFullName: string;
+    githubAccessToken: string;
+    request: DeploymentProvisioningRequestDto | undefined;
+    slots: DeploymentProvisioningTargetDto['slot'][];
+  }): Promise<DeploymentProvisioningResult> {
+    const request = this.filterDeploymentProvisioningRequest(
+      this.forceManagedProvisioning(input.request),
+      input.slots,
+    );
+    if (!request?.enabled || request.targets.length === 0) {
+      return this.skippedDeploymentProvisioning();
+    }
+
+    try {
+      return await this.projectDeploymentProvisioningService.provisionForProject(
+        {
+          projectId: input.projectId,
+          userId: input.userId,
+          repoFullName: input.repoFullName,
+          githubAccessToken: input.githubAccessToken,
+          request,
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Deployment provisioning failed for ${input.repoFullName}: ${String(error)}`,
+      );
+      return {
+        status: 'failed',
+        targets: request.targets.map((target) => ({
+          slot: target.slot,
+          provider: target.provider,
+          ownershipMode: 'flowci_managed',
+          deploymentStrategy: null,
+          status: 'failed',
+          deploymentTargetId: null,
+          providerProjectId: null,
+          providerProjectName: null,
+          providerMetadata: {},
+          errorSummary: 'Deployment provisioning failed',
+          env: [],
+        })),
+      };
+    }
+  }
+
+  /**
+   * Install the centralized SonarCloud secrets the generated workflows expect
+   * (the quality-scan job only runs when all three are present). Best-effort:
+   * a missing central Sonar configuration or a secret-write hiccup must not
+   * fail repository creation.
+   */
+  private async installSonarSecrets(
+    accessToken: string,
+    owner: string,
+    repo: string,
+  ): Promise<void> {
+    const managed =
+      this.configService?.getOrThrow<AppConfig>('app')?.envProvisioning
+        ?.flowciManaged;
+    const sonarToken = managed?.sonarToken?.trim();
+    const sonarOrganization = managed?.sonarOrganization?.trim();
+    if (!sonarToken || !sonarOrganization) {
+      this.logger.warn(
+        `SonarCloud secrets not installed for ${owner}/${repo}: FLOWCI_SONAR_TOKEN / FLOWCI_SONAR_ORGANIZATION are not configured`,
+      );
+      return;
+    }
+
+    // SonarCloud's GitHub-import convention for project keys is `${owner}_${repo}`.
+    const sonarProjectKey = `${owner}_${repo}`;
+    await this.githubService.setActionsSecret(
+      accessToken,
+      owner,
+      repo,
+      'SONAR_TOKEN',
+      sonarToken,
+    );
+    await this.githubService.setActionsSecret(
+      accessToken,
+      owner,
+      repo,
+      'SONAR_ORGANIZATION',
+      sonarOrganization,
+    );
+    await this.githubService.setActionsSecret(
+      accessToken,
+      owner,
+      repo,
+      'SONAR_PROJECT_KEY',
+      sonarProjectKey,
+    );
   }
 
   /**
@@ -2411,6 +2572,11 @@ export class ProjectsService {
         'CI_REPORT_URL',
         CI_REPORT_URL,
       );
+      await this.installSonarSecrets(
+        provisioningToken,
+        ownerLogin,
+        actualBeRepoName,
+      );
 
       ({ commitSha: backendCommitSha, commitUrl: backendCommitUrl } =
         await this.pushWorkflowFiles(
@@ -2561,6 +2727,11 @@ export class ProjectsService {
         'CI_REPORT_URL',
         CI_REPORT_URL,
       );
+      await this.installSonarSecrets(
+        provisioningToken,
+        feOwnerLogin,
+        actualFeRepoName,
+      );
 
       const { commitSha: frontendCommitSha, commitUrl: frontendCommitUrl } =
         await this.pushWorkflowFiles(
@@ -2598,7 +2769,6 @@ export class ProjectsService {
       }
 
       feProvisioningComplete = true;
-
     } catch (err) {
       this.logger.warn(
         `Multi-repo project created but frontend repo provisioning failed: ${String(err)}`,
@@ -2618,6 +2788,32 @@ export class ProjectsService {
       }
     }
 
+    // Each repository provisions its own hosting slot: the backend repo gets
+    // the Render target, the frontend repo (when it survived creation) gets
+    // the Vercel target. Both use the centralized platform credentials.
+    const provisioningResults: DeploymentProvisioningResult[] = [
+      await this.provisionDeploymentTargets({
+        projectId: backendRow.id,
+        userId,
+        repoFullName: beRepoFullName,
+        githubAccessToken: provisioningToken,
+        request: dto.deploymentProvisioning,
+        slots: ['backend'],
+      }),
+    ];
+    if (feRow && feRepoFullName) {
+      provisioningResults.push(
+        await this.provisionDeploymentTargets({
+          projectId: feRow.id,
+          userId,
+          repoFullName: feRepoFullName,
+          githubAccessToken: provisioningToken,
+          request: dto.deploymentProvisioning,
+          slots: ['frontend'],
+        }),
+      );
+    }
+
     return {
       id: backendRow.id,
       repoFullName: beRepoFullName,
@@ -2634,7 +2830,8 @@ export class ProjectsService {
         secondaryRepoFullName: feRepoFullName,
       }),
       ...(feRepoUrl !== undefined && { secondaryRepoUrl: feRepoUrl }),
-      deploymentProvisioning: this.skippedDeploymentProvisioning(),
+      deploymentProvisioning:
+        this.combineDeploymentProvisioningResults(provisioningResults),
     };
   }
 

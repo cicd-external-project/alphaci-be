@@ -18,9 +18,9 @@ export class CapabilitiesController {
         enabled,
         providers: enabled ? ['render', 'vercel'] : [],
         environments: enabled ? ['test', 'uat', 'production'] : [],
-        // Advertise the single ownership mode this deployment supports. The
-        // external/sold product uses 'byo'; the internal deployment centralizes
-        // on the organization's Render/Vercel via 'flowci_managed'.
+        // Advertise the single ownership mode this deployment supports. BYO is
+        // archived — deployments always centralize on the platform's own
+        // Render/Vercel/SonarCloud credentials ('flowci_managed').
         modes: enabled ? [config.envProvisioning.ownershipMode] : [],
       },
       projectSyncSnapshots: {

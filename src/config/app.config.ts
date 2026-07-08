@@ -51,12 +51,11 @@ export interface AppConfig {
   envProvisioning: {
     enabled: boolean;
     /**
-     * Deployment ownership mode offered by this deployment:
-     *  - 'byo': users connect their own Render/Vercel accounts (external/sold
-     *    product).
-     *  - 'flowci_managed': deployments are centralized on the organization's
-     *    Render/Vercel via the flowciManaged.* credentials (internal
-     *    Alphaexplora deployment). BYO is not offered.
+     * Deployment ownership mode offered by this deployment. BYO ('byo') is
+     * archived: every deployment centralizes on the platform's own
+     * Render/Vercel/SonarCloud credentials via flowciManaged.*, so the only
+     * mode ever offered is 'flowci_managed'. The union type is kept because
+     * stored targets and older clients may still carry 'byo' values.
      */
     ownershipMode: 'byo' | 'flowci_managed';
     encryptionKey: string;
@@ -80,6 +79,10 @@ export interface AppConfig {
       vercelToken: string;
       vercelTeamId: string | null;
       vercelTeamSlug: string | null;
+      // Centralized SonarCloud credentials installed into every created repo
+      // so the quality-scan job works out of the box.
+      sonarToken: string;
+      sonarOrganization: string;
     };
   };
   projectSyncSnapshots: {
@@ -227,10 +230,10 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     envProvisioning: {
       enabled: env['ENV_PROVISIONING_ENABLED'] === 'true',
-      ownershipMode:
-        env['ENV_PROVISIONING_OWNERSHIP_MODE']?.trim() === 'flowci_managed'
-          ? 'flowci_managed'
-          : 'byo',
+      // BYO is archived — the platform always centralizes deployments on its
+      // own hosting credentials, so ENV_PROVISIONING_OWNERSHIP_MODE is
+      // intentionally ignored.
+      ownershipMode: 'flowci_managed',
       encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
       flowciManaged: {
         renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
@@ -268,6 +271,8 @@ export const appConfig = registerAs('app', (): AppConfig => {
         vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
         vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
         vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
+        sonarToken: env['FLOWCI_SONAR_TOKEN']?.trim() ?? '',
+        sonarOrganization: env['FLOWCI_SONAR_ORGANIZATION']?.trim() ?? '',
       },
     },
     projectSyncSnapshots: {

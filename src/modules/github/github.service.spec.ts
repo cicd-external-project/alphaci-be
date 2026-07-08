@@ -47,7 +47,7 @@ const appConfig: AppConfig = {
   },
   envProvisioning: {
     enabled: false,
-    ownershipMode: 'byo',
+    ownershipMode: 'flowci_managed',
     encryptionKey: '',
     flowciManaged: {
       renderToken: '',
@@ -55,6 +55,8 @@ const appConfig: AppConfig = {
       vercelToken: '',
       vercelTeamId: null,
       vercelTeamSlug: null,
+      sonarToken: '',
+      sonarOrganization: '',
     },
   },
   projectSyncSnapshots: {
