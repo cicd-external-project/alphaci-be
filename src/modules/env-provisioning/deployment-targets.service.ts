@@ -369,7 +369,7 @@ export class DeploymentTargetsService {
       projectId,
       eventCode: 'deployment_target_detached',
       title: 'Deployment target detached',
-      body: 'Deployment target metadata was removed from alphaCI.',
+      body: 'Deployment target metadata was removed from ALPHACI.',
       metadata: { targetId },
     });
     return { detached: true };
@@ -663,7 +663,7 @@ export class DeploymentTargetsService {
           : config.envProvisioning.flowciManaged.vercelToken;
       if (!token) {
         throw new BadRequestException(
-          `alphaCI-managed ${provider} token is not configured`,
+          `ALPHACI-managed ${provider} token is not configured`,
         );
       }
 
@@ -709,7 +709,7 @@ export class DeploymentTargetsService {
         config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
       if (!teamId) {
         throw new BadRequestException(
-          'FLOWCI_VERCEL_TEAM_ID is required for alphaCI-managed Vercel deployment targets',
+          'ALPHACI_VERCEL_TEAM_ID is required for ALPHACI-managed Vercel deployment targets',
         );
       }
 

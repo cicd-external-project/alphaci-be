@@ -23,12 +23,12 @@ describe('CiTokensRepository', () => {
     await repository.upsertProjectToken({
       projectId: 'project-1',
       tokenHash: 'sha256-token',
-      tokenPrefix: 'fci_123456',
+      tokenPrefix: 'aci_123456',
     });
 
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO ci.project_ci_tokens'),
-      ['project-1', 'sha256-token', 'fci_123456'],
+      ['project-1', 'sha256-token', 'aci_123456'],
     );
   });
 
@@ -69,7 +69,7 @@ describe('CiTokensRepository', () => {
   it('loads token status metadata for a project overview', async () => {
     const row = {
       status: 'revoked',
-      token_prefix: 'fci_123456',
+      token_prefix: 'aci_123456',
       created_at: '2026-06-12T00:00:00.000Z',
       updated_at: '2026-06-12T01:00:00.000Z',
       revoked_at: '2026-06-12T01:00:00.000Z',
@@ -80,7 +80,7 @@ describe('CiTokensRepository', () => {
 
     expect(result).toEqual({
       status: 'revoked',
-      tokenPrefix: 'fci_123456',
+      tokenPrefix: 'aci_123456',
       createdAt: '2026-06-12T00:00:00.000Z',
       updatedAt: '2026-06-12T01:00:00.000Z',
       revokedAt: '2026-06-12T01:00:00.000Z',

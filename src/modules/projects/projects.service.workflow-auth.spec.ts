@@ -7,24 +7,24 @@ import type { ProjectsRepository } from './projects.repository';
 const stagedWorkflowFiles = [
   {
     stage: 'access' as const,
-    name: 'alphaCI Access Gate',
-    path: '.github/workflows/00-flowci-access.yml',
+    name: 'ALPHACI Access Gate',
+    path: '.github/workflows/00-alphaci-access.yml',
     gated: true,
-    yaml: 'name: alphaCI Access Gate\n',
+    yaml: 'name: ALPHACI Access Gate\n',
   },
   {
     stage: 'quality' as const,
-    name: 'alphaCI Quality',
-    path: '.github/workflows/10-flowci-quality.yml',
+    name: 'ALPHACI Quality',
+    path: '.github/workflows/10-alphaci-quality.yml',
     gated: true,
-    yaml: 'name: alphaCI Quality\n',
+    yaml: 'name: ALPHACI Quality\n',
   },
   {
     stage: 'package' as const,
-    name: 'alphaCI Package',
-    path: '.github/workflows/20-flowci-package.yml',
+    name: 'ALPHACI Package',
+    path: '.github/workflows/20-alphaci-package.yml',
     gated: true,
-    yaml: 'name: alphaCI Package\n',
+    yaml: 'name: ALPHACI Package\n',
   },
 ];
 
@@ -79,8 +79,8 @@ const makeProjectsRepository = () =>
 const makeCiService = () =>
   ({
     issueProjectToken: jest.fn().mockResolvedValue({
-      token: 'fci_test-token',
-      tokenPrefix: 'fci_test-tok',
+      token: 'aci_test-token',
+      tokenPrefix: 'aci_test-tok',
     }),
   }) as unknown as CiService;
 
@@ -124,7 +124,7 @@ describe('ProjectsService workflow authorization', () => {
       )
       .mockResolvedValue({
         workflowFiles: stagedWorkflowFiles,
-        outputFileName: '00-flowci-access.yml',
+        outputFileName: '00-alphaci-access.yml',
       });
     jest
       .spyOn(
@@ -175,13 +175,13 @@ describe('ProjectsService workflow authorization', () => {
       'gh-token',
       'owner',
       'repo',
-      'CI_TOKEN',
-      'fci_test-token',
+      'ALPHACI_TOKEN',
+      'aci_test-token',
     );
     expect(issueProjectToken).toHaveBeenCalledWith('project-1');
     expect(createProjectRow).toHaveBeenCalledWith(
       expect.objectContaining({
-        workflowPath: '.github/workflows/00-flowci-access.yml',
+        workflowPath: '.github/workflows/00-alphaci-access.yml',
         /* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment */
         projectOptions: expect.objectContaining({
           workflowFiles: stagedWorkflowMetadata,

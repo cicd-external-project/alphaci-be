@@ -33,7 +33,7 @@ export class CiService {
   constructor(private readonly ciTokensRepository: CiTokensRepository) {}
 
   async issueProjectToken(projectId: string): Promise<IssueProjectTokenResult> {
-    const token = `fci_${randomBytes(32).toString('base64url')}`;
+    const token = `aci_${randomBytes(32).toString('base64url')}`;
     const tokenPrefix = token.slice(0, 12);
 
     await this.ciTokensRepository.upsertProjectToken({

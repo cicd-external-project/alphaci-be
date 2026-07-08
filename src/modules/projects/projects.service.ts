@@ -54,8 +54,8 @@ import {
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
 import {
+  ALPHACI_REPORT_URL,
   buildStagedWorkflowBundle,
-  CI_REPORT_URL,
   resolveDefaultCentralWorkflowRef,
   type StagedWorkflowFile,
   type WorkflowFileMetadata,
@@ -406,6 +406,15 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['standalone', 'backend', 'frontend'],
+        dto.servicePath,
+      ),
     });
 
     // 3. Create the GitHub repository (auto_init: true creates main branch)
@@ -443,7 +452,7 @@ export class ProjectsService {
       // secrets BEFORE any workflow YAML exists. The access-gate workflow runs
       // the instant a workflow file is pushed (and again on branch creation),
       // so the secrets must already be present or that first run fails for lack
-      // of CI_TOKEN. Secrets are installed strictly so a token without
+      // of ALPHACI_TOKEN. Secrets are installed strictly so a token without
       // `secrets:write` aborts provisioning here rather than producing a repo
       // whose pipelines can never authenticate.
       row = await this.projectsRepository.create({
@@ -471,15 +480,15 @@ export class ProjectsService {
         provisioningToken,
         ownerLogin,
         repoName,
-        'CI_TOKEN',
+        'ALPHACI_TOKEN',
         ciToken.token,
       );
       await this.githubService.setActionsSecretStrict(
         provisioningToken,
         ownerLogin,
         repoName,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
+        'ALPHACI_REPORT_URL',
+        ALPHACI_REPORT_URL,
       );
       await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
 
@@ -542,7 +551,7 @@ export class ProjectsService {
         projectId: row.id,
         eventCode: 'project_created',
         title: 'Project created',
-        body: `${repoFullName} is now tracked by alphaCI.`,
+        body: `${repoFullName} is now tracked by ALPHACI.`,
         metadata: {
           repoFullName,
           repoShape,
@@ -618,6 +627,15 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'backend',
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['backend'],
+        backend.servicePath ?? 'backend',
+      ),
     });
 
     const {
@@ -630,6 +648,11 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'frontend',
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['frontend'],
+        frontend.servicePath ?? 'frontend',
+      ),
     });
 
     // 3. Create the GitHub repository once
@@ -670,7 +693,7 @@ export class ProjectsService {
 
       // 5. Persist the backend row, issue the CI token, and install the shared
       // repo Actions secrets BEFORE pushing any workflow YAML — both pipeline
-      // chains authenticate with the same repo-level CI_TOKEN, and the
+      // chains authenticate with the same repo-level ALPHACI_TOKEN, and the
       // access-gate runs as soon as a workflow file is pushed.
       backendRow = await this.projectsRepository.create({
         userId,
@@ -697,15 +720,15 @@ export class ProjectsService {
         provisioningToken,
         ownerLogin,
         repoName,
-        'CI_TOKEN',
+        'ALPHACI_TOKEN',
         ciToken.token,
       );
       await this.githubService.setActionsSecretStrict(
         provisioningToken,
         ownerLogin,
         repoName,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
+        'ALPHACI_REPORT_URL',
+        ALPHACI_REPORT_URL,
       );
       await this.installSonarSecrets(provisioningToken, ownerLogin, repoName);
 
@@ -817,7 +840,7 @@ export class ProjectsService {
         projectId: backendRow.id,
         eventCode: 'project_created',
         title: 'Project created',
-        body: `${repoFullName} is now tracked by alphaCI.`,
+        body: `${repoFullName} is now tracked by ALPHACI.`,
         metadata: {
           repoFullName,
           repoShape: 'microservices',
@@ -869,6 +892,15 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
       enhancements: dto.enhancements,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['standalone', 'backend', 'frontend'],
+        dto.servicePath,
+      ),
     });
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
@@ -907,15 +939,15 @@ export class ProjectsService {
         accessToken,
         owner,
         repo,
-        'CI_TOKEN',
+        'ALPHACI_TOKEN',
         ciToken.token,
       );
       await this.githubService.setActionsSecretStrict(
         accessToken,
         owner,
         repo,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
+        'ALPHACI_REPORT_URL',
+        ALPHACI_REPORT_URL,
       );
       await this.installSonarSecrets(accessToken, owner, repo);
 
@@ -960,7 +992,7 @@ export class ProjectsService {
       projectId: row.id,
       eventCode: 'project_created',
       title: 'Project created',
-      body: `${dto.repoFullName} is now tracked by alphaCI.`,
+      body: `${dto.repoFullName} is now tracked by ALPHACI.`,
       metadata: {
         repoFullName: dto.repoFullName,
         repoShape: 'existing',
@@ -1086,9 +1118,9 @@ export class ProjectsService {
   // ─── DELETE /projects/:id ──────────────────────────────────────────────────
 
   /**
-   * Removes a provisioned_projects record from alphaCI's database.
+   * Removes a provisioned_projects record from ALPHACI's database.
    * The GitHub repository, its workflow YAML files, and its GitHub Secrets
-   * are NOT touched — this is an alphaCI tracking disconnect only.
+   * are NOT touched — this is an ALPHACI tracking disconnect only.
    * CASCADE deletes ci.project_ci_tokens automatically via the FK.
    */
   async syncProjectSnapshot(
@@ -1307,7 +1339,7 @@ export class ProjectsService {
         file.path,
         file.yaml,
         branchName,
-        'ci: update alphaCI workflow configuration',
+        'ci: update ALPHACI workflow configuration',
       );
     }
 
@@ -1318,7 +1350,7 @@ export class ProjectsService {
         owner,
         repo,
         {
-          title: 'Update alphaCI workflow configuration',
+          title: 'Update ALPHACI workflow configuration',
           head: branchName,
           base: baseBranch,
           body: this.buildWorkflowUpdatePullRequestBody(preview),
@@ -1788,13 +1820,20 @@ export class ProjectsService {
     const sonarOrganization = managed?.sonarOrganization?.trim();
     if (!sonarToken || !sonarOrganization) {
       this.logger.warn(
-        `SonarCloud secrets not installed for ${owner}/${repo}: FLOWCI_SONAR_TOKEN / FLOWCI_SONAR_ORGANIZATION are not configured`,
+        `SonarCloud secrets not installed for ${owner}/${repo}: ALPHACI_SONAR_TOKEN / ALPHACI_SONAR_ORGANIZATION are not configured`,
       );
       return;
     }
 
     // SonarCloud's GitHub-import convention for project keys is `${owner}_${repo}`.
-    const sonarProjectKey = `${owner}_${repo}`;
+    const sonarProjectKey = this.sonarProjectKey(owner, repo);
+    await this.ensureSonarCloudProject({
+      sonarToken,
+      sonarOrganization,
+      sonarProjectKey,
+      projectName: repo,
+      repoFullName: `${owner}/${repo}`,
+    });
     await this.githubService.setActionsSecret(
       accessToken,
       owner,
@@ -1816,6 +1855,62 @@ export class ProjectsService {
       'SONAR_PROJECT_KEY',
       sonarProjectKey,
     );
+  }
+
+  private sonarProjectKey(owner: string, repo: string): string {
+    return `${owner}_${repo}`;
+  }
+
+  private async ensureSonarCloudProject(input: {
+    sonarToken: string;
+    sonarOrganization: string;
+    sonarProjectKey: string;
+    projectName: string;
+    repoFullName: string;
+  }): Promise<void> {
+    try {
+      const body = new URLSearchParams({
+        organization: input.sonarOrganization,
+        project: input.sonarProjectKey,
+        name: input.projectName,
+      });
+      const response = await fetch(
+        'https://sonarcloud.io/api/projects/create',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${Buffer.from(
+              `${input.sonarToken}:`,
+            ).toString('base64')}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body,
+        },
+      );
+
+      if (response.ok) {
+        this.logger.log(
+          `SonarCloud project ensured for ${input.repoFullName} (${input.sonarProjectKey})`,
+        );
+        return;
+      }
+
+      const responseBody = await response.text();
+      if (response.status === 400 && /already|exist|key/i.test(responseBody)) {
+        this.logger.log(
+          `SonarCloud project already exists for ${input.repoFullName} (${input.sonarProjectKey})`,
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `SonarCloud project was not created for ${input.repoFullName} (${String(response.status)}): ${responseBody.slice(0, 500)}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `SonarCloud project was not created for ${input.repoFullName}: ${String(error)}`,
+      );
+    }
   }
 
   /**
@@ -1936,28 +2031,32 @@ export class ProjectsService {
             this.resolveRenderDeploymentStrategy(target) ===
               'render_image_pushed'),
       )
-      .map((target) => {
+      .flatMap((target) => {
         const rootDirectory = this.resolveWorkflowRootDirectory(
           target,
           fallbackRootDirectory,
         );
         if (target.provider === 'render') {
-          const descriptor: DeploymentWorkflowTarget = {
-            slot: target.slot,
-            provider: 'render',
-            deploymentStrategy: 'render_image_pushed',
-            secretNames: this.renderSecretNames(target.slot),
-            dockerContext: target.dockerContext?.trim() || rootDirectory || '.',
-            dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
-            imageName: this.renderImageName(target),
-            renderServiceType: target.renderServiceType ?? 'web_service',
-            renderInstanceType: target.renderInstanceType ?? 'free',
-          };
-          if (rootDirectory) {
-            descriptor.rootDirectory = rootDirectory;
-          }
+          return this.renderDeploymentBranches().map((branchName) => {
+            const descriptor: DeploymentWorkflowTarget = {
+              slot: target.slot,
+              provider: 'render',
+              branchName,
+              deploymentStrategy: 'render_image_pushed',
+              secretNames: this.renderSecretNames(target.slot, branchName),
+              dockerContext:
+                target.dockerContext?.trim() || rootDirectory || '.',
+              dockerfilePath: target.dockerfilePath?.trim() || 'Dockerfile',
+              imageName: this.renderImageName(target, branchName),
+              renderServiceType: target.renderServiceType ?? 'web_service',
+              renderInstanceType: target.renderInstanceType ?? 'free',
+            };
+            if (rootDirectory) {
+              descriptor.rootDirectory = rootDirectory;
+            }
 
-          return descriptor;
+            return descriptor;
+          });
         }
 
         const descriptor: DeploymentWorkflowTarget = {
@@ -1972,6 +2071,10 @@ export class ProjectsService {
 
         return descriptor;
       });
+  }
+
+  private renderDeploymentBranches(): Array<'test' | 'uat' | 'main'> {
+    return ['test', 'uat', 'main'];
   }
 
   private resolveRenderDeploymentStrategy(
@@ -2018,18 +2121,25 @@ export class ProjectsService {
 
   private renderSecretNames(
     slot: DeploymentProvisioningTargetDto['slot'],
+    branchName: 'test' | 'uat' | 'main' = 'test',
   ): NonNullable<DeploymentWorkflowTarget['secretNames']> {
-    const prefix = `RENDER_${slot.toUpperCase()}`;
+    const prefix = `RENDER_${slot.toUpperCase()}_${branchName.toUpperCase()}`;
+    const branchSuffix = branchName.toUpperCase();
     return {
       apiKey: `${prefix}_API_KEY`,
       serviceId: `${prefix}_SERVICE_ID`,
       ownerId: `${prefix}_OWNER_ID`,
       registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
+      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchSuffix}`,
+      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchSuffix}`,
     };
   }
 
-  private renderImageName(target: DeploymentProvisioningTargetDto): string {
-    const raw = `flowci-${target.slot}-${target.projectName ?? target.slot}`;
+  private renderImageName(
+    target: DeploymentProvisioningTargetDto,
+    branchName: string = target.branchName ?? 'test',
+  ): string {
+    const raw = `alphaci-${target.slot}-${branchName}-${target.projectName ?? target.slot}`;
     return raw
       .toLowerCase()
       .replaceAll(/[^a-z0-9._-]+/g, '-')
@@ -2104,7 +2214,7 @@ export class ProjectsService {
       ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
     });
 
-    const outputFileName = customOutputFileName ?? '00-flowci-access.yml';
+    const outputFileName = customOutputFileName ?? '00-alphaci-access.yml';
     return {
       workflowFiles: bundle.workflowFiles,
       outputFileName,
@@ -2149,7 +2259,7 @@ export class ProjectsService {
     repo: string,
     filePath: string,
     content: string,
-    commitMessage = 'ci: add alphaCI Studio workflow',
+    commitMessage = 'ci: add ALPHACI workflow',
   ): Promise<{ commitSha: string; commitUrl: string | null }> {
     const encodedContent = Buffer.from(content, 'utf8').toString('base64');
 
@@ -2340,9 +2450,9 @@ export class ProjectsService {
     return [
       `# ${opts.projectName}`,
       '',
-      `Created by alphaCI Studio as a ${this.describeGeneratedStack(opts.stack)} ${this.repoShapeLabel(opts.repoShape)}.`,
+      `Created by ALPHACI as a ${this.describeGeneratedStack(opts.stack)} ${this.repoShapeLabel(opts.repoShape)}.`,
       '',
-      'This starter already includes source files, package scripts, TypeScript, ESLint, Jest coverage, SonarQube metadata, branch protections, and alphaCI workflow files that match the selected stack. Use it as the first working baseline, then replace the starter code with your application code.',
+      'This starter already includes source files, package scripts, TypeScript, ESLint, Jest coverage, SonarQube metadata, branch protections, and ALPHACI workflow files that match the selected stack. Use it as the first working baseline, then replace the starter code with your application code.',
       '',
       '## Project structure',
       '',
@@ -2365,7 +2475,7 @@ export class ProjectsService {
       '',
       ...this.gettingStartedCommands(opts.repoShape),
       '',
-      'Create a feature branch, open a pull request into `test`, and let alphaCI promote green changes through `uat` and `main`.',
+      'Create a feature branch, open a pull request into `test`, and let ALPHACI promote green changes through `uat` and `main`.',
     ].join('\n');
   }
 
@@ -2406,6 +2516,7 @@ export class ProjectsService {
       serviceName: projectName,
       stack,
       includeDocker: opts.includeDocker ?? defaultIncludeDocker(stack),
+      sonarProjectKey: this.sonarProjectKey(owner, repo),
       ...(repoShape ? { repoShape } : {}),
       ...(frontendStack ? { frontendStack } : {}),
       ...(frontendServiceName ? { frontendServiceName } : {}),
@@ -2494,6 +2605,15 @@ export class ProjectsService {
       servicePath: '.',
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
+      deploymentProvider: this.extractDeploymentProvider(
+        dto.deploymentProvisioning,
+        'backend',
+      ),
+      deploymentTargets: this.resolveDeploymentWorkflowTargets(
+        dto.deploymentProvisioning,
+        ['backend', 'standalone'],
+        '.',
+      ),
     });
 
     const {
@@ -2562,15 +2682,15 @@ export class ProjectsService {
         provisioningToken,
         ownerLogin,
         actualBeRepoName,
-        'CI_TOKEN',
+        'ALPHACI_TOKEN',
         backendCiToken.token,
       );
       await this.githubService.setActionsSecretStrict(
         provisioningToken,
         ownerLogin,
         actualBeRepoName,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
+        'ALPHACI_REPORT_URL',
+        ALPHACI_REPORT_URL,
       );
       await this.installSonarSecrets(
         provisioningToken,
@@ -2656,6 +2776,11 @@ export class ProjectsService {
         servicePath: '.',
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
+        deploymentTargets: this.resolveDeploymentWorkflowTargets(
+          dto.deploymentProvisioning,
+          ['frontend'],
+          '.',
+        ),
       });
 
       const {
@@ -2717,15 +2842,15 @@ export class ProjectsService {
         provisioningToken,
         feOwnerLogin,
         actualFeRepoName,
-        'CI_TOKEN',
+        'ALPHACI_TOKEN',
         frontendCiToken.token,
       );
       await this.githubService.setActionsSecretStrict(
         provisioningToken,
         feOwnerLogin,
         actualFeRepoName,
-        'CI_REPORT_URL',
-        CI_REPORT_URL,
+        'ALPHACI_REPORT_URL',
+        ALPHACI_REPORT_URL,
       );
       await this.installSonarSecrets(
         provisioningToken,
@@ -3089,7 +3214,7 @@ export class ProjectsService {
     ].join('\n');
 
     return [
-      'This PR updates the alphaCI workflow configuration for this project.',
+      'This PR updates the ALPHACI workflow configuration for this project.',
       '',
       'Changed settings:',
       changedSettings,

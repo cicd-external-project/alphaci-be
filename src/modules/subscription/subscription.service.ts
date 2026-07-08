@@ -124,7 +124,7 @@ export class SubscriptionService {
                 {
                   currency: 'PHP',
                   amount: amountPhp * 100,
-                  name: 'alphaCI Studio Pro Monthly',
+                  name: 'ALPHACI Pro Monthly',
                   quantity: 1,
                 },
               ],

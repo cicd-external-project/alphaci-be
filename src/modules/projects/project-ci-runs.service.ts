@@ -128,7 +128,7 @@ export class ProjectCiRunsService {
     }
 
     return row.workflow_path
-      ? [{ name: 'alphaCI Workflow', path: row.workflow_path }]
+      ? [{ name: 'ALPHACI Workflow', path: row.workflow_path }]
       : [];
   }
 

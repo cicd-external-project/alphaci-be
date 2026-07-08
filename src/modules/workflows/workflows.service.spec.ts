@@ -132,10 +132,10 @@ describe('WorkflowsService', () => {
         'guard',
       ]);
       expect(result.workflowFiles.map((file) => file.path)).toEqual([
-        '.github/workflows/00-flowci-access.yml',
-        '.github/workflows/10-flowci-quality.yml',
-        '.github/workflows/20-flowci-package.yml',
-        '.github/workflows/05-flowci-env-guard.yml',
+        '.github/workflows/00-alphaci-access.yml',
+        '.github/workflows/10-alphaci-quality.yml',
+        '.github/workflows/20-alphaci-package.yml',
+        '.github/workflows/05-alphaci-env-guard.yml',
       ]);
       // the staged chain is platform-gated; the env guard is self-contained
       expect(
@@ -145,7 +145,7 @@ describe('WorkflowsService', () => {
       ).toBe(true);
       expect(result.workflowFiles[1]?.yaml).toContain('workflow_run:');
       expect(result.workflowFiles[1]?.yaml).toContain('workflows:');
-      expect(result.workflowFiles[1]?.yaml).toContain('alphaCI Access Gate');
+      expect(result.workflowFiles[1]?.yaml).toContain('ALPHACI Access Gate');
       expect(result.workflowFiles[1]?.yaml).toContain(
         "conclusion == 'success'",
       );
@@ -155,7 +155,7 @@ describe('WorkflowsService', () => {
       expect(result.workflowFiles[1]?.yaml).toContain(
         'http://localhost:4000/api/v1/ci/validate',
       );
-      expect(result.workflowFiles[2]?.yaml).toContain('alphaCI Quality');
+      expect(result.workflowFiles[2]?.yaml).toContain('ALPHACI Quality');
       expect(result.workflowFiles[2]?.yaml).toContain(
         "conclusion == 'success'",
       );
@@ -164,7 +164,7 @@ describe('WorkflowsService', () => {
       );
     });
 
-    it('omits Vercel deploy jobs even when deployment targets are provided', async () => {
+    it('emits branch-scoped Vercel deploy jobs when deployment targets are provided', async () => {
       const result = await service.generate('user-1', {
         templateId: 'nestjs-be',
         serviceName: 'my-service',
@@ -185,9 +185,11 @@ describe('WorkflowsService', () => {
       });
 
       const packageWorkflow = result.workflowFiles[2]?.yaml ?? '';
-      expect(packageWorkflow).not.toContain('vercel-deploy.yml');
-      expect(packageWorkflow).not.toContain('deploy-vercel-frontend:');
-      expect(packageWorkflow).not.toContain('VERCEL_FRONTEND_TOKEN');
+      expect(packageWorkflow).toContain('vercel-deploy.yml');
+      expect(packageWorkflow).toContain('deploy-vercel-frontend-test:');
+      expect(packageWorkflow).toContain('deploy-vercel-frontend-uat:');
+      expect(packageWorkflow).toContain('deploy-vercel-frontend-main:');
+      expect(packageWorkflow).toContain('VERCEL_FRONTEND_TOKEN');
       expect(packageWorkflow).toContain(
         'ref: ${{ github.event.workflow_run.head_sha || github.sha }}',
       );

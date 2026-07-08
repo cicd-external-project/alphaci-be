@@ -83,6 +83,48 @@ describe('buildProjectScaffold', () => {
     expect(paths).toContain('frontend/src/app/page.tsx');
   });
 
+  it('uses the repo-specific Sonar project key in standalone scaffolds', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      sonarProjectKey: 'Alpha-Explora_orders-api',
+    });
+
+    const sonar = files.find(
+      (file) => file.path === 'sonar-project.properties',
+    )!.content;
+    expect(sonar).toContain('sonar.projectKey=Alpha-Explora_orders-api');
+    expect(sonar).toContain('sonar.projectName=orders-api');
+  });
+
+  it('uses the repo-specific Sonar project key in monorepo scaffolds', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'mono',
+      sonarProjectKey: 'Alpha-Explora_orders-platform',
+    });
+
+    const sonar = files.find(
+      (file) => file.path === 'sonar-project.properties',
+    )!.content;
+    expect(sonar).toContain('sonar.projectKey=Alpha-Explora_orders-platform');
+    expect(sonar).toContain('sonar.sources=packages');
+  });
+
+  it('uses the repo-specific Sonar project key in microservice scaffolds', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'microservices',
+      frontendStack: 'nextjs',
+      sonarProjectKey: 'Alpha-Explora_orders-stack',
+    });
+
+    const sonar = files.find(
+      (file) => file.path === 'sonar-project.properties',
+    )!.content;
+    expect(sonar).toContain('sonar.projectKey=Alpha-Explora_orders-stack');
+    expect(sonar).toContain('sonar.sources=backend/src,frontend/src');
+  });
+
   it('normalizes legacy NestJS project type IDs before rendering files', () => {
     const files = buildProjectScaffold({
       serviceName: 'orders-api',

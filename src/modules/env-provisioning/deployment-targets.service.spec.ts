@@ -128,7 +128,7 @@ describe('DeploymentTargetsService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('rejects archived alphaCI-managed Vercel targets before provider calls', async () => {
+  it('rejects archived ALPHACI-managed Vercel targets before provider calls', async () => {
     await expect(
       service.createDeploymentTarget('project-1', 'user-1', {
         action: 'create',
@@ -152,7 +152,7 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
-  it('rejects archived alphaCI-managed Render targets before provider calls', async () => {
+  it('rejects archived ALPHACI-managed Render targets before provider calls', async () => {
     await expect(
       service.createDeploymentTarget('project-1', 'user-1', {
         action: 'create',
@@ -295,7 +295,7 @@ describe('DeploymentTargetsService', () => {
     expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
   });
 
-  it('updates alphaCI target metadata without calling provider clients', async () => {
+  it('updates ALPHACI target metadata without calling provider clients', async () => {
     const updatedTarget = {
       id: 'target-1',
       projectId: 'project-1',
@@ -416,7 +416,7 @@ describe('DeploymentTargetsService', () => {
     ).rejects.toThrow('Deployment target not found');
   });
 
-  it('detaches a target from alphaCI without calling provider delete APIs', async () => {
+  it('detaches a target from ALPHACI without calling provider delete APIs', async () => {
     deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
       true,
     );

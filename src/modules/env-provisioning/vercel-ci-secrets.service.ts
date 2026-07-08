@@ -109,7 +109,7 @@ export class VercelCiSecretsService {
       const token = config.envProvisioning.flowciManaged.vercelToken.trim();
       if (!token) {
         throw new InternalServerErrorException(
-          'FLOWCI_VERCEL_TOKEN is required for alphaCI-managed Vercel deployments',
+          'ALPHACI_VERCEL_TOKEN is required for ALPHACI-managed Vercel deployments',
         );
       }
 

@@ -1,14 +1,14 @@
 import { LocalCiRunsProvider } from './local-ci-runs.provider';
 
 describe('LocalCiRunsProvider', () => {
-  it('maps workflow names to alphaCI stages', () => {
+  it('maps workflow names to ALPHACI stages', () => {
     const provider = new LocalCiRunsProvider();
 
-    expect(provider.mapWorkflowNameToStage('alphaCI Access Gate')).toBe(
+    expect(provider.mapWorkflowNameToStage('ALPHACI Access Gate')).toBe(
       'access_gate',
     );
-    expect(provider.mapWorkflowNameToStage('alphaCI Quality')).toBe('quality');
-    expect(provider.mapWorkflowNameToStage('alphaCI Package')).toBe('package');
+    expect(provider.mapWorkflowNameToStage('ALPHACI Quality')).toBe('quality');
+    expect(provider.mapWorkflowNameToStage('ALPHACI Package')).toBe('package');
     expect(provider.mapWorkflowNameToStage('Deploy Render')).toBe(
       'deploy_render',
     );
@@ -39,8 +39,8 @@ describe('LocalCiRunsProvider', () => {
         repoFullName: 'tone/orders-api',
         workflowFiles: [
           {
-            name: 'alphaCI Quality',
-            path: '.github/workflows/10-flowci-quality.yml',
+            name: 'ALPHACI Quality',
+            path: '.github/workflows/10-alphaci-quality.yml',
           },
         ],
       }),
@@ -48,9 +48,9 @@ describe('LocalCiRunsProvider', () => {
       expect.objectContaining({
         id: 'local-project-1-quality',
         stage: 'quality',
-        workflowName: 'alphaCI Quality',
+        workflowName: 'ALPHACI Quality',
         htmlUrl:
-          'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
+          'https://github.com/tone/orders-api/actions/workflows/10-alphaci-quality.yml',
         canRerun: false,
       }),
     ]);

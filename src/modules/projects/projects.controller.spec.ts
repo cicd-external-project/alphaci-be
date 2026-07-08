@@ -95,14 +95,14 @@ const makeProjectsService = () =>
       workflowFiles: [
         {
           stage: 'access',
-          name: 'alphaCI Access Gate',
-          path: '.github/workflows/00-flowci-access.yml',
+          name: 'ALPHACI Access Gate',
+          path: '.github/workflows/00-alphaci-access.yml',
           gated: true,
-          yaml: 'name: alphaCI Access Gate',
+          yaml: 'name: ALPHACI Access Gate',
         },
       ],
       diffSummary: [
-        { path: '.github/workflows/00-flowci-access.yml', status: 'changed' },
+        { path: '.github/workflows/00-alphaci-access.yml', status: 'changed' },
       ],
       validationWarnings: [],
     }),
@@ -110,12 +110,12 @@ const makeProjectsService = () =>
       projectId: 'project-1',
       repoFullName: 'testuser/orders-api',
       branchName: 'alphaci/workflow-update-20260612000000',
-      workflowPath: '.github/workflows/00-flowci-access.yml',
+      workflowPath: '.github/workflows/00-alphaci-access.yml',
       workflowFiles: [
         {
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
           stage: 'access',
-          name: 'alphaCI Access Gate',
+          name: 'ALPHACI Access Gate',
           gated: true,
         },
       ],
@@ -143,7 +143,7 @@ const makeProjectCiRunsService = () =>
     getRun: jest.fn().mockResolvedValue({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'alphaCI Quality',
+      workflowName: 'ALPHACI Quality',
     }),
     rerun: jest.fn().mockResolvedValue({
       enabled: false,
@@ -388,7 +388,7 @@ describe('ProjectsController', () => {
     expect(result).toMatchObject({
       workflowFiles: [
         expect.objectContaining({
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
         }),
       ],
     });

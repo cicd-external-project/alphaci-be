@@ -27,7 +27,7 @@ describe('ProjectDriftService', () => {
       id: 'project-1',
       repo_full_name: 'tone/orders-api',
       repo_url: 'https://github.com/tone/orders-api',
-      workflow_path: '.github/workflows/00-flowci-access.yml',
+      workflow_path: '.github/workflows/00-alphaci-access.yml',
       project_options: { workflowFiles: [] },
     });
     findingsRepository.findActiveByProject.mockResolvedValue([]);
@@ -46,7 +46,7 @@ describe('ProjectDriftService', () => {
     envVarsRepository.listEnvMetadata.mockResolvedValue([]);
     ciTokensRepository.findProjectTokenStatus.mockResolvedValue({
       status: 'active',
-      tokenPrefix: 'fci_test',
+      tokenPrefix: 'aci_test',
     });
     configService.getOrThrow.mockReturnValue({
       driftDetection: { enabled: true },

@@ -9,8 +9,8 @@ describe('ProjectCiRunsService', () => {
     project_options: {
       workflowFiles: [
         {
-          name: 'alphaCI Quality',
-          path: '.github/workflows/10-flowci-quality.yml',
+          name: 'ALPHACI Quality',
+          path: '.github/workflows/10-alphaci-quality.yml',
         },
       ],
     },
@@ -66,8 +66,8 @@ describe('ProjectCiRunsService', () => {
       repoFullName: 'tone/orders-api',
       workflowFiles: [
         {
-          name: 'alphaCI Quality',
-          path: '.github/workflows/10-flowci-quality.yml',
+          name: 'ALPHACI Quality',
+          path: '.github/workflows/10-alphaci-quality.yml',
         },
       ],
     });
@@ -78,16 +78,16 @@ describe('ProjectCiRunsService', () => {
       {
         id: 'local-project-1-quality',
         stage: 'quality',
-        workflowName: 'alphaCI Quality',
+        workflowName: 'ALPHACI Quality',
         branch: 'test',
         commitSha: 'abc123',
-        actor: 'flowci-local',
+        actor: 'alphaci-local',
         status: 'completed',
         conclusion: 'failure',
         createdAt: '2026-06-12T00:00:00.000Z',
         updatedAt: '2026-06-12T00:05:00.000Z',
         htmlUrl:
-          'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
+          'https://github.com/tone/orders-api/actions/workflows/10-alphaci-quality.yml',
         canRerun: false,
       },
     ]);
@@ -110,16 +110,16 @@ describe('ProjectCiRunsService', () => {
     provider.getRun.mockResolvedValueOnce({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'alphaCI Quality',
+      workflowName: 'ALPHACI Quality',
       branch: 'test',
       commitSha: 'abc123',
-      actor: 'flowci-local',
+      actor: 'alphaci-local',
       status: 'completed',
       conclusion: 'failure',
       createdAt: '2026-06-12T00:00:00.000Z',
       updatedAt: '2026-06-12T00:05:00.000Z',
       htmlUrl:
-        'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
+        'https://github.com/tone/orders-api/actions/workflows/10-alphaci-quality.yml',
       canRerun: false,
     });
 

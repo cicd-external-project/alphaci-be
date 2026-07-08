@@ -2,7 +2,7 @@
 //
 // Generates a default project scaffold — an array of { path, content } tuples
 // ready to be pushed to a freshly-created GitHub repository. The scaffold gives
-// developers a working starting point that is compatible with the alphaCI CI/CD
+// developers a working starting point that is compatible with the ALPHACI CI/CD
 // workflows (TypeScript, ESLint, Jest with coverage, SonarQube reporting).
 //
 // Shape-aware: the scaffold structure varies by repoShape (standalone, monorepo,
@@ -79,6 +79,12 @@ export interface BuildScaffoldOptions {
   stack: string;
   includeDocker: boolean;
   nodeVersion?: string;
+  /**
+   * Per-repository SonarCloud key. Tokens and organization are centralized
+   * through backend-managed GitHub secrets; this is the only repo-specific
+   * Sonar identifier the generated scaffold should carry.
+   */
+  sonarProjectKey?: string;
   /** Canonical or catalog shape ID ('mono'/'multi' accepted) — defaults to 'standalone' */
   repoShape?: string;
   // Microservices shape only: secondary (frontend) service info
@@ -252,9 +258,12 @@ function buildJestConfig(): string {
   ].join('\n');
 }
 
-function buildSonarProperties(serviceName: string): string {
+function buildSonarProperties(
+  serviceName: string,
+  sonarProjectKey?: string,
+): string {
   return [
-    `sonar.projectKey=${serviceName}`,
+    `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
     `sonar.projectName=${serviceName}`,
     'sonar.sources=src',
     'sonar.tests=src',
@@ -516,9 +525,12 @@ function buildMonorepoRootJestConfig(): string {
   ].join('\n');
 }
 
-function buildMonorepoSonarProperties(serviceName: string): string {
+function buildMonorepoSonarProperties(
+  serviceName: string,
+  sonarProjectKey?: string,
+): string {
   return [
-    `sonar.projectKey=${serviceName}`,
+    `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
     `sonar.projectName=${serviceName}`,
     'sonar.sources=packages',
     'sonar.tests=packages',
@@ -593,9 +605,12 @@ function buildDockerCompose(): string {
   ].join('\n');
 }
 
-function buildMicroservicesSonarProperties(serviceName: string): string {
+function buildMicroservicesSonarProperties(
+  serviceName: string,
+  sonarProjectKey?: string,
+): string {
   return [
-    `sonar.projectKey=${serviceName}`,
+    `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
     `sonar.projectName=${serviceName}`,
     'sonar.sources=backend/src,frontend/src',
     'sonar.tests=backend/src,frontend/src',
@@ -672,7 +687,13 @@ function buildServiceSubdirFiles(
 function buildStandaloneScaffold(
   options: BuildScaffoldOptions,
 ): ScaffoldFile[] {
-  const { serviceName, stack, includeDocker, nodeVersion = '22' } = options;
+  const {
+    serviceName,
+    stack,
+    includeDocker,
+    nodeVersion = '22',
+    sonarProjectKey,
+  } = options;
   const packageName = toPackageName(serviceName);
 
   const sharedFiles: ScaffoldFile[] = [
@@ -682,7 +703,7 @@ function buildStandaloneScaffold(
     { path: 'jest.config.ts', content: buildJestConfig() },
     {
       path: 'sonar-project.properties',
-      content: buildSonarProperties(serviceName),
+      content: buildSonarProperties(serviceName, sonarProjectKey),
     },
     { path: 'eslint.config.mjs', content: buildEslintConfig() },
     { path: '.env.example', content: buildEnvExample() },
@@ -722,7 +743,7 @@ function buildStandaloneScaffold(
 }
 
 function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
-  const { serviceName, stack } = options;
+  const { serviceName, stack, sonarProjectKey } = options;
   const rootPackageName = toPackageName(serviceName);
   const corePackageName = `@${rootPackageName}/core`;
 
@@ -737,7 +758,7 @@ function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
     { path: 'jest.config.ts', content: buildMonorepoRootJestConfig() },
     {
       path: 'sonar-project.properties',
-      content: buildMonorepoSonarProperties(serviceName),
+      content: buildMonorepoSonarProperties(serviceName, sonarProjectKey),
     },
     { path: 'eslint.config.mjs', content: buildEslintConfig() },
     { path: '.env.example', content: buildEnvExample() },
@@ -769,6 +790,7 @@ function buildMicroservicesScaffold(
     frontendStack = 'nextjs',
     frontendServiceName,
     backendServiceName,
+    sonarProjectKey,
   } = options;
 
   const beName = backendServiceName ?? serviceName;
@@ -778,7 +800,7 @@ function buildMicroservicesScaffold(
     { path: '.gitignore', content: buildGitignore() },
     {
       path: 'sonar-project.properties',
-      content: buildMicroservicesSonarProperties(serviceName),
+      content: buildMicroservicesSonarProperties(serviceName, sonarProjectKey),
     },
   ];
 

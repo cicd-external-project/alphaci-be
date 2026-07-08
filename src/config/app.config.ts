@@ -236,43 +236,78 @@ export const appConfig = registerAs('app', (): AppConfig => {
       ownershipMode: 'flowci_managed',
       encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
       flowciManaged: {
-        renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
-        renderOwnerId: env['FLOWCI_RENDER_OWNER_ID']?.trim() || null,
+        renderToken:
+          env['ALPHACI_RENDER_API_KEY'] ?? env['FLOWCI_RENDER_API_KEY'] ?? '',
+        renderOwnerId:
+          env['ALPHACI_RENDER_OWNER_ID']?.trim() ||
+          env['FLOWCI_RENDER_OWNER_ID']?.trim() ||
+          null,
         renderDefaultRegion:
-          env['FLOWCI_RENDER_DEFAULT_REGION']?.trim() || 'singapore',
+          env['ALPHACI_RENDER_DEFAULT_REGION']?.trim() ||
+          env['FLOWCI_RENDER_DEFAULT_REGION']?.trim() ||
+          'singapore',
         renderDefaultInstanceType:
-          env['FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() || 'free',
+          env['ALPHACI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() ||
+          env['FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() ||
+          'free',
         renderAllowedInstanceTypes: (
-          env['FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES'] ?? 'free'
+          env['ALPHACI_RENDER_ALLOWED_INSTANCE_TYPES'] ??
+          env['FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES'] ??
+          'free'
         )
           .split(',')
           .map((value) => value.trim())
           .filter(Boolean),
         renderAllowPaidManaged:
-          env['FLOWCI_RENDER_ALLOW_PAID_MANAGED'] === 'true',
+          (env['ALPHACI_RENDER_ALLOW_PAID_MANAGED'] ??
+            env['FLOWCI_RENDER_ALLOW_PAID_MANAGED']) === 'true',
         renderManagedMaxServicesPerUser: Number(
-          env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2',
+          env['ALPHACI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ??
+            env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ??
+            '2',
         ),
         renderManagedFleetMax: Number(
-          env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ?? '0',
+          env['ALPHACI_RENDER_MANAGED_FLEET_MAX'] ??
+            env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ??
+            '0',
         ),
         vercelManagedFleetMax: Number(
-          env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ?? '0',
+          env['ALPHACI_VERCEL_MANAGED_FLEET_MAX'] ??
+            env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ??
+            '0',
         ),
         renderBootstrapImage:
+          env['ALPHACI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
           env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
           'docker.io/library/nginx:alpine',
         renderRegistryCredentialId:
-          env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() || null,
+          env['ALPHACI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() ||
+          null,
         renderRegistryUsername:
-          env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() || null,
+          env['ALPHACI_RENDER_REGISTRY_USERNAME']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() ||
+          null,
         renderRegistryToken:
-          env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() || null,
-        vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
-        vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
-        vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
-        sonarToken: env['FLOWCI_SONAR_TOKEN']?.trim() ?? '',
-        sonarOrganization: env['FLOWCI_SONAR_ORGANIZATION']?.trim() ?? '',
+          env['ALPHACI_RENDER_REGISTRY_TOKEN']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() ||
+          null,
+        vercelToken:
+          env['ALPHACI_VERCEL_TOKEN'] ?? env['FLOWCI_VERCEL_TOKEN'] ?? '',
+        vercelTeamId:
+          env['ALPHACI_VERCEL_TEAM_ID'] ?? env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
+        vercelTeamSlug:
+          env['ALPHACI_VERCEL_TEAM_SLUG'] ??
+          env['FLOWCI_VERCEL_TEAM_SLUG'] ??
+          null,
+        sonarToken:
+          env['ALPHACI_SONAR_TOKEN']?.trim() ??
+          env['FLOWCI_SONAR_TOKEN']?.trim() ??
+          '',
+        sonarOrganization:
+          env['ALPHACI_SONAR_ORGANIZATION']?.trim() ??
+          env['FLOWCI_SONAR_ORGANIZATION']?.trim() ??
+          '',
       },
     },
     projectSyncSnapshots: {
