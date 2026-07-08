@@ -97,8 +97,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
     const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
-    const shouldConnectGit =
-      input.deploymentStrategy !== 'vercel_ci_pushed' && Boolean(owner && repo);
+    const shouldConnectGit = Boolean(owner && repo);
     const vercelOrgId = this.resolveVercelOrgId(input);
     const response = await fetch(
       this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),

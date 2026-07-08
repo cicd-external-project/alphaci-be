@@ -1910,6 +1910,55 @@ export class ProjectsService {
       this.logger.warn(
         `SonarCloud project was not created for ${input.repoFullName}: ${String(error)}`,
       );
+    } finally {
+      await this.ensureSonarCloudProjectLink(input);
+    }
+  }
+
+  private async ensureSonarCloudProjectLink(input: {
+    sonarToken: string;
+    sonarProjectKey: string;
+    repoFullName: string;
+  }): Promise<void> {
+    try {
+      const body = new URLSearchParams({
+        projectKey: input.sonarProjectKey,
+        name: 'GitHub',
+        url: `https://github.com/${input.repoFullName}`,
+      });
+      const response = await fetch(
+        'https://sonarcloud.io/api/project_links/create',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${Buffer.from(
+              `${input.sonarToken}:`,
+            ).toString('base64')}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body,
+        },
+      );
+
+      if (response.ok) {
+        return;
+      }
+
+      const responseBody = await response.text();
+      if (
+        response.status === 400 &&
+        /already|exist|duplicate/i.test(responseBody)
+      ) {
+        return;
+      }
+
+      this.logger.warn(
+        `SonarCloud GitHub link was not created for ${input.repoFullName} (${String(response.status)}): ${responseBody.slice(0, 500)}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `SonarCloud GitHub link was not created for ${input.repoFullName}: ${String(error)}`,
+      );
     }
   }
 

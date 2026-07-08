@@ -396,6 +396,8 @@ describe('RenderEnvClient', () => {
       name: 'api-service-test',
       ownerId: 'tea-configured',
       environmentId: 'env-4',
+      repo: 'https://github.com/owner/api-service',
+      branch: 'test',
       autoDeploy: 'no',
       image: {
         ownerId: 'tea-configured',
