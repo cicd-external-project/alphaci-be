@@ -1,5 +1,9 @@
 import { RenderEnvClient } from './render-env.client';
 
+function jsonResponse(json: unknown) {
+  return { ok: true, json: () => Promise.resolve(json) };
+}
+
 describe('RenderEnvClient', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -143,28 +147,30 @@ describe('RenderEnvClient', () => {
   it('creates Render web services from repo metadata', async () => {
     global.fetch = jest
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve([
-            {
-              owner: {
-                id: 'tea-1',
-                name: 'alphaCI workspace',
-              },
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            owner: {
+              id: 'tea-1',
+              name: 'alphaCI workspace',
             },
-          ]),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            service: {
-              id: 'srv-1',
-              name: 'api-service-test',
-            },
-          }),
-      });
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-1', name: 'api-service' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-1', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          service: {
+            id: 'srv-1',
+            name: 'api-service-test',
+          },
+        }),
+      );
 
     const client = new RenderEnvClient();
     const target = await client.createTarget({
@@ -186,11 +192,13 @@ describe('RenderEnvClient', () => {
         renderServiceId: 'srv-1',
         renderServiceType: 'web_service',
         renderEnvironmentName: 'test',
+        renderEnvironmentId: 'env-1',
+        renderProjectName: 'api-service',
         dockerContext: '.',
         dockerfilePath: 'Dockerfile',
       },
     });
-    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+    const [, request] = (fetch as jest.Mock).mock.calls[3] as [
       string,
       { body: string; method: string },
     ];
@@ -199,6 +207,7 @@ describe('RenderEnvClient', () => {
       type: 'web_service',
       name: 'api-service-test',
       ownerId: 'tea-1',
+      environmentId: 'env-1',
       repo: 'https://github.com/owner/api-service',
       branch: 'test',
       rootDir: '.',
@@ -215,28 +224,30 @@ describe('RenderEnvClient', () => {
   it('uses the selected native Render runtime when creating Git-backed services', async () => {
     global.fetch = jest
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve([
-            {
-              owner: {
-                id: 'tea-1',
-                name: 'alphaCI workspace',
-              },
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            owner: {
+              id: 'tea-1',
+              name: 'alphaCI workspace',
             },
-          ]),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            service: {
-              id: 'srv-python',
-              name: 'worker-test',
-            },
-          }),
-      });
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-2', name: 'worker' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-2', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          service: {
+            id: 'srv-python',
+            name: 'worker-test',
+          },
+        }),
+      );
 
     const client = new RenderEnvClient();
     const target = await client.createTarget({
@@ -252,12 +263,15 @@ describe('RenderEnvClient', () => {
 
     expect(target.metadata).toMatchObject({
       renderRuntime: 'python',
+      renderEnvironmentId: 'env-2',
+      renderProjectName: 'worker',
     });
-    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+    const [, request] = (fetch as jest.Mock).mock.calls[3] as [
       string,
       { body: string; method: string },
     ];
     expect(JSON.parse(request.body)).toMatchObject({
+      environmentId: 'env-2',
       serviceDetails: {
         runtime: 'python',
         buildCommand: 'pip install -r requirements.txt',
@@ -269,28 +283,30 @@ describe('RenderEnvClient', () => {
   it('creates native Dockerfile-backed Render services without build or start commands', async () => {
     global.fetch = jest
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve([
-            {
-              owner: {
-                id: 'tea-1',
-                name: 'alphaCI workspace',
-              },
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            owner: {
+              id: 'tea-1',
+              name: 'alphaCI workspace',
             },
-          ]),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            service: {
-              id: 'srv-docker',
-              name: 'api-docker-test',
-            },
-          }),
-      });
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-3', name: 'api' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-3', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          service: {
+            id: 'srv-docker',
+            name: 'api-docker-test',
+          },
+        }),
+      );
 
     await new RenderEnvClient().createTarget({
       token: 'rnd',
@@ -303,13 +319,14 @@ describe('RenderEnvClient', () => {
       renderRuntime: 'docker',
     });
 
-    const [, request] = (fetch as jest.Mock).mock.calls[1] as [
+    const [, request] = (fetch as jest.Mock).mock.calls[3] as [
       string,
       { body: string; method: string },
     ];
     const body = JSON.parse(request.body) as {
       buildCommand?: string;
       startCommand?: string;
+      environmentId?: string;
       serviceDetails: {
         runtime: string;
         buildCommand?: string;
@@ -318,20 +335,27 @@ describe('RenderEnvClient', () => {
     };
     expect(body.buildCommand).toBeUndefined();
     expect(body.startCommand).toBeUndefined();
+    expect(body.environmentId).toBe('env-3');
     expect(body.serviceDetails).toEqual({ runtime: 'docker' });
   });
 
   it('creates image-backed Render services with the bootstrap image', async () => {
-    const fetchMock = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve({
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-4', name: 'api-service' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-4', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
           service: {
             id: 'srv-image',
             name: 'api-service-test',
           },
         }),
-    });
+      );
     global.fetch = fetchMock;
 
     const configService = {
@@ -363,12 +387,15 @@ describe('RenderEnvClient', () => {
       imageUrl: 'ghcr.io/flowci/bootstrap:node-22',
       renderInstanceType: 'free',
       renderRegion: 'singapore',
+      renderEnvironmentId: 'env-4',
+      renderProjectName: 'api-service',
     });
-    const [, request] = fetchMock.mock.calls[0] as [string, { body: string }];
+    const [, request] = fetchMock.mock.calls[2] as [string, { body: string }];
     expect(JSON.parse(request.body)).toMatchObject({
       type: 'web_service',
       name: 'api-service-test',
       ownerId: 'tea-configured',
+      environmentId: 'env-4',
       autoDeploy: 'no',
       image: {
         ownerId: 'tea-configured',
@@ -384,16 +411,22 @@ describe('RenderEnvClient', () => {
   });
 
   it('uses configured alphaCI Render owner id when creating services', async () => {
-    const fetchMock = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve({
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-5', name: 'api-service' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-5', name: 'test' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
           service: {
             id: 'srv-1',
             name: 'api-service-test',
           },
         }),
-    });
+      );
     global.fetch = fetchMock;
 
     const configService = {
@@ -414,15 +447,19 @@ describe('RenderEnvClient', () => {
       branchName: 'test',
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, request] = fetchMock.mock.calls[0] as [
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [url, request] = fetchMock.mock.calls[2] as [
       string,
       { body: string; method: string },
     ];
-    const body = JSON.parse(request.body) as { ownerId: string };
+    const body = JSON.parse(request.body) as {
+      ownerId: string;
+      environmentId: string;
+    };
     expect(url).toBe('https://api.render.com/v1/services');
     expect(request.method).toBe('POST');
     expect(body.ownerId).toBe('tea-configured');
+    expect(body.environmentId).toBe('env-5');
   });
 
   it('throws when Render owner lookup returns no owner id', async () => {
@@ -444,14 +481,14 @@ describe('RenderEnvClient', () => {
   it('throws when Render service creation returns an invalid response', async () => {
     global.fetch = jest
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve([{ owner: { id: 'tea-1' } }]),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ service: {} }),
-      });
+      .mockResolvedValueOnce(jsonResponse([{ owner: { id: 'tea-1' } }]))
+      .mockResolvedValueOnce(
+        jsonResponse([{ project: { id: 'prj-6', name: 'api-service' } }]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([{ environment: { id: 'env-6', name: 'production' } }]),
+      )
+      .mockResolvedValueOnce(jsonResponse({ service: {} }));
 
     await expect(
       new RenderEnvClient().createTarget({
@@ -464,16 +501,28 @@ describe('RenderEnvClient', () => {
   });
 
   it('maps Render branches to environment names', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
+    global.fetch = jest.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/projects?')) {
+        return Promise.resolve(
+          jsonResponse([{ project: { id: 'prj-7', name: 'api-service' } }]),
+        );
+      }
+      if (url.includes('/environments?')) {
+        return Promise.resolve(
+          jsonResponse([{ environment: { id: 'env-7', name: 'any' } }]),
+        );
+      }
+
+      return Promise.resolve(
+        jsonResponse({
           service: {
             id: 'srv-1',
             name: 'api-service-test',
           },
         }),
-    });
+      );
+    }) as unknown as typeof fetch;
 
     const configService = {
       getOrThrow: jest.fn().mockReturnValue({
@@ -527,4 +576,135 @@ describe('RenderEnvClient', () => {
       );
     },
   );
+
+  describe('Render project + environment grouping', () => {
+    it('reuses an existing project and environment without creating either', async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse([{ project: { id: 'prj-hr', name: 'hr-be' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse([{ environment: { id: 'env-hr-test', name: 'test' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ service: { id: 'srv-hr', name: 'hr-be-test' } }),
+        );
+      global.fetch = fetchMock;
+
+      const client = new RenderEnvClient();
+      const target = await client.createTarget({
+        token: 'rnd',
+        repoFullName: 'Alpha-Explora/hr-be',
+        projectName: 'hr-be-test',
+        branchName: 'test',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls[1][0]).toBe(
+        'https://api.render.com/v1/projects?ownerId=tea-1&limit=100',
+      );
+      expect(fetchMock.mock.calls[2][0]).toBe(
+        'https://api.render.com/v1/environments?projectId[]=prj-hr&name[]=test&limit=1',
+      );
+      expect(target.metadata).toMatchObject({
+        renderEnvironmentId: 'env-hr-test',
+        renderProjectName: 'hr-be',
+      });
+      const [, createServiceRequest] = fetchMock.mock.calls[3] as [
+        string,
+        { body: string },
+      ];
+      expect(JSON.parse(createServiceRequest.body)).toMatchObject({
+        environmentId: 'env-hr-test',
+      });
+    });
+
+    it('creates a missing environment inside an existing project', async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse([{ project: { id: 'prj-hr', name: 'hr-be' } }]),
+        )
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse({ environment: { id: 'ignored' } }))
+        .mockResolvedValueOnce(
+          jsonResponse([{ environment: { id: 'env-hr-uat', name: 'uat' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ service: { id: 'srv-hr', name: 'hr-be-uat' } }),
+        );
+      global.fetch = fetchMock;
+
+      const client = new RenderEnvClient();
+      const target = await client.createTarget({
+        token: 'rnd',
+        repoFullName: 'Alpha-Explora/hr-be',
+        projectName: 'hr-be-uat',
+        branchName: 'uat',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(6);
+      const [createEnvUrl, createEnvRequest] = fetchMock.mock.calls[3] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(createEnvUrl).toBe('https://api.render.com/v1/environments');
+      expect(createEnvRequest.method).toBe('POST');
+      expect(JSON.parse(createEnvRequest.body)).toEqual({
+        name: 'uat',
+        projectId: 'prj-hr',
+      });
+      expect(target.metadata).toMatchObject({
+        renderEnvironmentId: 'env-hr-uat',
+        renderProjectName: 'hr-be',
+      });
+    });
+
+    it('creates a new project and environment when neither exists', async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse([{ owner: { id: 'tea-1', name: 'alphaCI' } }]),
+        )
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse({ project: { id: 'prj-new' } }))
+        .mockResolvedValueOnce(
+          jsonResponse([{ environment: { id: 'env-new-test', name: 'test' } }]),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ service: { id: 'srv-new', name: 'hr-be-test' } }),
+        );
+      global.fetch = fetchMock;
+
+      const client = new RenderEnvClient();
+      const target = await client.createTarget({
+        token: 'rnd',
+        repoFullName: 'Alpha-Explora/hr-be',
+        projectName: 'hr-be-test',
+        branchName: 'test',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      const [createProjectUrl, createProjectRequest] = fetchMock.mock
+        .calls[2] as [string, { method: string; body: string }];
+      expect(createProjectUrl).toBe('https://api.render.com/v1/projects');
+      expect(createProjectRequest.method).toBe('POST');
+      expect(JSON.parse(createProjectRequest.body)).toEqual({
+        name: 'hr-be',
+        ownerId: 'tea-1',
+        environments: [{ name: 'test' }],
+      });
+      expect(target.metadata).toMatchObject({
+        renderEnvironmentId: 'env-new-test',
+        renderProjectName: 'hr-be',
+      });
+    });
+  });
 });

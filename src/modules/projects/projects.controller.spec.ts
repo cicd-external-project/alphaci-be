@@ -109,7 +109,7 @@ const makeProjectsService = () =>
     createWorkflowUpdatePullRequest: jest.fn().mockResolvedValue({
       projectId: 'project-1',
       repoFullName: 'testuser/orders-api',
-      branchName: 'flowci/workflow-update-20260612000000',
+      branchName: 'alphaci/workflow-update-20260612000000',
       workflowPath: '.github/workflows/00-flowci-access.yml',
       workflowFiles: [
         {

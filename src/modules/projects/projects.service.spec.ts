@@ -230,7 +230,7 @@ const makeOverviewReadRepositories = () => ({
     createRequest: jest.fn().mockResolvedValue({
       id: 'request-1',
       projectId: 'project-1',
-      branchName: 'flowci/workflow-update-20260612000000',
+      branchName: 'alphaci/workflow-update-20260612000000',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
       status: 'created',
@@ -835,14 +835,60 @@ jobs:
     expect(result.deploymentProvisioning.status).toBe('skipped');
   });
 
-  it('skips legacy deployment provisioning during GitHub project creation', async () => {
-    const result = await service.createProject('user-1', 'tone', 'oauth-token', {
-      repoName: 'orders-api',
-      visibility: 'private',
-      projectTypeId: 'nestjs-api',
-      workflowRecipeId: 'backend-api-ci',
-      serviceName: 'orders-api',
-      deploymentProvisioning: {
+  it('provisions centralized deployment targets during GitHub project creation', async () => {
+    projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
+      {
+        status: 'completed',
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'flowci_managed',
+            deploymentStrategy: 'render_image_pushed',
+            status: 'created',
+            deploymentTargetId: 'target-1',
+            providerProjectId: 'srv-1',
+            providerProjectName: 'orders-api-test',
+            providerMetadata: {},
+            errorSummary: null,
+            env: [],
+          },
+        ],
+      },
+    );
+
+    const result = await service.createProject(
+      'user-1',
+      'tone',
+      'oauth-token',
+      {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'orders-api-test',
+            },
+          ],
+        },
+      },
+    );
+
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      userId: 'user-1',
+      repoFullName: 'tone/orders-api',
+      githubAccessToken: 'oauth-token',
+      request: {
         enabled: true,
         targets: [
           {
@@ -854,14 +900,39 @@ jobs:
         ],
       },
     });
-
-    expect(
-      projectDeploymentProvisioningService.provisionForProject,
-    ).not.toHaveBeenCalled();
-    expect(result.deploymentProvisioning.status).toBe('skipped');
+    expect(result.deploymentProvisioning.status).toBe('completed');
   });
 
-  it('ignores legacy create-time provider provisioning failure mocks', async () => {
+  it('forces BYO provisioning requests onto centralized hosting and drops connection ids', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'byo',
+            providerConnectionId: 'connection-1',
+            projectName: 'orders-api-test',
+          },
+        ],
+      },
+    });
+
+    const request = (
+      projectDeploymentProvisioningService.provisionForProject.mock
+        .calls[0] as [{ request: { targets: Array<Record<string, unknown>> } }]
+    )[0].request;
+    expect(request.targets[0]?.['ownershipMode']).toBe('flowci_managed');
+    expect(request.targets[0]).not.toHaveProperty('providerConnectionId');
+  });
+
+  it('reports provisioning failures without failing project creation', async () => {
     projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
       {
         status: 'failed',
@@ -905,10 +976,8 @@ jobs:
     );
 
     expect(result.repoFullName).toBe('tone/orders-api');
-    expect(
-      projectDeploymentProvisioningService.provisionForProject,
-    ).not.toHaveBeenCalled();
-    expect(result.deploymentProvisioning.status).toBe('skipped');
+    expect(result.status).toBe('provisioned');
+    expect(result.deploymentProvisioning.status).toBe('failed');
   });
 
   it('records the actual staged workflow path even when a custom outputFileName is supplied', async () => {
@@ -1763,7 +1832,7 @@ jobs:
       'app-token',
       'tone',
       'orders-api',
-      expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+      expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
       'main',
     );
     expect(githubWrites.putFileContent).toHaveBeenCalledTimes(4);
@@ -1782,7 +1851,7 @@ jobs:
       'orders-api',
       expect.objectContaining({
         title: 'Update alphaCI workflow configuration',
-        head: expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+        head: expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
         base: 'main',
         body: expect.stringContaining(
           'Runtime environment values are not included.',

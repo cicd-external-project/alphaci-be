@@ -47,6 +47,8 @@ export interface EnvironmentVariables {
   FLOWCI_VERCEL_TOKEN?: string;
   FLOWCI_VERCEL_TEAM_ID?: string;
   FLOWCI_VERCEL_TEAM_SLUG?: string;
+  FLOWCI_SONAR_TOKEN?: string;
+  FLOWCI_SONAR_ORGANIZATION?: string;
 }
 
 type RawEnv = Record<string, unknown>;

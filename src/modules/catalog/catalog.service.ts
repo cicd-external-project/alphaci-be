@@ -78,9 +78,12 @@ export interface ProjectOptionsResult {
 // ─── Static fallback catalog ─────────────────────────────────────────────────
 
 // Order matters: the FE preselects the first enabled shape, so the simplest
-// option (standalone) must come first. 'mono' is parked as disabled until the
-// monorepo scaffold produces a real multi-package workspace with per-package
-// pipelines — today it would mislead users into a generic TS workspace.
+// option (standalone) must come first. 'microservices' (backend + frontend in
+// one repo) is archived: the product offers exactly two shapes — a single
+// application or backend + frontend as two repositories. 'mono' is parked as
+// disabled until the monorepo scaffold produces a real multi-package workspace
+// with per-package pipelines — today it would mislead users into a generic TS
+// workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
     {
@@ -93,9 +96,9 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
     {
       id: 'microservices',
       label: 'Backend + frontend (one repo)',
-      enabled: true,
+      enabled: false,
       description:
-        'One repository with backend/ and frontend/ folders. Each service gets its own CI pipeline.',
+        'Archived. Use "Backend + frontend (two repos)" instead — each service gets its own repository and pipeline.',
     },
     {
       id: 'multi',

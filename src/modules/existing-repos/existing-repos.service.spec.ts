@@ -116,7 +116,7 @@ jobs:
       'app-token',
       'tone',
       'app',
-      'flowci/app-ci',
+      'alphaci/app-ci',
       'main',
     );
     expect(githubService.putFileContent).toHaveBeenCalledWith(
@@ -125,7 +125,7 @@ jobs:
       'app',
       '.github/workflows/ci.yml',
       expect.stringContaining('app - Next.js Service'),
-      'flowci/app-ci',
+      'alphaci/app-ci',
       'ci: add alphaCI Studio workflow',
     );
     expect(githubService.createPullRequest).toHaveBeenCalledWith(
@@ -133,13 +133,13 @@ jobs:
       'tone',
       'app',
       expect.objectContaining({
-        head: 'flowci/app-ci',
+        head: 'alphaci/app-ci',
         base: 'main',
       }),
     );
     expect(result).toEqual({
       repoFullName: 'tone/app',
-      branchName: 'flowci/app-ci',
+      branchName: 'alphaci/app-ci',
       workflowPath: '.github/workflows/ci.yml',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/app/pull/42',
@@ -218,7 +218,7 @@ jobs:
     });
 
     expect(result).toMatchObject({
-      branchName: 'flowci/orders-api-ci',
+      branchName: 'alphaci/orders-api-ci',
       workflowPath: '.github/workflows/orders-api-unknown-standard.yml',
     });
     expect(githubService.putFileContent).toHaveBeenCalledWith(
@@ -227,7 +227,7 @@ jobs:
       'app',
       '.github/workflows/orders-api-unknown-standard.yml',
       expect.stringContaining("default: '24'"),
-      'flowci/orders-api-ci',
+      'alphaci/orders-api-ci',
       'ci: add alphaCI Studio workflow',
     );
   });

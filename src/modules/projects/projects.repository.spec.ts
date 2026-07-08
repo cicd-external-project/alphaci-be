@@ -215,11 +215,11 @@ describe('ProjectsRepository', () => {
   it('persists isExample = true when explicitly requested', async () => {
     await repo.create({
       userId: 'user-1',
-      repoFullName: 'flowci-demo/flowci-demo-app',
+      repoFullName: 'alphaci-demo/alphaci-demo-app',
       templateId: 'nest-service-pipeline',
-      serviceName: 'flowci-demo-backend',
+      serviceName: 'alphaci-demo-backend',
       workflowPath:
-        '.github/workflows/flowci-demo-backend-nest-service-pipeline.yml',
+        '.github/workflows/alphaci-demo-backend-nest-service-pipeline.yml',
       status: 'provisioned',
       visibility: 'public',
       isExample: true,

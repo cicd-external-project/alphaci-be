@@ -66,10 +66,22 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const ownerId =
       this.getConfiguredOwnerId() ??
       (await this.getDefaultOwnerId(input.token));
+    const renderEnvironmentName =
+      input.renderEnvironmentName ??
+      this.environmentFromBranch(input.branchName);
+    const renderProjectName = this.deriveProjectName(input.repoFullName);
+    const environmentId = await this.getOrCreateEnvironmentId(
+      input.token,
+      ownerId,
+      input.repoFullName,
+      renderEnvironmentName,
+    );
     const response = await fetch(`${RENDER_API_URL}/services`, {
       method: 'POST',
       headers: this.headers(input.token),
-      body: JSON.stringify(this.buildCreateServiceBody(input, ownerId)),
+      body: JSON.stringify(
+        this.buildCreateServiceBody(input, ownerId, environmentId),
+      ),
     });
     await this.assertOk(response, 'Render service could not be created');
     const payload = (await response.json()) as {
@@ -85,9 +97,6 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     const renderServiceType = input.renderServiceType ?? 'web_service';
     const renderRuntime =
       input.renderRuntime ?? this.resolveRenderRuntime(input);
-    const renderEnvironmentName =
-      input.renderEnvironmentName ??
-      this.environmentFromBranch(input.branchName);
     const dockerContext =
       input.dockerContext ?? input.rootDirectory?.trim() ?? '.';
     const dockerfilePath = input.dockerfilePath ?? 'Dockerfile';
@@ -105,6 +114,8 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         renderInstanceType: input.renderInstanceType ?? null,
         renderRegion: input.renderRegion ?? null,
         renderEnvironmentName,
+        renderEnvironmentId: environmentId,
+        renderProjectName,
         renderRegistryCredentialId: this.getRegistryCredentialId(),
         dockerContext,
         dockerfilePath,
@@ -212,6 +223,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
   private buildCreateServiceBody(
     input: CreateProviderTargetInput,
     ownerId: string,
+    environmentId: string,
   ): Record<string, unknown> {
     const type = input.renderServiceType ?? 'web_service';
     const serviceDetails = this.serviceDetails(input);
@@ -220,6 +232,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         type,
         name: input.projectName,
         ownerId,
+        environmentId,
         autoDeploy: 'no',
         image: {
           ownerId,
@@ -236,6 +249,7 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       type,
       name: input.projectName,
       ownerId,
+      environmentId,
       repo: `https://github.com/${input.repoFullName}`,
       branch: input.branchName,
       rootDir: input.rootDirectory,
@@ -302,6 +316,157 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     }
 
     return 'test';
+  }
+
+  private async getOrCreateEnvironmentId(
+    token: string,
+    ownerId: string,
+    repoFullName: string,
+    renderEnvironmentName: string,
+  ): Promise<string> {
+    const projectName = this.deriveProjectName(repoFullName);
+    const project = await this.findRenderProject(token, ownerId, projectName);
+
+    if (project) {
+      const existingEnvironmentId = await this.findRenderEnvironmentId(
+        token,
+        project.id,
+        renderEnvironmentName,
+      );
+      if (existingEnvironmentId) {
+        return existingEnvironmentId;
+      }
+
+      await this.createRenderEnvironment(
+        token,
+        project.id,
+        renderEnvironmentName,
+      );
+      const createdEnvironmentId = await this.findRenderEnvironmentId(
+        token,
+        project.id,
+        renderEnvironmentName,
+      );
+      if (!createdEnvironmentId) {
+        throw new Error(
+          'Render environment creation returned no environment id',
+        );
+      }
+
+      return createdEnvironmentId;
+    }
+
+    const createdProjectId = await this.createRenderProject(
+      token,
+      ownerId,
+      projectName,
+      renderEnvironmentName,
+    );
+    const newEnvironmentId = await this.findRenderEnvironmentId(
+      token,
+      createdProjectId,
+      renderEnvironmentName,
+    );
+    if (!newEnvironmentId) {
+      throw new Error('Render project creation returned no environment id');
+    }
+
+    return newEnvironmentId;
+  }
+
+  private deriveProjectName(repoFullName: string): string {
+    const parts = repoFullName.split('/');
+    return parts[parts.length - 1]?.trim() || repoFullName;
+  }
+
+  private async findRenderProject(
+    token: string,
+    ownerId: string,
+    projectName: string,
+  ): Promise<{ id: string; name: string } | null> {
+    const response = await fetch(
+      `${RENDER_API_URL}/projects?ownerId=${encodeURIComponent(ownerId)}&limit=100`,
+      { headers: this.headers(token) },
+    );
+    await this.assertOk(response, 'Render projects could not be loaded');
+    const projects = (await response.json()) as Array<{
+      project?: { id?: string; name?: string };
+    }>;
+
+    const match = projects
+      .map((item) => item.project)
+      .filter((project): project is { id: string; name: string } =>
+        Boolean(project?.id && project?.name),
+      )
+      .find((project) => project.name === projectName);
+
+    return match ?? null;
+  }
+
+  private async findRenderEnvironmentId(
+    token: string,
+    projectId: string,
+    environmentName: string,
+  ): Promise<string | null> {
+    const response = await fetch(
+      `${RENDER_API_URL}/environments?projectId[]=${encodeURIComponent(
+        projectId,
+      )}&name[]=${encodeURIComponent(environmentName)}&limit=1`,
+      { headers: this.headers(token) },
+    );
+    await this.assertOk(response, 'Render environments could not be loaded');
+    const environments = (await response.json()) as Array<{
+      environment?: { id?: string; name?: string; projectId?: string };
+    }>;
+
+    const match = environments
+      .map((item) => item.environment)
+      .filter((environment): environment is { id: string } =>
+        Boolean(environment?.id),
+      )[0];
+
+    return match?.id ?? null;
+  }
+
+  private async createRenderEnvironment(
+    token: string,
+    projectId: string,
+    environmentName: string,
+  ): Promise<void> {
+    const response = await fetch(`${RENDER_API_URL}/environments`, {
+      method: 'POST',
+      headers: this.headers(token),
+      body: JSON.stringify({ name: environmentName, projectId }),
+    });
+    await this.assertOk(response, 'Render environment could not be created');
+  }
+
+  private async createRenderProject(
+    token: string,
+    ownerId: string,
+    projectName: string,
+    environmentName: string,
+  ): Promise<string> {
+    const response = await fetch(`${RENDER_API_URL}/projects`, {
+      method: 'POST',
+      headers: this.headers(token),
+      body: JSON.stringify({
+        name: projectName,
+        ownerId,
+        environments: [{ name: environmentName }],
+      }),
+    });
+    await this.assertOk(response, 'Render project could not be created');
+    const payload = (await response.json()) as {
+      id?: string;
+      project?: { id?: string };
+    };
+    const projectId = payload.project?.id ?? payload.id;
+    if (!projectId) {
+      throw new Error('Render project creation returned an invalid response');
+    }
+
+    return projectId;
   }
 
   private getConfiguredOwnerId(): string | null {
