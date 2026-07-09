@@ -49,6 +49,69 @@ const sampleProperties = JSON.stringify({
   filePatterns: ['**/*.ts'],
 });
 
+const validStarterKit = (overrides: Record<string, unknown> = {}) => ({
+  id: 'react-starter-kit',
+  label: 'React Starter Kit',
+  description: 'A clean React starter.',
+  repo: 'Alpha-Explora/alphaexplora-react-starter-kit',
+  projectType: 'react',
+  repoShape: 'standalone',
+  language: 'typescript',
+  framework: 'react',
+  defaultWorkingDirectory: '.',
+  workflowTiming: 'after-template',
+  containsWorkflows: false,
+  defaultRecipesByPlan: {
+    solo: 'standard',
+    plus: 'standard',
+    pro: 'standard',
+  },
+  ...overrides,
+});
+
+const mockEngineProjectOptionsCatalog = ({
+  stacks = [
+    {
+      key: 'react',
+      label: 'React',
+      kind: 'frontend',
+      runtime: 'node',
+      serviceWorkflow: 'reactService',
+    },
+  ],
+  starterKits = [],
+}: {
+  stacks?: Array<Record<string, unknown>>;
+  starterKits?: Array<Record<string, unknown>>;
+} = {}) => {
+  mockSyncFs.readFileSync.mockImplementation((path) => {
+    const normalized = String(path).replaceAll('\\', '/');
+    if (normalized.endsWith('/catalog/stacks.json')) {
+      return JSON.stringify(stacks);
+    }
+    if (normalized.endsWith('/catalog/workflow-refs.json')) {
+      return JSON.stringify({
+        currentStable: 'v1',
+        repository: 'cicd-external-project/cicd-workflow',
+        workflows: {
+          reactService: '.github/workflows/service-react.yml',
+        },
+      });
+    }
+    if (normalized.endsWith('/catalog/starter-kits.json')) {
+      return JSON.stringify({ schemaVersion: 1, starterKits });
+    }
+    if (
+      normalized.endsWith('/catalog/actions.json') ||
+      normalized.endsWith('/catalog/providers.json') ||
+      normalized.endsWith('/catalog/plans.json')
+    ) {
+      return '[]';
+    }
+    throw new Error(`Unexpected catalog read: ${normalized}`);
+  });
+};
+
 describe('CatalogService', () => {
   let service: CatalogService;
 
@@ -230,6 +293,84 @@ describe('CatalogService', () => {
         }),
       ]);
     });
+
+    it('drops malformed starter kits from the engine catalog', () => {
+      mockEngineProjectOptionsCatalog({
+        starterKits: [
+          validStarterKit(),
+          validStarterKit({
+            id: 'malformed-starter-kit',
+            framework: undefined,
+            defaultRecipesByPlan: { solo: 'standard', plus: 'standard' },
+          }),
+        ],
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.starterKits.map((kit) => kit.id)).toEqual([
+        'react-starter-kit',
+      ]);
+    });
+
+    it('normalizes central starter kit ids to returned project options ids', () => {
+      mockEngineProjectOptionsCatalog({
+        starterKits: [
+          validStarterKit({
+            projectType: 'react-spa',
+            repoShape: 'single-app',
+            defaultRecipesByPlan: {
+              solo: 'frontend-checks',
+              plus: 'frontend-code-quality',
+              pro: 'frontend-release',
+            },
+          }),
+        ],
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.starterKits).toEqual([
+        expect.objectContaining({
+          id: 'react-starter-kit',
+          projectType: 'react',
+          repoShape: 'standalone',
+        }),
+      ]);
+    });
+
+    it('returns starter kit recipe ids that resolve to returned recipes', () => {
+      mockEngineProjectOptionsCatalog({
+        starterKits: [
+          validStarterKit({
+            projectType: 'react-spa',
+            repoShape: 'single-app',
+            defaultRecipesByPlan: {
+              solo: 'frontend-checks',
+              plus: 'frontend-code-quality',
+              pro: 'frontend-release',
+            },
+          }),
+        ],
+      });
+
+      const result = service.getProjectOptions();
+      const returnedRecipeIds = new Set(
+        result.recipes.map((recipe) => recipe.id),
+      );
+
+      expect(Object.values(result.starterKits[0]?.defaultRecipesByPlan ?? {})).toEqual([
+        'standard',
+        'standard',
+        'standard',
+      ]);
+      expect(
+        Object.values(result.starterKits[0]?.defaultRecipesByPlan ?? {}).every(
+          (recipeId) => returnedRecipeIds.has(recipeId),
+        ),
+      ).toBe(true);
+    });
+
     it('resolves relative template repo paths from the backend working directory first', async () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [

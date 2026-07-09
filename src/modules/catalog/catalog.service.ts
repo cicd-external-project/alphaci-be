@@ -577,16 +577,23 @@ export class CatalogService {
         typeof v.label === 'string' &&
         v.label.length > 0,
     );
-    const starterKits = (starterKitCatalog.starterKits ?? []).filter(
-      (kit): kit is StarterKitOption =>
-        this.isCatalogRecord(kit) &&
-        typeof kit.id === 'string' &&
-        typeof kit.label === 'string' &&
-        typeof kit.repo === 'string' &&
-        typeof kit.projectType === 'string' &&
-        kit.workflowTiming === 'after-template' &&
-        kit.containsWorkflows === false,
+    const recipes = this.buildEngineWorkflowRecipes(
+      supportedProjectTypes,
+      templateByProjectType,
+      workflowRefByProjectType,
     );
+    const starterKits = (starterKitCatalog.starterKits ?? [])
+      .filter((kit): kit is StarterKitOption => this.isStarterKitOption(kit))
+      .map((kit) =>
+        this.normalizeStarterKitOption(
+          kit,
+          projectTypes,
+          STATIC_PROJECT_OPTIONS.repoShapes,
+          recipes,
+        ),
+      )
+      .filter((kit): kit is StarterKitOption => kit !== null);
+
     return {
       repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
       projectTypes,
@@ -594,49 +601,155 @@ export class CatalogService {
         nodeVersions.length > 0
           ? nodeVersions
           : STATIC_PROJECT_OPTIONS.nodeVersions,
-      recipes: [
-        {
-          id: 'standard',
-          label: 'Standard',
-          description:
-            'Full CI pipeline generated from the workflow engine catalog.',
-          supportedProjectTypes,
-          templateByProjectType,
-          workflowRefByProjectType,
-          mandatoryJobs: ['lint', 'build'],
-          supportedOptions: {
-            lint: true,
-            unit: true,
-            build: true,
-            coverage: true,
-            security: true,
-            docker: true,
-            e2e: true,
-          },
-          optionJobs: {
-            lint: 'lint',
-            unit: 'test',
-            coverage: 'coverage',
-            security: 'security-scan',
-            docker: 'docker-build',
-            e2e: 'e2e',
-          },
-        },
-        {
-          id: 'minimal',
-          label: 'Minimal',
-          description:
-            'Lightweight CI generated from the workflow engine catalog.',
-          supportedProjectTypes,
-          templateByProjectType,
-          workflowRefByProjectType,
-          mandatoryJobs: ['lint', 'build'],
-          supportedOptions: { lint: true, unit: true, build: true },
-          optionJobs: { lint: 'lint', unit: 'test' },
-        },
-      ],
+      recipes,
       starterKits,
     };
+  }
+
+  private buildEngineWorkflowRecipes(
+    supportedProjectTypes: string[],
+    templateByProjectType: Record<string, string>,
+    workflowRefByProjectType: Record<string, string>,
+  ): WorkflowRecipeOption[] {
+    return [
+      {
+        id: 'standard',
+        label: 'Standard',
+        description:
+          'Full CI pipeline generated from the workflow engine catalog.',
+        supportedProjectTypes,
+        templateByProjectType,
+        workflowRefByProjectType,
+        mandatoryJobs: ['lint', 'build'],
+        supportedOptions: {
+          lint: true,
+          unit: true,
+          build: true,
+          coverage: true,
+          security: true,
+          docker: true,
+          e2e: true,
+        },
+        optionJobs: {
+          lint: 'lint',
+          unit: 'test',
+          coverage: 'coverage',
+          security: 'security-scan',
+          docker: 'docker-build',
+          e2e: 'e2e',
+        },
+      },
+      {
+        id: 'minimal',
+        label: 'Minimal',
+        description:
+          'Lightweight CI generated from the workflow engine catalog.',
+        supportedProjectTypes,
+        templateByProjectType,
+        workflowRefByProjectType,
+        mandatoryJobs: ['lint', 'build'],
+        supportedOptions: { lint: true, unit: true, build: true },
+        optionJobs: { lint: 'lint', unit: 'test' },
+      },
+    ];
+  }
+
+  private isStarterKitOption(value: unknown): value is StarterKitOption {
+    if (!this.isCatalogRecord(value)) {
+      return false;
+    }
+
+    const recipesByPlan = value.defaultRecipesByPlan;
+
+    return (
+      typeof value.id === 'string' &&
+      typeof value.label === 'string' &&
+      typeof value.description === 'string' &&
+      typeof value.repo === 'string' &&
+      typeof value.projectType === 'string' &&
+      typeof value.repoShape === 'string' &&
+      typeof value.language === 'string' &&
+      typeof value.framework === 'string' &&
+      typeof value.defaultWorkingDirectory === 'string' &&
+      value.workflowTiming === 'after-template' &&
+      value.containsWorkflows === false &&
+      this.isCatalogRecord(recipesByPlan) &&
+      typeof recipesByPlan.solo === 'string' &&
+      typeof recipesByPlan.plus === 'string' &&
+      typeof recipesByPlan.pro === 'string'
+    );
+  }
+
+  private normalizeStarterKitOption(
+    kit: StarterKitOption,
+    projectTypes: ProjectTypeOption[],
+    repoShapes: RepoShapeOption[],
+    recipes: WorkflowRecipeOption[],
+  ): StarterKitOption | null {
+    const projectType =
+      projectTypes.find((option) => option.id === kit.projectType) ??
+      projectTypes.find(
+        (option) =>
+          option.id === this.normalizeStarterKitProjectType(kit.projectType),
+      );
+    if (!projectType) {
+      return null;
+    }
+
+    const repoShape = this.normalizeStarterKitRepoShape(kit.repoShape);
+    if (
+      !repoShapes.some((option) => option.id === repoShape) ||
+      !projectType.repoShapes.includes(repoShape)
+    ) {
+      return null;
+    }
+
+    const validRecipeIds = new Set(
+      recipes
+        .filter(
+          (recipe) =>
+            projectType.allowedRecipes.includes(recipe.id) &&
+            recipe.supportedProjectTypes.includes(projectType.id),
+        )
+        .map((recipe) => recipe.id),
+    );
+    const fallbackRecipe = validRecipeIds.has(projectType.defaultRecipe)
+      ? projectType.defaultRecipe
+      : Array.from(validRecipeIds)[0];
+
+    if (!fallbackRecipe) {
+      return null;
+    }
+
+    const normalizeRecipe = (recipeId: string) =>
+      validRecipeIds.has(recipeId) ? recipeId : fallbackRecipe;
+
+    return {
+      ...kit,
+      projectType: projectType.id,
+      repoShape,
+      defaultRecipesByPlan: {
+        solo: normalizeRecipe(kit.defaultRecipesByPlan.solo),
+        plus: normalizeRecipe(kit.defaultRecipesByPlan.plus),
+        pro: normalizeRecipe(kit.defaultRecipesByPlan.pro),
+      },
+    };
+  }
+
+  private normalizeStarterKitProjectType(projectType: string): string {
+    const aliases: Record<string, string> = {
+      'react-spa': 'react',
+    };
+
+    return aliases[projectType] ?? projectType;
+  }
+
+  private normalizeStarterKitRepoShape(repoShape: string): string {
+    const aliases: Record<string, string> = {
+      'single-app': 'standalone',
+    };
+
+    return aliases[repoShape] ?? repoShape;
   }
 
   private isCatalogRecord(value: unknown): value is Record<string, unknown> {
