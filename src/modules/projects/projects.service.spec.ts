@@ -267,6 +267,8 @@ describe('ProjectsService', () => {
     getOrganizationProvisioningContext: jest.Mock;
     getOrganizationProvisioningContextByLogin: jest.Mock;
     createRepo: jest.Mock;
+    createBranch: jest.Mock;
+    applyBranchProtection: jest.Mock;
     setActionsSecretStrict: jest.Mock;
   };
   let projectDeploymentProvisioningService: {
@@ -293,6 +295,8 @@ jobs:
       getOrganizationProvisioningContext: jest.Mock;
       getOrganizationProvisioningContextByLogin: jest.Mock;
       createRepo: jest.Mock;
+      createBranch: jest.Mock;
+      applyBranchProtection: jest.Mock;
       setActionsSecretStrict: jest.Mock;
     };
     projectDeploymentProvisioningService = {
@@ -730,7 +734,7 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
     expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
@@ -770,7 +774,7 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
     expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
@@ -811,7 +815,7 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
     expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
@@ -880,7 +884,7 @@ jobs:
               slot: 'backend',
               provider: 'render',
               ownershipMode: 'flowci_managed',
-              projectName: 'orders-api-test',
+              projectName: 'orders-api-uat',
             },
           ],
         },
@@ -901,7 +905,7 @@ jobs:
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
+            projectName: 'orders-api-uat',
           },
         ],
       },
@@ -933,7 +937,8 @@ jobs:
               slot: 'backend',
               provider: 'render',
               ownershipMode: 'flowci_managed',
-              projectName: 'orders-api-test',
+              projectName: 'orders-api-uat',
+              branchName: 'uat',
               rootDirectory: '.',
               renderDeployMethod: 'managed_image',
               renderRuntime: 'docker',
@@ -954,10 +959,42 @@ jobs:
       >
     ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-test');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-render-backend-test');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-uat');
     expect(packageWorkflow?.[4]).toContain('deploy-render-backend-main');
-    expect(packageWorkflow?.[4]).toContain('RENDER_DEPLOY_HOOK_URL_TEST');
+    expect(packageWorkflow?.[4]).toContain('RENDER_DEPLOY_HOOK_URL_UAT');
+    expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'develop',
+      'main',
+    );
+    expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'uat',
+      'main',
+    );
+    expect(githubServiceMock.createBranch).not.toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'test',
+      'main',
+    );
+    expect(githubServiceMock.applyBranchProtection.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['oauth-token', 'tone', 'orders-api', 'uat'],
+        ['oauth-token', 'tone', 'orders-api', 'main'],
+      ]),
+    );
+    expect(
+      githubServiceMock.applyBranchProtection.mock.calls.some(
+        (call) => call[3] === 'develop' || call[3] === 'test',
+      ),
+    ).toBe(false);
   });
 
   it('forces BYO provisioning requests onto centralized hosting and drops connection ids', async () => {

@@ -99,6 +99,23 @@ describe('buildStagedWorkflowBundle', () => {
     ]);
   });
 
+  it('triggers generated workflows only for uat and main', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+    const access = yaml.load(bundle.workflowFiles[0]!.yaml) as Record<
+      string,
+      unknown
+    >;
+
+    expect(access['on']).toEqual({
+      push: { branches: ['uat', 'main'] },
+      pull_request: { branches: ['uat', 'main'] },
+      workflow_dispatch: {},
+    });
+  });
+
   it('includes a best-effort report-results job in every stage', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
@@ -381,7 +398,7 @@ describe('buildStagedWorkflowBundle', () => {
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
     const packageYaml = bundle.workflowFiles[2]!.yaml;
 
-    expect(pkg.jobs['deploy-vercel-standalone-test']?.uses).toBe(
+    expect(pkg.jobs['deploy-vercel-standalone-uat']?.uses).toBe(
       'cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1',
     );
     expect(pkg.jobs['deploy-vercel-standalone-uat']?.with?.environment).toBe(
@@ -415,14 +432,14 @@ describe('buildStagedWorkflowBundle', () => {
         {
           slot: 'backend',
           provider: 'render',
-          branchName: 'test',
+          branchName: 'uat',
           deploymentStrategy: 'render_image_pushed',
           dockerContext: 'backend',
           dockerfilePath: 'Dockerfile',
-          imageName: 'alphaci-backend-test-orders-api',
+          imageName: 'alphaci-backend-uat-orders-api',
           secretNames: {
-            deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_TEST',
-            healthcheckUrl: 'RENDER_HEALTHCHECK_URL_TEST',
+            deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
+            healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
           },
         },
       ],
@@ -430,35 +447,32 @@ describe('buildStagedWorkflowBundle', () => {
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
-    expect(pkg.jobs['docker-backend-test']?.uses).toBe(
+    expect(pkg.jobs['docker-backend-uat']?.uses).toBe(
       'cicd-external-project/cicd-workflow/.github/workflows/docker-build.yml@v1',
     );
-    expect(pkg.jobs['deploy-render-backend-test']?.uses).toBe(
+    expect(pkg.jobs['deploy-render-backend-uat']?.uses).toBe(
       'cicd-external-project/cicd-workflow/.github/workflows/render-deploy.yml@v1',
     );
-    expect(pkg.jobs['deploy-render-backend-test']?.needs).toEqual([
-      'docker-backend-test',
+    expect(pkg.jobs['deploy-render-backend-uat']?.needs).toEqual([
+      'docker-backend-uat',
     ]);
   });
 
-  it('creates promotion PR jobs for test→uat and uat→main', () => {
+  it('creates only the uat→main promotion PR job', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const toUat = pkg.jobs['promote-to-uat'];
     const toMain = pkg.jobs['promote-to-main'];
 
-    expect(toUat?.uses).toBe(
+    expect(pkg.jobs['promote-to-uat']).toBeUndefined();
+    expect(toMain?.uses).toBe(
       'cicd-external-project/cicd-workflow/.github/workflows/promotion.yml@v1',
     );
-    expect(toUat?.needs).toEqual(['build']);
-    expect(toUat?.if).toContain("== 'test'");
-    expect(toUat?.with?.['direction']).toBe('test-to-uat');
-    expect(toUat?.with?.['system1-name']).toBe('orders-api');
-    expect(toUat?.secrets).toEqual({
+    expect(toMain?.with?.['system1-name']).toBe('orders-api');
+    expect(toMain?.secrets).toEqual({
       PR_TOKEN:
         "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
     });
@@ -475,10 +489,10 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const toUat = pkg.jobs['promote-to-uat'];
+    const toMain = pkg.jobs['promote-to-main'];
 
-    expect(toUat?.needs).toEqual(['build']);
-    expect(toUat?.if).not.toContain('deploy-render');
+    expect(toMain?.needs).toEqual(['build']);
+    expect(toMain?.if).not.toContain('deploy-render');
   });
 
   describe('env guard workflow', () => {
@@ -497,13 +511,13 @@ describe('buildStagedWorkflowBundle', () => {
       expect(guardOf('frontend')).toBeUndefined();
     });
 
-    it('watches every branch push and pull request with write permissions', () => {
+    it('watches only protected branch pushes and pull requests', () => {
       const guard = guardOf()!;
       const wf = yaml.load(guard.yaml) as Record<string, unknown>;
 
       expect(wf['on']).toEqual({
-        push: { branches: ['**'] },
-        pull_request: {},
+        push: { branches: ['uat', 'main'] },
+        pull_request: { branches: ['uat', 'main'] },
       });
       expect(wf['permissions']).toEqual({
         contents: 'write',

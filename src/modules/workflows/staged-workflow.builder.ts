@@ -92,9 +92,7 @@ export const ALPHACI_REPORT_URL = `${PLATFORM_BASE_URL}/api/v1/ci/report`;
 /**
  * Branch promotion model enforced by the generated pipelines:
  *
- *   test → full quality suite at the baseline thresholds (tests, lint,
- *          security, Sonar analysis). CI-only: no deployments.
- *   uat  → the same suite under a stricter governance policy: higher
+ *   uat  → integration and test under a stricter governance policy: higher
  *          coverage threshold, lint warnings fail the build, and the
  *          SonarCloud quality gate is blocking.
  *   main → production. A production-readiness gate (GitHub `production`
@@ -125,7 +123,7 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
   centralWorkflowRef?: string;
 }
 
-type DeployBranch = 'test' | 'uat' | 'main';
+type DeployBranch = 'uat' | 'main';
 
 interface PackageDeploymentPlan {
   jobs: Record<string, unknown>;
@@ -182,8 +180,8 @@ export function buildStagedWorkflowBundle(
       yaml: dumpWorkflow({
         name: accessName,
         on: {
-          push: { branches: ['test', 'uat', 'main'] },
-          pull_request: { branches: ['test', 'uat', 'main'] },
+          push: { branches: ['uat', 'main'] },
+          pull_request: { branches: ['uat', 'main'] },
           workflow_dispatch: {},
         },
         permissions: { contents: 'read' },
@@ -255,7 +253,7 @@ export function buildStagedWorkflowBundle(
               'system-name': serviceName,
               'node-version': Number(nodeVersion),
               'lint-command': lintCommand,
-              // Lint warnings are tolerated on test, fatal on uat/main.
+              // PR source refs use the baseline; direct uat/main runs are strict.
               'fail-on-warning':
                 '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
               'checkout-ref': HEAD_SHA_EXPR,
@@ -277,8 +275,8 @@ export function buildStagedWorkflowBundle(
             needs: ['branch-policy', testJobId],
             // Runs only when the ALPHACI-provisioned SonarCloud secrets are
             // present so repos without Sonar keep passing. The quality gate
-            // is advisory on test and blocking on uat/main (branch-policy
-            // decides via sonar-gate-wait).
+            // is advisory for PR source refs and blocking on direct uat/main
+            // runs (branch-policy decides via sonar-gate-wait).
             if: "${{ needs.branch-policy.outputs.sonar-enabled == 'true' }}",
             uses: `${CENTRAL_WORKFLOW_REF}/sonarcloud-scan.yml@${centralWorkflowRef}`,
             with: {
@@ -349,13 +347,6 @@ export function buildStagedWorkflowBundle(
             centralWorkflowRef,
           ),
           ...deploymentPlan.jobs,
-          'promote-to-uat': promotionJob(
-            'test-to-uat',
-            'test',
-            serviceName,
-            centralWorkflowRef,
-            deploymentPlan.promotionNeeds.test,
-          ),
           'promote-to-main': promotionJob(
             'uat-to-main',
             'uat',
@@ -396,9 +387,9 @@ export function buildStagedWorkflowBundle(
  * Standalone secret-protection workflow seeded into every provisioned repo.
  *
  * Unlike the staged access/quality/package chain (which only watches
- * test/uat/main and authenticates against the platform), the env guard runs on
- * EVERY branch push and on every pull request, needs no platform secrets, and
- * is fully self-contained:
+ * uat/main and authenticates against the platform), the env guard watches the
+ * same protected branches and pull requests targeting them. It needs no
+ * platform secrets and is fully self-contained:
  *
  *   1. Detect — scans the tracked tree for dotenv-style files (`.env`,
  *      `.env.local`, `backend/.env.production`, …) while allowing the
@@ -412,7 +403,7 @@ export function buildStagedWorkflowBundle(
  *      values remain in git history and every exposed secret must be rotated.
  *   4. Fail — the check itself fails on the offending commit, and because
  *      branch protection requires the `env-guard` context, a PR containing an
- *      environment file cannot be merged into develop/test/uat/main.
+ *      environment file cannot be merged into uat/main.
  *
  * The rollback commit triggers one more guard run which finds a clean tree and
  * passes, so the loop always terminates. On fork pull requests the token is
@@ -483,8 +474,8 @@ export function buildEnvGuardWorkflowFile(): StagedWorkflowFile {
     yaml: dumpWorkflow({
       name: ENV_GUARD_WORKFLOW_NAME,
       on: {
-        push: { branches: ['**'] },
-        pull_request: {},
+        push: { branches: ['uat', 'main'] },
+        pull_request: { branches: ['uat', 'main'] },
       },
       permissions: {
         contents: 'write',
@@ -581,9 +572,9 @@ function validationJob(stage: WorkflowStage) {
 
 /**
  * Resolves the per-branch governance policy once so every downstream job
- * consumes the same decision. Feature branches and `test` get the baseline;
- * `uat` and `main` get the strict profile. Sonar participation is detected
- * from secret presence (job-level `if` cannot read the secrets context).
+ * consumes the same decision. Pull-request source refs get the baseline;
+ * direct `uat` and `main` runs get the strict profile. Sonar participation is
+ * detected from secret presence (job-level `if` cannot read secrets context).
  */
 function branchPolicyJob(baseCoverage: number, strictCoverage: number) {
   return {
@@ -670,7 +661,7 @@ function typecheckJob(servicePath: string, nodeVersion: string) {
 function buildJob(servicePath: string, nodeVersion: string) {
   return {
     needs: ['validate-access'],
-    if: `\${{ (${BRANCH_EXPR}) == 'test' || (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' }}`,
+    if: `\${{ (${BRANCH_EXPR}) == 'uat' || (${BRANCH_EXPR}) == 'main' }}`,
     runs_on: 'ubuntu-latest',
     defaults: {
       run: {
@@ -710,7 +701,6 @@ function buildPackageDeploymentPlan(
   const jobs: Record<string, unknown> = {};
   const jobIds: string[] = [];
   const promotionNeeds: Record<Exclude<DeployBranch, 'main'>, string[]> = {
-    test: [],
     uat: [],
   };
 
@@ -748,7 +738,7 @@ function buildPackageDeploymentPlan(
           dockerJobId,
         );
         jobIds.push(dockerJobId);
-        if (branch === 'test' || branch === 'uat') {
+        if (branch === 'uat') {
           promotionNeeds[branch].push(dockerJobId);
         }
       } else {
@@ -756,7 +746,7 @@ function buildPackageDeploymentPlan(
       }
 
       jobIds.push(jobId);
-      if (branch === 'test' || branch === 'uat') {
+      if (branch === 'uat') {
         promotionNeeds[branch].push(jobId);
       }
     }
@@ -768,11 +758,11 @@ function buildPackageDeploymentPlan(
 function resolveDeploymentBranches(
   branchName: string | undefined,
 ): DeployBranch[] {
-  if (branchName === 'test' || branchName === 'uat' || branchName === 'main') {
+  if (branchName === 'uat' || branchName === 'main') {
     return [branchName];
   }
 
-  return ['test', 'uat', 'main'];
+  return ['uat', 'main'];
 }
 
 function deploymentJobId(
@@ -836,7 +826,7 @@ function dockerBuildJob(
       'dockerfile-path': target.dockerfilePath ?? 'Dockerfile',
       'push-image': true,
       'scan-vulnerabilities': true,
-      'fail-on-vulnerabilities': branch !== 'test',
+      'fail-on-vulnerabilities': true,
     },
   };
 }
@@ -898,10 +888,9 @@ function productionGateJob(
 
 /**
  * Auto-promotion PR after a fully green package stage on a promotion source
- * branch: test → uat once everything passed on test, uat → main once
- * everything passed on uat. The package stage only starts after the quality
- * stage concluded successfully, so a created PR implies tests, lint,
- * security, and Sonar all passed under that branch's policy.
+ * branch: uat → main once everything passed on uat. The package stage only
+ * starts after the quality stage concluded successfully, so a created PR
+ * implies tests, lint, security, and Sonar all passed under the uat policy.
  *
  * `promotion.yml` updates the existing open PR instead of stacking
  * duplicates, and skips when the source branch has no commits ahead of the
@@ -910,8 +899,8 @@ function productionGateJob(
  * creates the PR but GitHub suppresses workflow triggers for it.
  */
 function promotionJob(
-  direction: 'test-to-uat' | 'uat-to-main',
-  sourceBranch: 'test' | 'uat',
+  direction: 'uat-to-main',
+  sourceBranch: 'uat',
   serviceName: string,
   centralWorkflowRef: string,
   additionalNeeds: string[] = [],

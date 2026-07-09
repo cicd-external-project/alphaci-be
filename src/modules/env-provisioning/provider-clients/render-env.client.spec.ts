@@ -612,7 +612,7 @@ describe('RenderEnvClient', () => {
         'https://api.render.com/v1/projects?ownerId=tea-1&limit=100',
       );
       expect(fetchMock.mock.calls[2][0]).toBe(
-        'https://api.render.com/v1/environments?projectId[]=prj-hr&name[]=test&limit=1',
+        'https://api.render.com/v1/environments?projectId=prj-hr&name=test&limit=1',
       );
       expect(target.metadata).toMatchObject({
         renderEnvironmentId: 'env-hr-test',

@@ -58,7 +58,7 @@ export class ProjectDeploymentProvisioningService {
           slot: requestedTarget.slot,
           ownershipMode: requestedTarget.ownershipMode,
           provider: requestedTarget.provider,
-          branchName: requestedTarget.branchName ?? 'test',
+          branchName: requestedTarget.branchName ?? 'uat',
           ...(requestedTarget.providerConnectionId
             ? { providerConnectionId: requestedTarget.providerConnectionId }
             : {}),
@@ -281,12 +281,28 @@ export class ProjectDeploymentProvisioningService {
   private expandManagedRenderTargets(
     request: DeploymentProvisioningRequestDto,
   ): DeploymentProvisioningTargetDto[] {
-    return request.targets.flatMap((target) => {
-      if (!this.shouldFanOutRenderTarget(target, request.targets)) {
+    const normalizedTargets = request.targets.map((target) => {
+      if (target.branchName !== 'test') {
+        return target;
+      }
+
+      const projectName = this.renderProjectNameForBranch(target, 'uat');
+      return {
+        ...target,
+        branchName: 'uat' as const,
+        ...(projectName ? { projectName } : {}),
+        ...(target.provider === 'render'
+          ? { renderEnvironmentName: 'uat' as const }
+          : {}),
+      };
+    });
+
+    return normalizedTargets.flatMap((target) => {
+      if (!this.shouldFanOutRenderTarget(target, normalizedTargets)) {
         return [target];
       }
 
-      return (['test', 'uat', 'main'] as const).map((branchName) => {
+      return (['uat', 'main'] as const).map((branchName) => {
         const projectName = this.renderProjectNameForBranch(target, branchName);
         return {
           ...target,
@@ -323,12 +339,12 @@ export class ProjectDeploymentProvisioningService {
         .filter((branch): branch is string => Boolean(branch)),
     );
 
-    return explicitlyStaged.size <= 1 && !explicitlyStaged.has('uat');
+    return explicitlyStaged.size <= 1;
   }
 
   private renderProjectNameForBranch(
     target: DeploymentProvisioningTargetDto,
-    branchName: 'test' | 'uat' | 'main',
+    branchName: 'uat' | 'main',
   ): string | undefined {
     const raw = target.projectName?.trim();
     if (!raw) {
@@ -360,7 +376,7 @@ export class ProjectDeploymentProvisioningService {
     const branchName =
       target.branchName === 'uat' || target.branchName === 'main'
         ? target.branchName
-        : 'test';
+        : 'uat';
     const imageName = `alphaci-${target.slot}-${branchName}-${
       target.projectName ?? target.slot
     }`
@@ -389,7 +405,7 @@ export class ProjectDeploymentProvisioningService {
   }
 
   private targetBranchKey(target: DeploymentProvisioningTargetDto): string {
-    return `${target.slot}:${target.provider}:${target.branchName ?? 'test'}`;
+    return `${target.slot}:${target.provider}:${target.branchName ?? 'uat'}`;
   }
 
   private targetEnvironment(
@@ -405,7 +421,7 @@ export class ProjectDeploymentProvisioningService {
       return 'uat';
     }
 
-    return 'test';
+    return 'uat';
   }
 
   private mergeEnvSet(

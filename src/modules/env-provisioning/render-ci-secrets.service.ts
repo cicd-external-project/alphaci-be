@@ -124,10 +124,9 @@ export class RenderCiSecretsService {
 
   renderSecretNames(
     slot: EnvTargetSlot,
-    branchName: string | null | undefined = 'test',
+    branchName: string | null | undefined = 'uat',
   ): RenderCiSecretNames {
-    const branch =
-      branchName === 'uat' || branchName === 'main' ? branchName : 'test';
+    const branch = branchName === 'main' ? branchName : 'uat';
     const prefix = `RENDER_${slot.toUpperCase()}_${branch.toUpperCase()}`;
     const branchSuffix = branch.toUpperCase();
     return {
