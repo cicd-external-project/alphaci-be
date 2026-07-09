@@ -301,21 +301,6 @@ interface WorkflowPropertiesFile {
   filePatterns?: string[];
 }
 
-interface EngineStackFile {
-  key?: string;
-  label?: string;
-  kind?: string;
-  runtime?: string;
-  serviceWorkflow?: string;
-}
-
-interface EngineWorkflowRefsFile {
-  currentStable?: string;
-  repository?: string;
-  nodeVersions?: Array<{ value: string; label: string }>;
-  workflows?: Record<string, string>;
-}
-
 interface EngineStarterKitsFile {
   starterKits?: unknown[];
 }
@@ -503,155 +488,193 @@ export class CatalogService {
 
   private loadEngineProjectOptions(): ProjectOptionsResult {
     const catalogRoot = join(this.resolveTemplateRepoPath(), 'catalog');
-    const stacks = this.readCatalogJson<EngineStackFile[]>(
+    const projectTypesCatalog = this.readCatalogJson<{
+      repoShapes?: unknown[];
+      projectTypes?: unknown[];
+      nodeVersions?: unknown[];
+    }>(catalogRoot, 'project-types.json');
+    const workflowRecipesCatalog = this.readCatalogJson<{ recipes?: unknown[] }>(
       catalogRoot,
-      'stacks.json',
+      'workflow-recipes.json',
     );
-    this.readCatalogJson<unknown[]>(catalogRoot, 'actions.json');
-    this.readCatalogJson<unknown[]>(catalogRoot, 'providers.json');
-    this.readCatalogJson<unknown[]>(catalogRoot, 'plans.json');
     const starterKitCatalog = this.readCatalogJson<EngineStarterKitsFile>(
       catalogRoot,
       'starter-kits.json',
     );
-    const workflowRefs = this.readCatalogJson<EngineWorkflowRefsFile>(
-      catalogRoot,
-      'workflow-refs.json',
-    );
 
-    const usableStacks = stacks.filter(
-      (
-        stack,
-      ): stack is Required<Pick<EngineStackFile, 'key' | 'label'>> &
-        EngineStackFile =>
-        typeof stack.key === 'string' &&
-        stack.key.length > 0 &&
-        typeof stack.label === 'string' &&
-        stack.label.length > 0,
+    const repoShapes = (projectTypesCatalog.repoShapes ?? []).filter(
+      (shape): shape is RepoShapeOption => this.isRepoShapeOption(shape),
     );
-
-    if (usableStacks.length === 0) {
-      throw new Error('stacks.json did not contain usable stacks');
+    if (repoShapes.length === 0) {
+      throw new Error('project-types.json did not contain usable repo shapes');
     }
 
-    const projectTypes = usableStacks.map((stack) => {
-      // Frontend stacks must include 'multi': the multi-repo shape provisions
-      // a frontend repository, so its Language picker draws from this list.
-      const repoShapes =
-        stack.kind === 'backend'
-          ? ['standalone', 'multi', 'microservices']
-          : ['standalone', 'mono', 'multi', 'microservices'];
+    const repoShapeIds = new Set(repoShapes.map((shape) => shape.id));
+    const recipes = (workflowRecipesCatalog.recipes ?? [])
+      .map((recipe) => this.toWorkflowRecipeOption(recipe))
+      .filter((recipe): recipe is WorkflowRecipeOption => recipe !== null);
+    if (recipes.length === 0) {
+      throw new Error('workflow-recipes.json did not contain usable recipes');
+    }
 
-      return {
-        id: stack.key,
-        label: stack.label,
-        kind: stack.kind === 'backend' ? 'backend' : 'frontend',
-        runtime: stack.runtime ?? 'node',
-        language: 'TypeScript',
-        framework: stack.label,
-        repoShapes,
-        defaultRecipe: 'standard',
-        allowedRecipes: ['standard', 'minimal'],
-        defaultOptions: { lint: true, unit: true, build: true, coverage: true },
-      } satisfies ProjectTypeOption;
-    });
+    const recipeIds = new Set(recipes.map((recipe) => recipe.id));
+    const projectTypes = (projectTypesCatalog.projectTypes ?? [])
+      .map((projectType) => this.toProjectTypeOption(projectType))
+      .filter((projectType): projectType is ProjectTypeOption => {
+        if (!projectType) {
+          return false;
+        }
 
-    const templateByProjectType = Object.fromEntries(
-      usableStacks.map((stack) => [
-        stack.key,
-        this.templateIdForStack(stack.key, stack.serviceWorkflow),
-      ]),
-    );
-    const workflowRefByProjectType = Object.fromEntries(
-      usableStacks.map((stack) => [
-        stack.key,
-        this.workflowRefForStack(stack.serviceWorkflow, workflowRefs),
-      ]),
-    );
-    const supportedProjectTypes = usableStacks.map((stack) => stack.key);
+        return (
+          projectType.repoShapes.some((repoShape) => repoShapeIds.has(repoShape)) &&
+          projectType.allowedRecipes.some((recipeId) => recipeIds.has(recipeId)) &&
+          recipeIds.has(projectType.defaultRecipe)
+        );
+      });
+    if (projectTypes.length === 0) {
+      throw new Error('project-types.json did not contain usable project types');
+    }
 
-    const nodeVersions = (workflowRefs.nodeVersions ?? []).filter(
-      (v): v is NodeVersionOption =>
-        typeof v.value === 'string' &&
-        v.value.length > 0 &&
-        typeof v.label === 'string' &&
-        v.label.length > 0,
+    const projectTypeIds = new Set(
+      projectTypes.map((projectType) => projectType.id),
     );
-    const recipes = this.buildEngineWorkflowRecipes(
-      supportedProjectTypes,
-      templateByProjectType,
-      workflowRefByProjectType,
+    const consistentRecipes = recipes.filter((recipe) =>
+      recipe.supportedProjectTypes.some((projectTypeId) =>
+        projectTypeIds.has(projectTypeId),
+      ),
     );
+
     const starterKits = (starterKitCatalog.starterKits ?? [])
       .filter((kit): kit is StarterKitOption => this.isStarterKitOption(kit))
       .map((kit) =>
         this.normalizeStarterKitOption(
           kit,
           projectTypes,
-          STATIC_PROJECT_OPTIONS.repoShapes,
-          recipes,
+          repoShapes,
+          consistentRecipes,
         ),
       )
       .filter((kit): kit is StarterKitOption => kit !== null);
 
+    const nodeVersions = (projectTypesCatalog.nodeVersions ?? []).filter(
+      (value): value is NodeVersionOption => this.isNodeVersionOption(value),
+    );
+
     return {
-      repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
+      repoShapes,
       projectTypes,
+      recipes: consistentRecipes,
       nodeVersions:
         nodeVersions.length > 0
           ? nodeVersions
           : STATIC_PROJECT_OPTIONS.nodeVersions,
-      recipes,
       starterKits,
     };
   }
 
-  private buildEngineWorkflowRecipes(
-    supportedProjectTypes: string[],
-    templateByProjectType: Record<string, string>,
-    workflowRefByProjectType: Record<string, string>,
-  ): WorkflowRecipeOption[] {
-    return [
-      {
-        id: 'standard',
-        label: 'Standard',
-        description:
-          'Full CI pipeline generated from the workflow engine catalog.',
-        supportedProjectTypes,
-        templateByProjectType,
-        workflowRefByProjectType,
-        mandatoryJobs: ['lint', 'build'],
-        supportedOptions: {
-          lint: true,
-          unit: true,
-          build: true,
-          coverage: true,
-          security: true,
-          docker: true,
-          e2e: true,
-        },
-        optionJobs: {
-          lint: 'lint',
-          unit: 'test',
-          coverage: 'coverage',
-          security: 'security-scan',
-          docker: 'docker-build',
-          e2e: 'e2e',
-        },
-      },
-      {
-        id: 'minimal',
-        label: 'Minimal',
-        description:
-          'Lightweight CI generated from the workflow engine catalog.',
-        supportedProjectTypes,
-        templateByProjectType,
-        workflowRefByProjectType,
-        mandatoryJobs: ['lint', 'build'],
-        supportedOptions: { lint: true, unit: true, build: true },
-        optionJobs: { lint: 'lint', unit: 'test' },
-      },
-    ];
+  private isRepoShapeOption(value: unknown): value is RepoShapeOption {
+    return (
+      this.isCatalogRecord(value) &&
+      typeof value.id === 'string' &&
+      typeof value.label === 'string' &&
+      typeof value.enabled === 'boolean' &&
+      (value.description === undefined || typeof value.description === 'string')
+    );
+  }
+
+  private toProjectTypeOption(value: unknown): ProjectTypeOption | null {
+    if (!this.isCatalogRecord(value)) {
+      return null;
+    }
+
+    const repoShapes = this.stringArray(value.repoShapes);
+    const reservedRepoShapes = this.stringArray(value.reservedRepoShapes);
+    const allowedRecipes = this.stringArray(value.allowedRecipes);
+
+    if (
+      typeof value.id !== 'string' ||
+      typeof value.label !== 'string' ||
+      (value.kind !== undefined &&
+        value.kind !== 'frontend' &&
+        value.kind !== 'backend') ||
+      (value.runtime !== undefined && typeof value.runtime !== 'string') ||
+      typeof value.language !== 'string' ||
+      typeof value.framework !== 'string' ||
+      (value.starterPath !== undefined &&
+        typeof value.starterPath !== 'string') ||
+      repoShapes.length === 0 ||
+      typeof value.defaultRecipe !== 'string' ||
+      allowedRecipes.length === 0 ||
+      !this.isProjectOptionSet(value.defaultOptions)
+    ) {
+      return null;
+    }
+
+    return {
+      id: value.id,
+      label: value.label,
+      kind:
+        value.kind === 'backend'
+          ? 'backend'
+          : value.kind === 'frontend'
+            ? 'frontend'
+            : undefined,
+      runtime: typeof value.runtime === 'string' ? value.runtime : undefined,
+      language: value.language,
+      framework: value.framework,
+      starterPath:
+        typeof value.starterPath === 'string' ? value.starterPath : undefined,
+      repoShapes,
+      reservedRepoShapes:
+        reservedRepoShapes.length > 0 ? reservedRepoShapes : undefined,
+      defaultRecipe: value.defaultRecipe,
+      allowedRecipes,
+      defaultOptions: this.toProjectOptionSet(value.defaultOptions),
+    };
+  }
+
+  private toWorkflowRecipeOption(value: unknown): WorkflowRecipeOption | null {
+    if (!this.isCatalogRecord(value)) {
+      return null;
+    }
+
+    const supportedProjectTypes = this.stringArray(value.supportedProjectTypes);
+    const mandatoryJobs = this.stringArray(value.mandatoryJobs);
+
+    if (
+      typeof value.id !== 'string' ||
+      typeof value.label !== 'string' ||
+      (value.description !== undefined &&
+        typeof value.description !== 'string') ||
+      supportedProjectTypes.length === 0 ||
+      !this.isStringRecord(value.templateByProjectType) ||
+      !this.isProjectOptionSet(value.supportedOptions) ||
+      !this.isStringRecord(value.optionJobs)
+    ) {
+      return null;
+    }
+
+    return {
+      id: value.id,
+      label: value.label,
+      description:
+        typeof value.description === 'string' ? value.description : undefined,
+      supportedProjectTypes,
+      templateByProjectType: value.templateByProjectType,
+      mandatoryJobs: mandatoryJobs.length > 0 ? mandatoryJobs : undefined,
+      supportedOptions: this.toProjectOptionSet(value.supportedOptions),
+      optionJobs: this.toOptionJobs(value.optionJobs),
+    };
+  }
+
+  private isNodeVersionOption(value: unknown): value is NodeVersionOption {
+    return (
+      this.isCatalogRecord(value) &&
+      typeof value.value === 'string' &&
+      value.value.length > 0 &&
+      typeof value.label === 'string' &&
+      value.label.length > 0
+    );
   }
 
   private isStarterKitOption(value: unknown): value is StarterKitOption {
@@ -696,7 +719,9 @@ export class CatalogService {
       return null;
     }
 
-    const repoShape = this.normalizeStarterKitRepoShape(kit.repoShape);
+    const repoShape = repoShapes.some((option) => option.id === kit.repoShape)
+      ? kit.repoShape
+      : this.normalizeStarterKitRepoShape(kit.repoShape);
     if (
       !repoShapes.some((option) => option.id === repoShape) ||
       !projectType.repoShapes.includes(repoShape)
@@ -752,10 +777,71 @@ export class CatalogService {
     return aliases[repoShape] ?? repoShape;
   }
 
+  private stringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : [];
+  }
+
+  private isProjectOptionSet(value: unknown): boolean {
+    if (!this.isCatalogRecord(value)) {
+      return false;
+    }
+
+    return ['lint', 'unit', 'build', 'coverage', 'security', 'docker', 'e2e'].every(
+      (key) => value[key] === undefined || typeof value[key] === 'boolean',
+    );
+  }
+
+  private toProjectOptionSet(value: unknown): ProjectOptionSet {
+    const source = this.isCatalogRecord(value) ? value : {};
+    const result: ProjectOptionSet = {};
+    for (const key of [
+      'lint',
+      'unit',
+      'build',
+      'coverage',
+      'security',
+      'docker',
+      'e2e',
+    ] as const) {
+      if (typeof source[key] === 'boolean') {
+        result[key] = source[key];
+      }
+    }
+    return result;
+  }
+
+  private isStringRecord(value: unknown): value is Record<string, string> {
+    return (
+      this.isCatalogRecord(value) &&
+      Object.values(value).every((item) => typeof item === 'string')
+    );
+  }
+
+  private toOptionJobs(
+    value: Record<string, string>,
+  ): WorkflowRecipeOption['optionJobs'] {
+    const result: WorkflowRecipeOption['optionJobs'] = {};
+    for (const key of [
+      'lint',
+      'unit',
+      'build',
+      'coverage',
+      'security',
+      'docker',
+      'e2e',
+    ] as const) {
+      if (typeof value[key] === 'string') {
+        result[key] = value[key];
+      }
+    }
+    return result;
+  }
+
   private isCatalogRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
   }
-
   private readCatalogJson<T>(catalogRoot: string, fileName: string): T {
     const raw = readFileSync(join(catalogRoot, fileName), 'utf8');
     return JSON.parse(raw) as T;
