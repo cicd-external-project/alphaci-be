@@ -251,9 +251,6 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         name: input.projectName,
         ownerId,
         environmentId,
-        repo: `https://github.com/${input.repoFullName}`,
-        branch: input.branchName,
-        rootDir: input.rootDirectory,
         autoDeploy: 'no',
         image: {
           ownerId,

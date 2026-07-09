@@ -391,13 +391,12 @@ describe('RenderEnvClient', () => {
       renderProjectName: 'api-service',
     });
     const [, request] = fetchMock.mock.calls[2] as [string, { body: string }];
-    expect(JSON.parse(request.body)).toMatchObject({
+    const body = JSON.parse(request.body) as Record<string, unknown>;
+    expect(body).toMatchObject({
       type: 'web_service',
       name: 'api-service-test',
       ownerId: 'tea-configured',
       environmentId: 'env-4',
-      repo: 'https://github.com/owner/api-service',
-      branch: 'test',
       autoDeploy: 'no',
       image: {
         ownerId: 'tea-configured',
@@ -410,6 +409,9 @@ describe('RenderEnvClient', () => {
         region: 'singapore',
       },
     });
+    expect(body).not.toHaveProperty('repo');
+    expect(body).not.toHaveProperty('branch');
+    expect(body).not.toHaveProperty('rootDir');
   });
 
   it('uses configured ALPHACI Render owner id when creating services', async () => {

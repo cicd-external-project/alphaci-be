@@ -611,6 +611,14 @@ export class ProjectsService {
     }
 
     const { backend, frontend } = dto.microservicesConfig;
+    const effectiveDeploymentProvisioning =
+      this.withDefaultCreateDeploymentProvisioning({
+        request: dto.deploymentProvisioning,
+        projectTypeId: backend.projectTypeId,
+        serviceName: backend.serviceName,
+        repoName: dto.repoName,
+        servicePath: backend.servicePath ?? 'backend',
+      });
 
     // 1. Resolve template IDs for both slots
     const backendTemplateId = this.resolveTemplateId(
@@ -636,11 +644,11 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'backend',
       deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         'backend',
       ),
       deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         ['backend'],
         backend.servicePath ?? 'backend',
       ),
@@ -657,7 +665,7 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'frontend',
       deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         ['frontend'],
         frontend.servicePath ?? 'frontend',
       ),
@@ -839,7 +847,7 @@ export class ProjectsService {
         userId,
         repoFullName,
         githubAccessToken: provisioningToken,
-        request: dto.deploymentProvisioning,
+        request: effectiveDeploymentProvisioning,
         slots: ['backend', 'frontend'],
       });
 
@@ -1737,17 +1745,34 @@ export class ProjectsService {
     repoName: string;
     servicePath?: string | undefined;
   }): DeploymentProvisioningRequestDto | undefined {
-    if (input.request?.enabled && input.request.targets.length > 0) {
-      return input.request;
-    }
-
     if (!this.isBackendProjectType(input.projectTypeId)) {
       return input.request;
     }
 
+    const existingTargets = input.request?.targets ?? [];
+    const hasBackendRenderTarget = existingTargets.some(
+      (target) =>
+        ['backend', 'standalone'].includes(target.slot) &&
+        target.provider === 'render',
+    );
+    if (hasBackendRenderTarget) {
+      return {
+        ...input.request,
+        enabled: true,
+        targets: existingTargets,
+      };
+    }
+
     return {
       enabled: true,
+      ...(input.request?.variableGroups
+        ? { variableGroups: input.request.variableGroups }
+        : {}),
+      ...(input.request?.sharedEnv
+        ? { sharedEnv: input.request.sharedEnv }
+        : {}),
       targets: [
+        ...existingTargets,
         {
           slot: 'backend',
           provider: 'render',
@@ -2702,6 +2727,14 @@ export class ProjectsService {
       ? dto.repoName
       : `${dto.repoName}-be`;
     const feRepoName = beRepoName.replace(/-be$/, '-fe');
+    const effectiveDeploymentProvisioning =
+      this.withDefaultCreateDeploymentProvisioning({
+        request: dto.deploymentProvisioning,
+        projectTypeId: backend.projectTypeId,
+        serviceName: backend.serviceName,
+        repoName: beRepoName,
+        servicePath: '.',
+      });
 
     // ── Backend repository ──────────────────────────────────────────────────
 
@@ -2722,11 +2755,11 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         'backend',
       ),
       deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         ['backend', 'standalone'],
         '.',
       ),
@@ -2893,7 +2926,7 @@ export class ProjectsService {
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
         deploymentTargets: this.resolveDeploymentWorkflowTargets(
-          dto.deploymentProvisioning,
+          effectiveDeploymentProvisioning,
           ['frontend'],
           '.',
         ),
@@ -3038,7 +3071,7 @@ export class ProjectsService {
         userId,
         repoFullName: beRepoFullName,
         githubAccessToken: provisioningToken,
-        request: dto.deploymentProvisioning,
+        request: effectiveDeploymentProvisioning,
         slots: ['backend'],
       }),
     ];
@@ -3049,7 +3082,7 @@ export class ProjectsService {
           userId,
           repoFullName: feRepoFullName,
           githubAccessToken: provisioningToken,
-          request: dto.deploymentProvisioning,
+          request: effectiveDeploymentProvisioning,
           slots: ['frontend'],
         }),
       );
