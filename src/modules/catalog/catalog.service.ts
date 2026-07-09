@@ -68,11 +68,27 @@ export interface NodeVersionOption {
   label: string;
 }
 
+export interface StarterKitOption {
+  id: string;
+  label: string;
+  description: string;
+  repo: string;
+  projectType: string;
+  repoShape: string;
+  language: string;
+  framework: string;
+  defaultWorkingDirectory: string;
+  workflowTiming: 'after-template';
+  containsWorkflows: boolean;
+  defaultRecipesByPlan: Record<'solo' | 'plus' | 'pro', string>;
+}
+
 export interface ProjectOptionsResult {
   repoShapes: RepoShapeOption[];
   projectTypes: ProjectTypeOption[];
   recipes: WorkflowRecipeOption[];
   nodeVersions: NodeVersionOption[];
+  starterKits: StarterKitOption[];
 }
 
 // ─── Static fallback catalog ─────────────────────────────────────────────────
@@ -260,6 +276,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
     { value: '22', label: 'Node 22 LTS (Jod)' },
     { value: '24', label: 'Node 24 LTS (Noble)' },
   ],
+  starterKits: [],
 };
 
 // ─── Template types ───────────────────────────────────────────────────────────
@@ -297,6 +314,10 @@ interface EngineWorkflowRefsFile {
   repository?: string;
   nodeVersions?: Array<{ value: string; label: string }>;
   workflows?: Record<string, string>;
+}
+
+interface EngineStarterKitsFile {
+  starterKits?: unknown[];
 }
 
 @Injectable()
@@ -489,6 +510,10 @@ export class CatalogService {
     this.readCatalogJson<unknown[]>(catalogRoot, 'actions.json');
     this.readCatalogJson<unknown[]>(catalogRoot, 'providers.json');
     this.readCatalogJson<unknown[]>(catalogRoot, 'plans.json');
+    const starterKitCatalog = this.readCatalogJson<EngineStarterKitsFile>(
+      catalogRoot,
+      'starter-kits.json',
+    );
     const workflowRefs = this.readCatalogJson<EngineWorkflowRefsFile>(
       catalogRoot,
       'workflow-refs.json',
@@ -552,7 +577,16 @@ export class CatalogService {
         typeof v.label === 'string' &&
         v.label.length > 0,
     );
-
+    const starterKits = (starterKitCatalog.starterKits ?? []).filter(
+      (kit): kit is StarterKitOption =>
+        this.isCatalogRecord(kit) &&
+        typeof kit.id === 'string' &&
+        typeof kit.label === 'string' &&
+        typeof kit.repo === 'string' &&
+        typeof kit.projectType === 'string' &&
+        kit.workflowTiming === 'after-template' &&
+        kit.containsWorkflows === false,
+    );
     return {
       repoShapes: STATIC_PROJECT_OPTIONS.repoShapes,
       projectTypes,
@@ -601,7 +635,12 @@ export class CatalogService {
           optionJobs: { lint: 'lint', unit: 'test' },
         },
       ],
+      starterKits,
     };
+  }
+
+  private isCatalogRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
   }
 
   private readCatalogJson<T>(catalogRoot: string, fileName: string): T {

@@ -104,6 +104,10 @@ describe('CatalogService', () => {
           });
         }
 
+        if (normalized.endsWith('/catalog/starter-kits.json')) {
+          return JSON.stringify({ starterKits: [] });
+        }
+
         if (
           normalized.endsWith('/catalog/actions.json') ||
           normalized.endsWith('/catalog/providers.json') ||
@@ -155,6 +159,77 @@ describe('CatalogService', () => {
       );
     });
 
+    it('loads starter kits from the engine catalog', () => {
+      mockSyncFs.readFileSync.mockImplementation((path) => {
+        const normalized = String(path).replaceAll('\\', '/');
+        if (normalized.endsWith('/catalog/stacks.json')) {
+          return JSON.stringify([
+            {
+              key: 'react-spa',
+              label: 'React SPA',
+              kind: 'frontend',
+              runtime: 'node',
+              serviceWorkflow: 'reactService',
+            },
+          ]);
+        }
+        if (normalized.endsWith('/catalog/workflow-refs.json')) {
+          return JSON.stringify({
+            currentStable: 'v1',
+            repository: 'cicd-external-project/cicd-workflow',
+            workflows: {
+              reactService: '.github/workflows/service-react.yml',
+            },
+          });
+        }
+        if (normalized.endsWith('/catalog/starter-kits.json')) {
+          return JSON.stringify({
+            schemaVersion: 1,
+            starterKits: [
+              {
+                id: 'react-starter-kit',
+                label: 'React Starter Kit',
+                description: 'A clean React starter.',
+                repo: 'Alpha-Explora/alphaexplora-react-starter-kit',
+                projectType: 'react-spa',
+                repoShape: 'single-app',
+                language: 'typescript',
+                framework: 'react',
+                defaultWorkingDirectory: '.',
+                workflowTiming: 'after-template',
+                containsWorkflows: false,
+                defaultRecipesByPlan: {
+                  solo: 'frontend-checks',
+                  plus: 'frontend-code-quality',
+                  pro: 'frontend-release',
+                },
+              },
+            ],
+          });
+        }
+
+        if (
+          normalized.endsWith('/catalog/actions.json') ||
+          normalized.endsWith('/catalog/providers.json') ||
+          normalized.endsWith('/catalog/plans.json')
+        ) {
+          return '[]';
+        }
+        throw new Error(`Unexpected catalog read: ${normalized}`);
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.starterKits).toEqual([
+        expect.objectContaining({
+          id: 'react-starter-kit',
+          label: 'React Starter Kit',
+          repo: 'Alpha-Explora/alphaexplora-react-starter-kit',
+          projectType: 'react-spa',
+          containsWorkflows: false,
+        }),
+      ]);
+    });
     it('resolves relative template repo paths from the backend working directory first', async () => {
       const module: TestingModule = await Test.createTestingModule({
         providers: [
