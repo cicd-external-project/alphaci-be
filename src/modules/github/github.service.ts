@@ -474,6 +474,71 @@ export class GithubService {
     };
   }
 
+  async createRepoFromTemplate(
+    accessToken: string,
+    input: {
+      templateOwner: string;
+      templateRepo: string;
+      repoName: string;
+      private: boolean;
+    },
+  ): Promise<{
+    repoUrl: string;
+    cloneUrl: string;
+    ownerLogin: string;
+    repoName: string;
+  }> {
+    const response = await this.fetchWithRetry(
+      `https://api.github.com/repos/${input.templateOwner}/${input.templateRepo}/generate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: input.repoName,
+          private: input.private,
+          include_all_branches: false,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      if (response.status === 403 || response.status === 401) {
+        throw new ForbiddenException(
+          `GitHub rejected template repo creation (${String(response.status)}). ` +
+            `Ensure your OAuth token includes the 'repo' scope, then sign out and sign back in.`,
+        );
+      }
+      if (response.status === 422) {
+        throw new UnprocessableEntityException(
+          `Repository already exists or template is invalid: ${body}`,
+        );
+      }
+      throw new BadGatewayException(
+        `GitHub template repo creation failed (${String(response.status)}): ${body}`,
+      );
+    }
+
+    const repo = (await response.json()) as {
+      html_url: string;
+      clone_url: string;
+      owner: { login: string };
+      name: string;
+    };
+
+    return {
+      repoUrl: repo.html_url,
+      cloneUrl: repo.clone_url,
+      ownerLogin: repo.owner.login,
+      repoName: repo.name,
+    };
+  }
+
   async createBranch(
     accessToken: string,
     owner: string,

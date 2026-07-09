@@ -597,6 +597,68 @@ describe('GithubService', () => {
       },
     );
 
+    it('creates a repository from a GitHub template repository', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/tone/orders-api',
+          clone_url: 'https://github.com/tone/orders-api.git',
+          owner: { login: 'tone' },
+          name: 'orders-api',
+        }),
+      } as unknown as Response);
+
+      await expect(
+        service.createRepoFromTemplate('gh-token', {
+          templateOwner: 'alphaexplora',
+          templateRepo: 'nestjs-starter-kit',
+          repoName: 'orders-api',
+          private: true,
+        }),
+      ).resolves.toEqual({
+        repoUrl: 'https://github.com/tone/orders-api',
+        cloneUrl: 'https://github.com/tone/orders-api.git',
+        ownerLogin: 'tone',
+        repoName: 'orders-api',
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/alphaexplora/nestjs-starter-kit/generate',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            name: 'orders-api',
+            private: true,
+            include_all_branches: false,
+          }),
+        }),
+      );
+    });
+
+    it.each([
+      [403, 'GitHub rejected template repo creation (403).'],
+      [401, 'GitHub rejected template repo creation (401).'],
+      [422, 'Repository already exists or template is invalid:'],
+      [500, 'GitHub template repo creation failed (500):'],
+    ])(
+      'maps template repository status %s to a useful exception',
+      async (status, message) => {
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          status,
+          text: async () => 'failure body',
+        } as unknown as Response);
+
+        await expect(
+          service.createRepoFromTemplate('gh-token', {
+            templateOwner: 'alphaexplora',
+            templateRepo: 'nestjs-starter-kit',
+            repoName: 'orders-api',
+            private: true,
+          }),
+        ).rejects.toThrow(message);
+      },
+    );
+
     it('creates a branch from an existing source branch ref', async () => {
       fetchMock
         .mockResolvedValueOnce({

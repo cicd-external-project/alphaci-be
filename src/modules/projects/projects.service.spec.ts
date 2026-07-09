@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
@@ -28,6 +29,26 @@ const makeCatalogService = () =>
           templateByProjectType: { 'nestjs-api': 'be-nestjs' },
         },
       ],
+      starterKits: [
+        {
+          id: 'nestjs-starter-kit',
+          label: 'NestJS starter kit',
+          description: 'Production-ready NestJS API starter.',
+          repo: 'alphaexplora/nestjs-starter-kit',
+          projectType: 'nestjs-api',
+          repoShape: 'standalone',
+          language: 'TypeScript',
+          framework: 'NestJS',
+          defaultWorkingDirectory: '.',
+          workflowTiming: 'after-template',
+          containsWorkflows: false,
+          defaultRecipesByPlan: {
+            solo: 'backend-api-ci',
+            plus: 'backend-api-ci',
+            pro: 'backend-api-ci',
+          },
+        },
+      ],
     }),
     getTemplateById: jest.fn().mockResolvedValue({
       id: 'be-nestjs',
@@ -40,6 +61,12 @@ const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
     createRepo: jest.fn().mockResolvedValue({
+      repoUrl: 'https://github.com/tone/orders-api',
+      cloneUrl: 'https://github.com/tone/orders-api.git',
+      ownerLogin: 'tone',
+      repoName: 'orders-api',
+    }),
+    createRepoFromTemplate: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/tone/orders-api',
       cloneUrl: 'https://github.com/tone/orders-api.git',
       ownerLogin: 'tone',
@@ -246,6 +273,7 @@ describe('ProjectsService', () => {
   let githubServiceMock: {
     getInstallationAccessTokenForUser: jest.Mock;
     createRepo: jest.Mock;
+    createRepoFromTemplate: jest.Mock;
   };
   let projectDeploymentProvisioningService: {
     provisionForProject: jest.Mock;
@@ -267,6 +295,7 @@ jobs:
     githubServiceMock = githubService as unknown as {
       getInstallationAccessTokenForUser: jest.Mock;
       createRepo: jest.Mock;
+      createRepoFromTemplate: jest.Mock;
     };
     projectDeploymentProvisioningService = {
       provisionForProject: jest.fn().mockResolvedValue({
@@ -535,6 +564,164 @@ jobs:
       'oauth-token',
       expect.any(Object),
     );
+  });
+
+  it('creates starter-kit projects from the configured template repository and keeps workflow provisioning', async () => {
+    const projectsRepository =
+      makeProjectsRepository() as jest.Mocked<ProjectsRepository>;
+    const starterKitService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+    const starterPushSpy = jest.spyOn(
+      starterKitService as unknown as {
+        pushStarterFiles: (...args: unknown[]) => Promise<void>;
+      },
+      'pushStarterFiles',
+    );
+    const starterWorkflowSpy = jest
+      .spyOn(
+        starterKitService as unknown as {
+          pushWorkflowFile: (
+            accessToken: string,
+            owner: string,
+            repo: string,
+            filePath: string,
+            content: string,
+          ) => Promise<{ commitSha: string; commitUrl: string | null }>;
+        },
+        'pushWorkflowFile',
+      )
+      .mockResolvedValue({
+        commitSha: 'commit-sha',
+        commitUrl: 'https://github.com/tone/orders-api/commit/commit-sha',
+      });
+
+    await starterKitService.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      sourceType: 'starter-kit',
+      starterKitId: 'nestjs-starter-kit',
+    });
+
+    expect(githubServiceMock.createRepoFromTemplate).toHaveBeenCalledWith(
+      'app-token',
+      {
+        templateOwner: 'alphaexplora',
+        templateRepo: 'nestjs-starter-kit',
+        repoName: 'orders-api',
+        private: true,
+      },
+    );
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    expect(starterPushSpy).not.toHaveBeenCalled();
+    expect(starterWorkflowSpy).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      expect.stringMatching(/^\.github\/workflows\//),
+      expect.any(String),
+    );
+    expect(projectsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectOptions: expect.objectContaining({
+          sourceType: 'starter-kit',
+          starterKitId: 'nestjs-starter-kit',
+          starterKitRepo: 'alphaexplora/nestjs-starter-kit',
+        }),
+      }),
+    );
+  });
+
+  it('keeps default scaffold project creation on createRepo and starter file generation', async () => {
+    const scaffoldService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      makeProjectsRepository(),
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+    const starterPushSpy = jest
+      .spyOn(
+        scaffoldService as unknown as {
+          pushStarterFiles: (...args: unknown[]) => Promise<void>;
+        },
+        'pushStarterFiles',
+      )
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(
+        scaffoldService as unknown as {
+          pushWorkflowFile: (
+            accessToken: string,
+            owner: string,
+            repo: string,
+            filePath: string,
+            content: string,
+          ) => Promise<{ commitSha: string; commitUrl: string | null }>;
+        },
+        'pushWorkflowFile',
+      )
+      .mockResolvedValue({
+        commitSha: 'commit-sha',
+        commitUrl: 'https://github.com/tone/orders-api/commit/commit-sha',
+      });
+
+    await scaffoldService.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith('app-token', {
+      repoName: 'orders-api',
+      private: true,
+    });
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
+    expect(starterPushSpy).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      expect.objectContaining({
+        projectName: 'orders-api',
+        stack: 'nestjs-api',
+      }),
+    );
+  });
+
+  it('rejects starter-kit source without a starterKitId', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        sourceType: 'starter-kit',
+      }),
+    ).rejects.toThrow(UnprocessableEntityException);
+  });
+
+  it('rejects unknown starter-kit ids', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        sourceType: 'starter-kit',
+        starterKitId: 'missing-kit',
+      }),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('throws an actionable error when no GitHub token source is available', async () => {

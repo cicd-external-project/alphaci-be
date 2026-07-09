@@ -385,6 +385,15 @@ export class ProjectsService {
       );
     }
 
+    const sourceType = dto.sourceType ?? 'scaffold';
+    const starterKit =
+      sourceType === 'starter-kit'
+        ? this.resolveStarterKit(dto.starterKitId)
+        : null;
+    const starterKitRepo = starterKit
+      ? this.parseStarterKitRepo(starterKit.repo, starterKit.id)
+      : null;
+
     // 1. Resolve templateId from projectTypeId + workflowRecipeId
     const templateId = this.resolveTemplateId(
       dto.projectTypeId,
@@ -414,25 +423,35 @@ export class ProjectsService {
       ),
     });
 
-    // 3. Create the GitHub repository (auto_init: true creates main branch)
-    const { repoUrl, ownerLogin, repoName } =
-      await this.githubService.createRepo(provisioningToken, {
-        repoName: dto.repoName,
-        private: dto.visibility === 'private',
-      });
+    // 3. Create the GitHub repository. Starter kits use GitHub template
+    // generation; scaffold projects keep the existing empty repo flow.
+    const { repoUrl, ownerLogin, repoName } = starterKitRepo
+      ? await this.githubService.createRepoFromTemplate(provisioningToken, {
+          templateOwner: starterKitRepo.owner,
+          templateRepo: starterKitRepo.repo,
+          repoName: dto.repoName,
+          private: dto.visibility === 'private',
+        })
+      : await this.githubService.createRepo(provisioningToken, {
+          repoName: dto.repoName,
+          private: dto.visibility === 'private',
+        });
 
     const repoFullName = `${ownerLogin}/${repoName}`;
 
-    // 3.5 Push scaffold + README to main so all downstream branches inherit them
-    await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
-      projectName: dto.serviceName,
-      stack: dto.projectTypeId,
-      repoShape,
-      ...(dto.tests?.['docker'] !== undefined && {
-        includeDocker: dto.tests['docker'],
-      }),
-    });
-
+    // 3.5 Push scaffold + README to main so all downstream branches inherit them.
+    // Template repositories already contain starter code; workflow files are still
+    // pushed below because starter kits intentionally do not contain FlowCI workflows.
+    if (!starterKitRepo) {
+      await this.pushStarterFiles(provisioningToken, ownerLogin, repoName, {
+        projectName: dto.serviceName,
+        stack: dto.projectTypeId,
+        repoShape,
+        ...(dto.tests?.['docker'] !== undefined && {
+          includeDocker: dto.tests['docker'],
+        }),
+      });
+    }
     // 3.6 Push workflow YAML to main BEFORE creating branches so that test and
     // uat inherit the workflow files — GitHub Actions reads the YAML from the
     // branch being pushed to, so it must exist on those branches.
@@ -483,7 +502,14 @@ export class ProjectsService {
       projectTypeId: dto.projectTypeId,
       workflowRecipeId: dto.workflowRecipeId ?? null,
       projectOptions: {
+        sourceType,
         ...(dto.tests ? { tests: dto.tests } : {}),
+        ...(starterKit
+          ? {
+              starterKitId: starterKit.id,
+              starterKitRepo: starterKit.repo,
+            }
+          : {}),
         workflowFiles: this.workflowFileMetadata(workflowFiles),
       },
     });
@@ -2307,6 +2333,41 @@ export class ProjectsService {
         deploymentProvisioningResults,
       ),
     };
+  }
+
+  private resolveStarterKit(starterKitId: string | undefined): {
+    id: string;
+    repo: string;
+  } {
+    if (!starterKitId?.trim()) {
+      throw new UnprocessableEntityException(
+        'starterKitId is required when sourceType is starter-kit',
+      );
+    }
+
+    const starterKit = this.catalogService
+      .getProjectOptions()
+      .starterKits.find((kit) => kit.id === starterKitId);
+
+    if (!starterKit) {
+      throw new NotFoundException('Starter kit not found');
+    }
+
+    return { id: starterKit.id, repo: starterKit.repo };
+  }
+
+  private parseStarterKitRepo(
+    starterKitRepo: string,
+    starterKitId: string,
+  ): { owner: string; repo: string } {
+    const parts = starterKitRepo.trim().split('/');
+    if (parts.length !== 2 || !parts[0]?.trim() || !parts[1]?.trim()) {
+      throw new UnprocessableEntityException(
+        `Starter kit '${starterKitId}' has an invalid repository reference. Expected format: "owner/repo"`,
+      );
+    }
+
+    return { owner: parts[0].trim(), repo: parts[1].trim() };
   }
 
   private parseRepoFullName(repoFullName: string): [string, string] {

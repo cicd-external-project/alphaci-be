@@ -235,6 +235,15 @@ export class CreateProjectDto {
   @IsIn(['private', 'public'])
   visibility!: 'private' | 'public';
 
+  @IsOptional()
+  @IsIn(['scaffold', 'starter-kit'])
+  sourceType?: 'scaffold' | 'starter-kit';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  starterKitId?: string;
+
   // Catalog IDs ('single-app', 'mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
   // are both accepted; the service normalizes via normalizeRepoShape().
   @IsOptional()
