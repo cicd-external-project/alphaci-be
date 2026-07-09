@@ -27,6 +27,12 @@ interface CreateFederatedUserInput {
   provider: 'email' | 'google' | 'github';
 }
 
+interface ProviderProfileRefreshInput {
+  name?: string;
+  email?: string;
+  avatarUrl?: string;
+}
+
 interface PersistedUserRow {
   id: string;
   login: string;
@@ -289,6 +295,31 @@ export class UsersRepository {
     return row ? Number(row.count) : 0;
   }
 
+  async refreshProfileFromProvider(
+    userId: string,
+    input: ProviderProfileRefreshInput,
+  ): Promise<SessionUser> {
+    const result = await this.databaseService.query<PersistedUserRow>(
+      `UPDATE app_users
+          SET display_name = COALESCE($2, display_name),
+              email = COALESCE($3, email),
+              avatar_url = COALESCE($4, avatar_url),
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, login, display_name, email, avatar_url, onboarding_completed_at;`,
+      [
+        userId,
+        this.normalizeOptionalProfileValue(input.name),
+        this.normalizeOptionalProfileValue(input.email),
+        this.normalizeOptionalProfileValue(input.avatarUrl),
+      ],
+    );
+
+    const row = result.rows[0];
+    if (!row) throw new Error('Profile refresh found no matching user');
+    return this.toSessionUser(row);
+  }
+
   async findById(userId: string): Promise<SessionUser | null> {
     const result = await this.databaseService.query<PersistedUserRow>(
       `
@@ -312,6 +343,13 @@ export class UsersRepository {
        WHERE id = $1;`,
       [userId],
     );
+  }
+
+  private normalizeOptionalProfileValue(
+    value: string | undefined,
+  ): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
   }
 
   private toSessionUser(row: PersistedUserRow): SessionUser {

@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { EmailCodeDeliveryService } from './email-code-delivery.service.js';
 import { IdentityService } from './identity.service.js';
@@ -23,6 +23,7 @@ import type { ArchivedUserLookup } from '../persistence/users.repository.js';
 const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
+  name: 'Test User',
   email: 'test@example.com',
   onboardingCompleted: false,
 };
@@ -34,7 +35,7 @@ const fakeFreeSub: SubscriptionState = {
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const makeConfig = (withGitHub = true) =>
+const makeConfig = (withGitHub = true, githubScope = 'read:user user:email') =>
   ({
     get: jest.fn((key: string) => {
       if (key === 'ALLOWED_ORIGINS') {
@@ -57,7 +58,7 @@ const makeConfig = (withGitHub = true) =>
         clientId: withGitHub ? 'gh-client-id' : '',
         clientSecret: withGitHub ? 'gh-client-secret' : '',
         callbackUrl: 'http://localhost:4000/api/v1/auth/github/callback',
-        scope: 'read:user user:email',
+        scope: githubScope,
       },
     }),
   }) as unknown as ConfigService;
@@ -66,6 +67,7 @@ const makeUsersRepo = (overrides?: Partial<UsersRepository>) =>
   ({
     upsertGitHubUser: jest.fn().mockResolvedValue(fakeUser),
     createFederatedUser: jest.fn().mockResolvedValue(fakeUser),
+    refreshProfileFromProvider: jest.fn().mockResolvedValue(fakeUser),
     findById: jest.fn().mockResolvedValue(fakeUser),
     archiveById: jest.fn().mockResolvedValue(undefined),
     deleteById: jest.fn().mockResolvedValue(undefined),
@@ -177,6 +179,7 @@ async function createService(
   oauthStateOverrides?: Partial<OAuthStateRepository>,
   usersRepoOverrides?: Partial<UsersRepository>,
   exampleProjectSeederOverrides?: Partial<ExampleProjectSeederService>,
+  githubScope = 'read:user user:email',
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
@@ -194,7 +197,7 @@ async function createService(
     providers: [
       AuthService,
       IdentityService,
-      { provide: ConfigService, useValue: makeConfig(withGitHub) },
+      { provide: ConfigService, useValue: makeConfig(withGitHub, githubScope) },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
@@ -231,7 +234,7 @@ async function createService(
 }
 
 // Helper: build a fetchMock sequence for a successful GitHub OAuth flow.
-// Provides: access_token response → user profile response.
+// Provides: access_token response â†’ user profile response.
 function mockSuccessfulGitHubFetch(
   fetchMock: jest.SpyInstance,
   profile: Partial<GitHubProfilePayload> = {},
@@ -296,6 +299,23 @@ describe('AuthService', () => {
       );
     });
 
+    it('always requests the GitHub email scope even when env omits it', async () => {
+      const { service } = await createService(
+        true,
+        undefined,
+        undefined,
+        undefined,
+        'read:user',
+      );
+      const req = makeRequest();
+
+      const url = await service.startGitHubAuth(req);
+      const parsed = new URL(url);
+      const scopes = new Set(parsed.searchParams.get('scope')?.split(' '));
+
+      expect(scopes).toContain('read:user');
+      expect(scopes).toContain('user:email');
+    });
     it('returns unavailable URL when GitHub credentials are missing', async () => {
       const { service } = await createService(false);
       const req = makeRequest();
@@ -349,7 +369,7 @@ describe('AuthService', () => {
     it('accepts returnTo URLs matching ALLOWED_ORIGIN_PATTERNS (new/preview deployments)', async () => {
       const { service, oauthStateRepo } = await createService();
       const req = makeRequest();
-      // This origin is NOT in ALLOWED_ORIGINS — it only matches the regex
+      // This origin is NOT in ALLOWED_ORIGINS â€” it only matches the regex
       // pattern. Before the fix this fell back to FRONTEND_URL (the stale
       // deployment); it must now be preserved so the user returns to the
       // frontend they actually logged in from.
@@ -637,7 +657,7 @@ describe('AuthService', () => {
     });
     it('returns success after successful GitHub OAuth flow (new user)', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
-      // findByGithubUserIdIncludingArchived returns null → new user path
+      // findByGithubUserIdIncludingArchived returns null â†’ new user path
       const { service, exampleProjectSeederService } = await createService(
         true,
         undefined,
@@ -919,6 +939,32 @@ describe('AuthService', () => {
       );
     });
 
+    it('rejects signup when the email is already registered', async () => {
+      const {
+        service,
+        userIdentitiesRepo,
+        usersRepo,
+        emailCodesRepo,
+        emailCodeDeliveryService,
+      } = await createService();
+      (
+        userIdentitiesRepo.findActiveUserIdsByVerifiedEmail as jest.Mock
+      ).mockResolvedValue(['user-1']);
+
+      await expect(
+        service.startEmailSignup({
+          firstName: 'Test',
+          lastName: 'User',
+          email: 'test@example.com',
+          password: 'password123',
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(usersRepo.createFederatedUser).not.toHaveBeenCalled();
+      expect(userIdentitiesRepo.upsertIdentity).not.toHaveBeenCalled();
+      expect(emailCodesRepo.create).not.toHaveBeenCalled();
+      expect(emailCodeDeliveryService.sendCode).not.toHaveBeenCalled();
+    });
     it('verifies signup code and establishes a session', async () => {
       const {
         service,
@@ -1021,11 +1067,31 @@ describe('AuthService', () => {
   });
 
   describe('getSessionUser', () => {
-    it('returns user from session.user directly', async () => {
-      const { service } = await createService();
+    it('returns complete user from session.user directly', async () => {
+      const { service, usersRepo } = await createService();
       const req = makeRequest({ user: fakeUser });
       const result = await service.getSessionUser(req);
       expect(result).toEqual(fakeUser);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.findById).not.toHaveBeenCalled();
+    });
+
+    it('refreshes incomplete session users from the database', async () => {
+      const { service, usersRepo } = await createService();
+      const req = makeRequest({
+        user: {
+          id: 'user-1',
+          login: 'testuser',
+          onboardingCompleted: false,
+        },
+      });
+
+      const result = await service.getSessionUser(req);
+
+      expect(result).toEqual(fakeUser);
+      expect(req.session.user).toEqual(fakeUser);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.findById).toHaveBeenCalledWith('user-1');
     });
 
     it('returns null when no userId in session', async () => {
@@ -1052,7 +1118,7 @@ describe('AuthService', () => {
     });
 
     it('returns { pending: false } when row is no longer archived', async () => {
-      // Row was restored in another tab — archivedAt is now null.
+      // Row was restored in another tab â€” archivedAt is now null.
       const activeRow: ArchivedUserLookup = {
         id: 'user-1',
         login: 'testuser',
@@ -1200,7 +1266,7 @@ describe('AuthService', () => {
       expect(s['pendingArchived']).toBeUndefined();
       expect(s['githubAccessToken']).toBe('tok-fresh');
 
-      // deleteById must NOT have been called — only hardDeleteByGithubUserId.
+      // deleteById must NOT have been called â€” only hardDeleteByGithubUserId.
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(usersRepo.deleteById).not.toHaveBeenCalled();
     });

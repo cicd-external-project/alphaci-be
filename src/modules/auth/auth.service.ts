@@ -1,6 +1,11 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 
@@ -298,21 +303,25 @@ export class AuthService {
   }
 
   async getSessionUser(request: Request): Promise<SessionUser | null> {
-    if (request.session.user) {
-      return request.session.user;
+    const sessionUser = request.session.user;
+    const sessionUserId = request.session.userId ?? sessionUser?.id;
+
+    if (sessionUser?.name && sessionUser.email) {
+      return sessionUser;
     }
 
-    if (!request.session.userId) {
+    if (!sessionUserId) {
       return null;
     }
 
-    const user = await this.usersRepository.findById(request.session.userId);
+    const user = await this.usersRepository.findById(sessionUserId);
     if (user) {
       request.session.user = user;
       request.session.userId = user.id;
+      return user;
     }
 
-    return user;
+    return sessionUser ?? null;
   }
 
   async listConnectedIdentities(request: Request): Promise<{
@@ -328,6 +337,14 @@ export class AuthService {
     }
 
     return this.identityService.listForUser(user.id);
+  }
+
+  async checkEmailSignupAvailability(
+    email: string,
+  ): Promise<{ ok: true; available: true }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    await this.ensureEmailSignupAvailable(normalizedEmail);
+    return { ok: true, available: true };
   }
 
   async startEmailSignup(input: {
@@ -718,23 +735,24 @@ export class AuthService {
     }
   }
 
-  private async getOrCreatePendingUserId(
+  private async ensureEmailSignupAvailable(
     normalizedEmail: string,
-    firstName: string,
-    lastName: string,
-  ): Promise<string> {
+  ): Promise<void> {
     const matches =
       await this.userIdentitiesRepository.findActiveUserIdsByVerifiedEmail(
         normalizedEmail,
       );
 
-    if (matches.length === 1) {
-      return matches[0]!;
+    if (matches.length > 0) {
+      throw new ConflictException('Email is already registered');
     }
-
-    if (matches.length > 1) {
-      throw new UnauthorizedException('Ambiguous email identity');
-    }
+  }
+  private async getOrCreatePendingUserId(
+    normalizedEmail: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<string> {
+    await this.ensureEmailSignupAvailable(normalizedEmail);
 
     const pendingUser = await this.usersRepository.createFederatedUser({
       login: normalizedEmail.split('@')[0] ?? normalizedEmail,
@@ -807,10 +825,22 @@ export class AuthService {
       'redirect_uri',
       this.config.github.callbackUrl,
     );
-    authorizationUrl.searchParams.set('scope', this.config.github.scope);
+    authorizationUrl.searchParams.set('scope', this.requiredGitHubScopes());
     authorizationUrl.searchParams.set('state', state);
 
     return authorizationUrl.toString();
+  }
+
+  private requiredGitHubScopes(): string {
+    const scopes = new Set(
+      this.config.github.scope
+        .split(/[\s,]+/)
+        .map((scope) => scope.trim())
+        .filter((scope) => scope.length > 0),
+    );
+    scopes.add('read:user');
+    scopes.add('user:email');
+    return Array.from(scopes).join(' ');
   }
 
   private async exchangeCodeForGoogleIdToken(code: string): Promise<string> {

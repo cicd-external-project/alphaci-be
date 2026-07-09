@@ -50,7 +50,11 @@ export class IdentityService {
       }
 
       await this.linkIdentity(user.id, profile);
-      return { kind: 'active', user, isNewUser: false };
+      const refreshedUser = await this.refreshExistingUserFromProfile(
+        user.id,
+        profile,
+      );
+      return { kind: 'active', user: refreshedUser, isNewUser: false };
     }
 
     if (profile.provider === 'github') {
@@ -70,7 +74,11 @@ export class IdentityService {
         }
 
         await this.linkIdentity(user.id, profile);
-        return { kind: 'active', user, isNewUser: false };
+        const refreshedUser = await this.refreshExistingUserFromProfile(
+          user.id,
+          profile,
+        );
+        return { kind: 'active', user: refreshedUser, isNewUser: false };
       }
     }
 
@@ -98,7 +106,11 @@ export class IdentityService {
       }
 
       await this.linkIdentity(user.id, profile);
-      return { kind: 'active', user, isNewUser: false };
+      const refreshedUser = await this.refreshExistingUserFromProfile(
+        user.id,
+        profile,
+      );
+      return { kind: 'active', user: refreshedUser, isNewUser: false };
     }
 
     const user = await this.usersRepository.createFederatedUser({
@@ -114,6 +126,17 @@ export class IdentityService {
     await this.seedExampleProjectSafelyFor(user.id);
 
     return { kind: 'active', user, isNewUser: true };
+  }
+
+  private refreshExistingUserFromProfile(
+    userId: string,
+    profile: VerifiedProviderProfile,
+  ) {
+    return this.usersRepository.refreshProfileFromProvider(userId, {
+      ...(profile.name !== undefined && { name: profile.name }),
+      ...(profile.email !== undefined && { email: profile.email }),
+      ...(profile.avatarUrl !== undefined && { avatarUrl: profile.avatarUrl }),
+    });
   }
 
   private async linkIdentity(

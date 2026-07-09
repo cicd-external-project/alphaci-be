@@ -35,6 +35,7 @@ function makeService(
   const users = {
     findById: jest.fn().mockResolvedValue(user),
     findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null),
+    refreshProfileFromProvider: jest.fn().mockResolvedValue(user),
     upsertGitHubUser: jest.fn().mockResolvedValue(user),
     createFederatedUser: jest.fn().mockResolvedValue(user),
     ...overrides.users,
@@ -103,6 +104,55 @@ describe('IdentityService', () => {
     expect(result).toEqual({ kind: 'active', user, isNewUser: false });
     expect(users.findById).toHaveBeenCalledWith('user-1');
     expect(identities.upsertIdentity).toHaveBeenCalled();
+  });
+
+  it('refreshes profile fields from an existing linked provider identity', async () => {
+    const oldUser = {
+      ...user,
+      name: 'burritoneeeee',
+    };
+    const refreshedUser = {
+      ...user,
+      name: 'Anthony Torres',
+      avatarUrl: 'https://example.test/avatar.png',
+    };
+    const { service, users } = makeService({
+      identities: {
+        findByProviderIdentity: jest.fn().mockResolvedValue({
+          id: 'identity-1',
+          userId: 'user-1',
+          provider: 'github',
+          providerUserId: '123',
+          emailVerified: true,
+          archivedAt: null,
+        }),
+      },
+      users: {
+        findById: jest.fn().mockResolvedValue(oldUser),
+        refreshProfileFromProvider: jest.fn().mockResolvedValue(refreshedUser),
+      },
+    });
+
+    const result = await service.resolveVerifiedProvider({
+      provider: 'github',
+      providerUserId: '123',
+      login: 'burritoneeeee',
+      name: 'Anthony Torres',
+      email: 'anthony@example.test',
+      emailVerified: true,
+      avatarUrl: 'https://example.test/avatar.png',
+    });
+
+    expect(result).toEqual({
+      kind: 'active',
+      user: refreshedUser,
+      isNewUser: false,
+    });
+    expect(users.refreshProfileFromProvider).toHaveBeenCalledWith('user-1', {
+      name: 'Anthony Torres',
+      email: 'anthony@example.test',
+      avatarUrl: 'https://example.test/avatar.png',
+    });
   });
 
   it('links by exactly one verified email match', async () => {

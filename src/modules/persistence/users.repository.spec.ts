@@ -123,6 +123,38 @@ describe('UsersRepository', () => {
       );
     });
   });
+  describe('refreshProfileFromProvider', () => {
+    it('updates profile fields from a verified provider profile', async () => {
+      const result = await repo.refreshProfileFromProvider('user-uuid-1', {
+        name: 'Anthony Torres',
+        email: 'anthony@example.test',
+        avatarUrl: 'https://example.test/avatar.png',
+      });
+
+      expect(result.name).toBe('Test User');
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE app_users'),
+        [
+          'user-uuid-1',
+          'Anthony Torres',
+          'anthony@example.test',
+          'https://example.test/avatar.png',
+        ],
+      );
+    });
+
+    it('does not overwrite profile fields with blank provider values', async () => {
+      await repo.refreshProfileFromProvider('user-uuid-1', {
+        name: '   ',
+        email: '',
+      });
+
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE app_users'),
+        ['user-uuid-1', null, null, null],
+      );
+    });
+  });
   describe('findById', () => {
     it('returns a SessionUser when found', async () => {
       const result = await repo.findById('user-uuid-1');
