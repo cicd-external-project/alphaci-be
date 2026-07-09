@@ -1098,6 +1098,23 @@ jobs:
       undefined,
     );
     expect(result.secondaryRepoFullName).toBeDefined();
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              renderDeployMethod: 'managed_image',
+            }),
+          ],
+        }),
+      }),
+    );
   });
 
   it("renders the monorepo scaffold for the catalog shape ID 'mono'", async () => {
@@ -1205,6 +1222,23 @@ jobs:
     );
     expect(pushedPaths).not.toContain(
       '.github/workflows/20-alphaci-package.yml',
+    );
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              renderDeployMethod: 'managed_image',
+            }),
+          ],
+        }),
+      }),
     );
   });
 
