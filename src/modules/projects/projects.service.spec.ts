@@ -604,6 +604,7 @@ jobs:
       repoName: 'orders-api',
       visibility: 'private',
       projectTypeId: 'nestjs-api',
+      repoShape: 'single-app',
       workflowRecipeId: 'backend-api-ci',
       serviceName: 'orders-api',
       sourceType: 'starter-kit',
@@ -722,6 +723,129 @@ jobs:
         starterKitId: 'missing-kit',
       }),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  it('rejects starter-kit source for microservices project creation', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders',
+        visibility: 'private',
+        repoShape: 'microservices',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-backend',
+        sourceType: 'starter-kit',
+        starterKitId: 'nestjs-starter-kit',
+        microservicesConfig: {
+          backend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-backend',
+            servicePath: 'backend/',
+          },
+          frontend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-frontend',
+            servicePath: 'frontend/',
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      'Starter kits are only supported for single-repo project creation.',
+    );
+
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('rejects starter-kit source for multi-repo project creation', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders',
+        visibility: 'private',
+        repoShape: 'multi-repo',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-backend',
+        sourceType: 'starter-kit',
+        starterKitId: 'nestjs-starter-kit',
+        multiRepoConfig: {
+          backend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-backend',
+            servicePath: 'backend/',
+          },
+          frontend: {
+            projectTypeId: 'nestjs-api',
+            workflowRecipeId: 'backend-api-ci',
+            serviceName: 'orders-frontend',
+            servicePath: 'frontend/',
+          },
+        },
+      }),
+    ).rejects.toThrow(
+      'Starter kits are only supported for single-repo project creation.',
+    );
+
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('rejects starter-kit requests with an incompatible project type', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'react-app',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        sourceType: 'starter-kit',
+        starterKitId: 'nestjs-starter-kit',
+      }),
+    ).rejects.toThrow(
+      "Starter kit 'nestjs-starter-kit' supports projectTypeId 'nestjs-api'.",
+    );
+
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('rejects starter-kit requests with an incompatible repo shape', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        repoShape: 'mono',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        sourceType: 'starter-kit',
+        starterKitId: 'nestjs-starter-kit',
+      }),
+    ).rejects.toThrow(
+      "Starter kit 'nestjs-starter-kit' supports repoShape 'standalone'.",
+    );
+
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('rejects starter-kit requests with an incompatible workflow recipe', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', 'oauth-token', {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'frontend-spa-ci',
+        serviceName: 'orders-api',
+        sourceType: 'starter-kit',
+        starterKitId: 'nestjs-starter-kit',
+      }),
+    ).rejects.toThrow(
+      "Starter kit 'nestjs-starter-kit' does not support workflowRecipeId 'frontend-spa-ci'.",
+    );
+
+    expect(githubServiceMock.createRepoFromTemplate).not.toHaveBeenCalled();
   });
 
   it('throws an actionable error when no GitHub token source is available', async () => {

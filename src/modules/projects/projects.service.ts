@@ -14,7 +14,10 @@ import { ConfigService } from '@nestjs/config';
 import yaml from 'js-yaml';
 
 import type { AppConfig } from '../../config/app.config';
-import { CatalogService } from '../catalog/catalog.service';
+import {
+  CatalogService,
+  type StarterKitOption,
+} from '../catalog/catalog.service';
 import { CiService } from '../ci/ci.service';
 import {
   CiTokensRepository,
@@ -366,6 +369,16 @@ export class ProjectsService {
     // The catalog publishes the shape IDs 'mono' and 'multi'; normalize so
     // the flow dispatch never silently falls back to the standalone path.
     const repoShape = normalizeRepoShape(dto.repoShape);
+    const sourceType = dto.sourceType ?? 'scaffold';
+
+    if (
+      sourceType === 'starter-kit' &&
+      (repoShape === 'microservices' || repoShape === 'multi-repo')
+    ) {
+      throw new UnprocessableEntityException(
+        'Starter kits are only supported for single-repo project creation.',
+      );
+    }
 
     if (repoShape === 'microservices') {
       return this.createMicroservicesProject(
@@ -385,11 +398,13 @@ export class ProjectsService {
       );
     }
 
-    const sourceType = dto.sourceType ?? 'scaffold';
     const starterKit =
       sourceType === 'starter-kit'
         ? this.resolveStarterKit(dto.starterKitId)
         : null;
+    if (starterKit) {
+      this.validateStarterKitCompatibility(starterKit, dto, repoShape);
+    }
     const starterKitRepo = starterKit
       ? this.parseStarterKitRepo(starterKit.repo, starterKit.id)
       : null;
@@ -2335,10 +2350,9 @@ export class ProjectsService {
     };
   }
 
-  private resolveStarterKit(starterKitId: string | undefined): {
-    id: string;
-    repo: string;
-  } {
+  private resolveStarterKit(
+    starterKitId: string | undefined,
+  ): StarterKitOption {
     if (!starterKitId?.trim()) {
       throw new UnprocessableEntityException(
         'starterKitId is required when sourceType is starter-kit',
@@ -2353,7 +2367,35 @@ export class ProjectsService {
       throw new NotFoundException('Starter kit not found');
     }
 
-    return { id: starterKit.id, repo: starterKit.repo };
+    return starterKit;
+  }
+
+  private validateStarterKitCompatibility(
+    starterKit: StarterKitOption,
+    dto: CreateProjectDto,
+    repoShape: ReturnType<typeof normalizeRepoShape>,
+  ): void {
+    if (dto.projectTypeId !== starterKit.projectType) {
+      throw new UnprocessableEntityException(
+        `Starter kit '${starterKit.id}' supports projectTypeId '${starterKit.projectType}'.`,
+      );
+    }
+
+    const starterKitRepoShape = normalizeRepoShape(starterKit.repoShape);
+    if (repoShape !== starterKitRepoShape) {
+      throw new UnprocessableEntityException(
+        `Starter kit '${starterKit.id}' supports repoShape '${starterKit.repoShape}'.`,
+      );
+    }
+
+    if (dto.workflowRecipeId) {
+      const supportedRecipeIds = Object.values(starterKit.defaultRecipesByPlan);
+      if (!supportedRecipeIds.includes(dto.workflowRecipeId)) {
+        throw new UnprocessableEntityException(
+          `Starter kit '${starterKit.id}' does not support workflowRecipeId '${dto.workflowRecipeId}'.`,
+        );
+      }
+    }
   }
 
   private parseStarterKitRepo(
