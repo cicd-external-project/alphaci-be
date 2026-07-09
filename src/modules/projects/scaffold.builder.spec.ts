@@ -17,7 +17,7 @@ describe('normalizeRepoShape', () => {
     expect(normalizeRepoShape('standalone')).toBe('standalone');
   });
 
-  it("maps the current catalog single-app shape to standalone", () => {
+  it('maps the current catalog single-app shape to standalone', () => {
     expect(normalizeRepoShape('single-app')).toBe(
       normalizeRepoShape('standalone'),
     );
@@ -43,6 +43,11 @@ describe('buildProjectScaffold', () => {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
+
+  const fileContent = (
+    files: ReturnType<typeof buildProjectScaffold>,
+    path: string,
+  ) => files.find((file) => file.path === path)?.content;
 
   it("renders the monorepo workspace scaffold for the catalog ID 'mono'", () => {
     const files = buildProjectScaffold({ ...baseOptions, repoShape: 'mono' });
@@ -135,6 +140,40 @@ describe('buildProjectScaffold', () => {
     expect(paths).toContain('src/index.ts');
     expect(paths).not.toContain('src/app.module.ts');
     expect(pkg.scripts?.start).toBe('node dist/index.js');
+    expect(fileContent(files, 'Dockerfile')).toContain(
+      'CMD ["node", "dist/index.js"]',
+    );
+    expect(fileContent(files, 'Dockerfile')).not.toContain('dist/main.js');
+  });
+
+  it('preserves the NestJS Docker entrypoint', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nestjs-api',
+      includeDocker: true,
+    });
+
+    expect(fileContent(files, 'Dockerfile')).toContain(
+      'CMD ["node", "dist/main.js"]',
+    );
+  });
+
+  it('does not reference a frontend service without a Dockerfile in microservices compose', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'microservices',
+      stack: 'nestjs-api',
+      frontendStack: 'nextjs-app',
+      includeDocker: true,
+    });
+    const paths = files.map((file) => file.path);
+    const compose = fileContent(files, 'docker-compose.yml');
+
+    expect(paths).toContain('backend/Dockerfile');
+    expect(paths).not.toContain('frontend/Dockerfile');
+    expect(compose).toContain('build: ./backend');
+    expect(compose).not.toContain('build: ./frontend');
+    expect(compose).not.toContain('  frontend:');
   });
 });
 
