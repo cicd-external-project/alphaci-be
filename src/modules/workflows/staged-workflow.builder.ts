@@ -816,6 +816,17 @@ function dockerBuildJob(
   centralWorkflowRef: string,
 ) {
   return {
+    // docker-build.yml's nested vulnerability-scan job requires
+    // security-events: write to upload its Trivy SARIF report. Without this
+    // override the job inherits the workflow-level permissions (contents:
+    // read, packages: write only), and GitHub rejects the whole file at
+    // parse time: "nested job 'vulnerability-scan' is requesting
+    // 'security-events' access level 'write', but is only allowed 'none'".
+    permissions: {
+      contents: 'read',
+      packages: 'write',
+      'security-events': 'write',
+    },
     needs: deploymentNeeds(branch),
     if: branchCondition(branch),
     uses: `${CENTRAL_WORKFLOW_REF}/docker-build.yml@${centralWorkflowRef}`,
