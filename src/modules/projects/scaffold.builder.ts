@@ -21,7 +21,7 @@ export type CanonicalRepoShape =
 
 /**
  * Map a repo shape ID to its canonical form. The catalog (and therefore the
- * FE) uses the short IDs 'mono' and 'multi', while internal flow logic uses
+ * FE) uses 'single-app' and the short IDs 'mono' and 'multi', while internal flow logic uses
  * 'monorepo' and 'multi-repo'. Accept both so a catalog-driven request never
  * silently falls back to the standalone flow.
  */
@@ -29,6 +29,9 @@ export function normalizeRepoShape(
   repoShape: string | null | undefined,
 ): CanonicalRepoShape {
   switch (repoShape) {
+    case 'single-app':
+    case 'standalone':
+      return 'standalone';
     case 'mono':
     case 'monorepo':
       return 'monorepo';

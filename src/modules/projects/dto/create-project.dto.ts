@@ -235,11 +235,12 @@ export class CreateProjectDto {
   @IsIn(['private', 'public'])
   visibility!: 'private' | 'public';
 
-  // Catalog IDs ('mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
+  // Catalog IDs ('single-app', 'mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
   // are both accepted; the service normalizes via normalizeRepoShape().
   @IsOptional()
   @IsIn([
     'standalone',
+    'single-app',
     'mono',
     'monorepo',
     'multi',

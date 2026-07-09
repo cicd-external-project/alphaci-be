@@ -17,6 +17,12 @@ describe('normalizeRepoShape', () => {
     expect(normalizeRepoShape('standalone')).toBe('standalone');
   });
 
+  it("maps the current catalog single-app shape to standalone", () => {
+    expect(normalizeRepoShape('single-app')).toBe(
+      normalizeRepoShape('standalone'),
+    );
+  });
+
   it('falls back to standalone for unknown or missing shapes', () => {
     expect(normalizeRepoShape(undefined)).toBe('standalone');
     expect(normalizeRepoShape(null)).toBe('standalone');

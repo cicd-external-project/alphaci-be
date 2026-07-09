@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import type { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 
-// ─── Project Options types ────────────────────────────────────────────────────
+// â”€â”€â”€ Project Options types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface RepoShapeOption {
   id: string;
@@ -91,12 +91,12 @@ export interface ProjectOptionsResult {
   starterKits: StarterKitOption[];
 }
 
-// ─── Static fallback catalog ─────────────────────────────────────────────────
+// â”€â”€â”€ Static fallback catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Order matters: the FE preselects the first enabled shape, so the simplest
 // option (standalone) must come first. 'mono' is parked as disabled until the
 // monorepo scaffold produces a real multi-package workspace with per-package
-// pipelines — today it would mislead users into a generic TS workspace.
+// pipelines â€” today it would mislead users into a generic TS workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
     {
@@ -104,7 +104,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       label: 'Single application',
       enabled: true,
       description:
-        'One repository with one app. The simplest way to start — best for most projects.',
+        'One repository with one app. The simplest way to start â€” best for most projects.',
     },
     {
       id: 'microservices',
@@ -118,7 +118,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       label: 'Backend + frontend (two repos)',
       enabled: true,
       description:
-        'Creates two repositories — one for your backend API, one for your frontend app — each with its own CI/CD pipeline.',
+        'Creates two repositories â€” one for your backend API, one for your frontend app â€” each with its own CI/CD pipeline.',
     },
     {
       id: 'mono',
@@ -279,7 +279,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   starterKits: [],
 };
 
-// ─── Template types ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Template types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface WorkflowTemplate {
   id: string;
@@ -410,7 +410,7 @@ export class CatalogService {
 
     // Resolve the repo path relative to this source file when a relative path
     // is configured. Using __dirname (dist/modules/catalog) keeps the anchor
-    // stable regardless of the process working directory — critical in Docker
+    // stable regardless of the process working directory â€” critical in Docker
     // where cwd is /app, not the project root. In production, set an absolute
     // TEMPLATE_REPO_PATH in your environment or Dockerfile to be explicit.
     const anchoredRepoPath = this.resolveTemplateRepoPath();
@@ -610,27 +610,31 @@ export class CatalogService {
       return null;
     }
 
-    return {
+    const projectType: ProjectTypeOption = {
       id: value.id,
       label: value.label,
-      kind:
-        value.kind === 'backend'
-          ? 'backend'
-          : value.kind === 'frontend'
-            ? 'frontend'
-            : undefined,
-      runtime: typeof value.runtime === 'string' ? value.runtime : undefined,
       language: value.language,
       framework: value.framework,
-      starterPath:
-        typeof value.starterPath === 'string' ? value.starterPath : undefined,
       repoShapes,
-      reservedRepoShapes:
-        reservedRepoShapes.length > 0 ? reservedRepoShapes : undefined,
       defaultRecipe: value.defaultRecipe,
       allowedRecipes,
       defaultOptions: this.toProjectOptionSet(value.defaultOptions),
     };
+
+    if (value.kind === 'backend' || value.kind === 'frontend') {
+      projectType.kind = value.kind;
+    }
+    if (typeof value.runtime === 'string') {
+      projectType.runtime = value.runtime;
+    }
+    if (typeof value.starterPath === 'string') {
+      projectType.starterPath = value.starterPath;
+    }
+    if (reservedRepoShapes.length > 0) {
+      projectType.reservedRepoShapes = reservedRepoShapes;
+    }
+
+    return projectType;
   }
 
   private toWorkflowRecipeOption(value: unknown): WorkflowRecipeOption | null {
@@ -654,17 +658,23 @@ export class CatalogService {
       return null;
     }
 
-    return {
+    const recipe: WorkflowRecipeOption = {
       id: value.id,
       label: value.label,
-      description:
-        typeof value.description === 'string' ? value.description : undefined,
       supportedProjectTypes,
       templateByProjectType: value.templateByProjectType,
-      mandatoryJobs: mandatoryJobs.length > 0 ? mandatoryJobs : undefined,
       supportedOptions: this.toProjectOptionSet(value.supportedOptions),
       optionJobs: this.toOptionJobs(value.optionJobs),
     };
+
+    if (typeof value.description === 'string') {
+      recipe.description = value.description;
+    }
+    if (mandatoryJobs.length > 0) {
+      recipe.mandatoryJobs = mandatoryJobs;
+    }
+
+    return recipe;
   }
 
   private isNodeVersionOption(value: unknown): value is NodeVersionOption {
@@ -859,40 +869,6 @@ export class CatalogService {
     }
 
     return resolve(__dirname, configuredPath);
-  }
-
-  private templateIdForStack(
-    stackKey: string,
-    serviceWorkflow?: string,
-  ): string {
-    const workflowKeyMap: Record<string, string> = {
-      nextjsService: 'nextjs-service-pipeline',
-      nestjsService: 'nest-service-pipeline',
-      nodeService: 'nodejs-service-pipeline',
-      reactService: 'react-service-pipeline',
-      reactNativeService: 'react-native-service-pipeline',
-      expoService: 'expo-service-pipeline',
-    };
-
-    return serviceWorkflow
-      ? (workflowKeyMap[serviceWorkflow] ?? `${stackKey}-service-pipeline`)
-      : `${stackKey}-service-pipeline`;
-  }
-
-  private workflowRefForStack(
-    serviceWorkflow: string | undefined,
-    refs: EngineWorkflowRefsFile,
-  ): string {
-    if (!serviceWorkflow || !refs.repository || !refs.currentStable) {
-      return '';
-    }
-
-    const workflowPath = refs.workflows?.[serviceWorkflow];
-    if (!workflowPath) {
-      return '';
-    }
-
-    return `${refs.repository}/${workflowPath}@${refs.currentStable}`;
   }
 
   private inferStack(
