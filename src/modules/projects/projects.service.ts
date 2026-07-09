@@ -397,6 +397,14 @@ export class ProjectsService {
       dto.projectTypeId,
       dto.workflowRecipeId,
     );
+    const effectiveDeploymentProvisioning =
+      this.withDefaultCreateDeploymentProvisioning({
+        request: dto.deploymentProvisioning,
+        projectTypeId: dto.projectTypeId,
+        serviceName: dto.serviceName,
+        repoName: dto.repoName,
+        servicePath: dto.servicePath,
+      });
 
     // 2. Load template and build workflow YAML
     const { workflowFiles, outputFileName } = await this.buildWorkflowBundle({
@@ -407,11 +415,11 @@ export class ProjectsService {
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
       deploymentProvider: this.extractDeploymentProvider(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         'backend',
       ),
       deploymentTargets: this.resolveDeploymentWorkflowTargets(
-        dto.deploymentProvisioning,
+        effectiveDeploymentProvisioning,
         ['standalone', 'backend', 'frontend'],
         dto.servicePath,
       ),
@@ -540,9 +548,9 @@ export class ProjectsService {
         userId,
         repoFullName,
         githubAccessToken: provisioningToken,
-        request: dto.deploymentProvisioning,
+        request: effectiveDeploymentProvisioning,
         slots: this.resolveSingleRepoDeploymentSlots(
-          dto.deploymentProvisioning,
+          effectiveDeploymentProvisioning,
         ),
       });
 
@@ -1720,6 +1728,65 @@ export class ProjectsService {
 
   private skippedDeploymentProvisioning(): DeploymentProvisioningResult {
     return { status: 'skipped', targets: [] };
+  }
+
+  private withDefaultCreateDeploymentProvisioning(input: {
+    request: DeploymentProvisioningRequestDto | undefined;
+    projectTypeId: string;
+    serviceName: string;
+    repoName: string;
+    servicePath?: string | undefined;
+  }): DeploymentProvisioningRequestDto | undefined {
+    if (input.request?.enabled && input.request.targets.length > 0) {
+      return input.request;
+    }
+
+    if (!this.isBackendProjectType(input.projectTypeId)) {
+      return input.request;
+    }
+
+    return {
+      enabled: true,
+      targets: [
+        {
+          slot: 'backend',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          projectName: this.defaultManagedRenderProjectName(
+            input.serviceName,
+            input.repoName,
+          ),
+          branchName: 'test',
+          rootDirectory: input.servicePath?.trim() || '.',
+          buildCommand: 'npm ci && npm run build',
+          startCommand: 'npm run start:prod',
+          renderDeployMethod: 'managed_image',
+          renderServiceType: 'web_service',
+          renderRuntime: 'docker',
+          renderInstanceType: 'free',
+          renderRegion: 'singapore',
+          dockerContext: input.servicePath?.trim() || '.',
+          dockerfilePath: 'Dockerfile',
+          env: [],
+        },
+      ],
+    };
+  }
+
+  private isBackendProjectType(projectTypeId: string): boolean {
+    return !/(react|next|frontend|web|ui)/i.test(projectTypeId);
+  }
+
+  private defaultManagedRenderProjectName(
+    serviceName: string,
+    repoName: string,
+  ): string {
+    const base = (serviceName || repoName || 'backend')
+      .trim()
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9._-]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '');
+    return `${base || 'backend'}-test`;
   }
 
   /**

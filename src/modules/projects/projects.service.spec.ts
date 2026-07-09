@@ -909,6 +909,57 @@ jobs:
     expect(result.deploymentProvisioning.status).toBe('completed');
   });
 
+  it('defaults backend repo creation to managed Render provisioning when the UI sends no deployment request', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        userId: 'user-1',
+        repoFullName: 'tone/orders-api',
+        githubAccessToken: 'oauth-token',
+        request: {
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'orders-api-test',
+              rootDirectory: '.',
+              renderDeployMethod: 'managed_image',
+              renderRuntime: 'docker',
+              renderInstanceType: 'free',
+            }),
+          ],
+        },
+      }),
+    );
+
+    const packageWorkflow = (
+      (
+        service as unknown as {
+          pushWorkflowFile: jest.Mock;
+        }
+      ).pushWorkflowFile.mock.calls as Array<
+        [string, string, string, string, string]
+      >
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
+
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-main');
+    expect(packageWorkflow?.[4]).toContain('RENDER_DEPLOY_HOOK_URL_TEST');
+  });
+
   it('forces BYO provisioning requests onto centralized hosting and drops connection ids', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-api',
