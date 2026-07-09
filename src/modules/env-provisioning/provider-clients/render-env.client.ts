@@ -427,9 +427,9 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     environmentName: string,
   ): Promise<string | null> {
     const response = await fetch(
-      `${RENDER_API_URL}/environments?projectId[]=${encodeURIComponent(
+      `${RENDER_API_URL}/environments?projectId=${encodeURIComponent(
         projectId,
-      )}&name[]=${encodeURIComponent(environmentName)}&limit=1`,
+      )}&name=${encodeURIComponent(environmentName)}&limit=1`,
       { headers: this.headers(token) },
     );
     await this.assertOk(response, 'Render environments could not be loaded');

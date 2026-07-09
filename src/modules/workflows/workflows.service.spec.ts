@@ -186,7 +186,7 @@ describe('WorkflowsService', () => {
 
       const packageWorkflow = result.workflowFiles[2]?.yaml ?? '';
       expect(packageWorkflow).toContain('vercel-deploy.yml');
-      expect(packageWorkflow).toContain('deploy-vercel-frontend-test:');
+      expect(packageWorkflow).not.toContain('deploy-vercel-frontend-test:');
       expect(packageWorkflow).toContain('deploy-vercel-frontend-uat:');
       expect(packageWorkflow).toContain('deploy-vercel-frontend-main:');
       expect(packageWorkflow).toContain('VERCEL_FRONTEND_TOKEN');

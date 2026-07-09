@@ -51,15 +51,15 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
             rootDirectory: '.',
             buildCommand: 'npm ci && npm run build',
             startCommand: 'npm run start:prod',
             renderRuntime: 'python',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
               },
             ],
@@ -85,7 +85,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        environment: 'uat',
         vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
       },
     );
@@ -113,7 +113,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             appliesTo: 'all',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [
                   { key: 'API_URL', value: 'https://shared.example.com' },
                   { key: 'LOG_LEVEL', value: 'debug' },
@@ -127,11 +127,11 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [{ key: 'API_URL', value: 'https://branch.example.com' }],
               },
             ],
@@ -145,7 +145,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        environment: 'uat',
         vars: [
           { key: 'API_URL', value: 'https://branch.example.com' },
           { key: 'LOG_LEVEL', value: 'debug' },
@@ -157,21 +157,15 @@ describe('ProjectDeploymentProvisioningService', () => {
   it('can apply a variable group to a selected Vercel target branch', async () => {
     deploymentTargetsService.createDeploymentTarget
       .mockResolvedValueOnce({
-        id: 'target-backend-test',
-        provider: 'render',
-        providerProjectId: 'srv-1',
-        providerProjectName: 'orders-api-test',
-      })
-      .mockResolvedValueOnce({
         id: 'target-backend-uat',
         provider: 'render',
-        providerProjectId: 'srv-2',
+        providerProjectId: 'srv-1',
         providerProjectName: 'orders-api-uat',
       })
       .mockResolvedValueOnce({
         id: 'target-backend-main',
         provider: 'render',
-        providerProjectId: 'srv-3',
+        providerProjectId: 'srv-2',
         providerProjectName: 'orders-api-main',
       })
       .mockResolvedValueOnce({
@@ -197,10 +191,10 @@ describe('ProjectDeploymentProvisioningService', () => {
             name: 'Frontend public env',
             provider: 'vercel',
             appliesTo: 'selected',
-            targetBranches: ['frontend:vercel:test'],
+            targetBranches: ['frontend:vercel:uat'],
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [
                   {
                     key: 'NEXT_PUBLIC_API_URL',
@@ -216,15 +210,15 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
           },
           {
             slot: 'frontend',
             provider: 'vercel',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-web-test',
-            branchName: 'test',
+            projectName: 'orders-web-uat',
+            branchName: 'uat',
           },
         ],
       },
@@ -236,7 +230,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-frontend',
-        environment: 'test',
+        environment: 'uat',
         vars: [
           {
             key: 'NEXT_PUBLIC_API_URL',
@@ -287,7 +281,9 @@ describe('ProjectDeploymentProvisioningService', () => {
     });
 
     expect(result.status).toBe('partial');
-    expect(result.targets[1]?.errorSummary).toContain('Bearer [redacted]');
+    expect(
+      result.targets.find((target) => target.status === 'failed')?.errorSummary,
+    ).toContain('Bearer [redacted]');
     expect(JSON.stringify(result)).not.toContain('rnd_secret');
   });
 
@@ -300,9 +296,9 @@ describe('ProjectDeploymentProvisioningService', () => {
       provider: 'vercel',
       providerConnectionId: null,
       providerProjectId: 'prj_1',
-      providerProjectName: 'orders-ui-test',
+      providerProjectName: 'orders-ui-uat',
       repoFullName: 'tone/orders-ui',
-      branchName: 'test',
+      branchName: 'uat',
       rootDirectory: '.',
       buildCommand: 'npm run build',
       startCommand: null,
@@ -354,6 +350,16 @@ describe('ProjectDeploymentProvisioningService', () => {
         deploymentStrategy: 'vercel_ci_pushed',
       }) as unknown,
     });
+    expect(
+      deploymentTargetsService.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      expect.objectContaining({
+        branchName: 'uat',
+        projectName: 'orders-ui-uat',
+      }),
+    );
     expect(
       deploymentTargetsService.updateProviderMetadata,
     ).toHaveBeenCalledWith('target-1', {

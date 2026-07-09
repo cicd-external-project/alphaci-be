@@ -122,7 +122,7 @@ export class DeploymentTargetsService {
             token: providerAuth.token,
             repoFullName: project.repo_full_name,
             projectName: this.requireString(dto.projectName, 'projectName'),
-            branchName: dto.branchName?.trim() || 'test',
+            branchName: dto.branchName?.trim() || 'uat',
             ...(dto.rootDirectory?.trim()
               ? { rootDirectory: dto.rootDirectory.trim() }
               : {}),
@@ -188,7 +188,7 @@ export class DeploymentTargetsService {
         providerProjectId: target.id,
         providerProjectName: target.name,
         repoFullName: project.repo_full_name,
-        branchName: dto.branchName?.trim() || 'test',
+        branchName: dto.branchName?.trim() || 'uat',
         rootDirectory: dto.rootDirectory?.trim() || null,
         buildCommand: dto.buildCommand?.trim() || null,
         startCommand: dto.startCommand?.trim() || null,
