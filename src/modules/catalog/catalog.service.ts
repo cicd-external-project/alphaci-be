@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/app.config';
 import type { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 
-// â”€â”€â”€ Project Options types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Project options types
 
 export interface RepoShapeOption {
   id: string;
@@ -91,12 +91,12 @@ export interface ProjectOptionsResult {
   starterKits: StarterKitOption[];
 }
 
-// â”€â”€â”€ Static fallback catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Static fallback catalog
 
 // Order matters: the FE preselects the first enabled shape, so the simplest
 // option (standalone) must come first. 'mono' is parked as disabled until the
 // monorepo scaffold produces a real multi-package workspace with per-package
-// pipelines â€” today it would mislead users into a generic TS workspace.
+// pipelines - today it would mislead users into a generic TS workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
     {
@@ -104,7 +104,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       label: 'Single application',
       enabled: true,
       description:
-        'One repository with one app. The simplest way to start â€” best for most projects.',
+        'One repository with one app. The simplest way to start - best for most projects.',
     },
     {
       id: 'microservices',
@@ -118,7 +118,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       label: 'Backend + frontend (two repos)',
       enabled: true,
       description:
-        'Creates two repositories â€” one for your backend API, one for your frontend app â€” each with its own CI/CD pipeline.',
+        'Creates two repositories - one for your backend API, one for your frontend app - each with its own CI/CD pipeline.',
     },
     {
       id: 'mono',
@@ -279,7 +279,7 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   starterKits: [],
 };
 
-// â”€â”€â”€ Template types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Template types
 
 export interface WorkflowTemplate {
   id: string;
@@ -410,7 +410,7 @@ export class CatalogService {
 
     // Resolve the repo path relative to this source file when a relative path
     // is configured. Using __dirname (dist/modules/catalog) keeps the anchor
-    // stable regardless of the process working directory â€” critical in Docker
+    // stable regardless of the process working directory - critical in Docker
     // where cwd is /app, not the project root. In production, set an absolute
     // TEMPLATE_REPO_PATH in your environment or Dockerfile to be explicit.
     const anchoredRepoPath = this.resolveTemplateRepoPath();

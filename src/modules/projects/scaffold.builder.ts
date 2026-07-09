@@ -19,6 +19,29 @@ export type CanonicalRepoShape =
   | 'microservices'
   | 'multi-repo';
 
+export type ScaffoldStack = 'nextjs' | 'react' | 'nestjs' | 'nodejs';
+
+export function normalizeScaffoldStack(
+  stack: string | null | undefined,
+): ScaffoldStack {
+  switch (stack) {
+    case 'react-spa':
+    case 'react':
+      return 'react';
+    case 'nextjs-app':
+    case 'nextjs':
+      return 'nextjs';
+    case 'nodejs-api':
+    case 'nodejs':
+      return 'nodejs';
+    case 'nestjs-api':
+    case 'nestjs':
+      return 'nestjs';
+    default:
+      return 'nodejs';
+  }
+}
+
 /**
  * Map a repo shape ID to its canonical form. The catalog (and therefore the
  * FE) uses 'single-app' and the short IDs 'mono' and 'multi', while internal flow logic uses
@@ -707,13 +730,21 @@ function buildMicroservicesScaffold(
 export function buildProjectScaffold(
   options: BuildScaffoldOptions,
 ): ScaffoldFile[] {
-  switch (normalizeRepoShape(options.repoShape)) {
+  const normalizedOptions: BuildScaffoldOptions = {
+    ...options,
+    stack: normalizeScaffoldStack(options.stack),
+    ...(options.frontendStack
+      ? { frontendStack: normalizeScaffoldStack(options.frontendStack) }
+      : {}),
+  };
+
+  switch (normalizeRepoShape(normalizedOptions.repoShape)) {
     case 'monorepo':
-      return buildMonorepoScaffold(options);
+      return buildMonorepoScaffold(normalizedOptions);
     case 'microservices':
-      return buildMicroservicesScaffold(options);
+      return buildMicroservicesScaffold(normalizedOptions);
     default:
-      return buildStandaloneScaffold(options);
+      return buildStandaloneScaffold(normalizedOptions);
   }
 }
 
@@ -724,5 +755,6 @@ export function buildProjectScaffold(
  * container registries.
  */
 export function defaultIncludeDocker(stack: string): boolean {
-  return stack === 'nestjs' || stack === 'nodejs';
+  const normalizedStack = normalizeScaffoldStack(stack);
+  return normalizedStack === 'nestjs' || normalizedStack === 'nodejs';
 }

@@ -37,6 +37,13 @@ describe('buildProjectScaffold', () => {
     includeDocker: false,
   };
 
+  const packageJson = (files: ReturnType<typeof buildProjectScaffold>) =>
+    JSON.parse(files.find((file) => file.path === 'package.json')!.content) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
   it("renders the monorepo workspace scaffold for the catalog ID 'mono'", () => {
     const files = buildProjectScaffold({ ...baseOptions, repoShape: 'mono' });
     const paths = files.map((file) => file.path);
@@ -71,6 +78,63 @@ describe('buildProjectScaffold', () => {
     expect(paths).toContain('backend/package.json');
     expect(paths).toContain('frontend/package.json');
     expect(paths).toContain('frontend/src/app/page.tsx');
+  });
+
+  it('maps the current Next.js catalog ID to the Next.js scaffold', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nextjs-app',
+    });
+    const paths = files.map((file) => file.path);
+    const pkg = packageJson(files);
+
+    expect(paths).toContain('next.config.ts');
+    expect(paths).toContain('src/app/page.tsx');
+    expect(pkg.dependencies?.next).toBeDefined();
+    expect(pkg.scripts?.build).toBe('next build');
+  });
+
+  it('maps the current React SPA catalog ID to the React scaffold', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'react-spa',
+    });
+    const tsconfig = JSON.parse(
+      files.find((file) => file.path === 'tsconfig.json')!.content,
+    ) as { compilerOptions?: { jsx?: string; lib?: string[] } };
+
+    expect(tsconfig.compilerOptions?.jsx).toBe('react-jsx');
+    expect(tsconfig.compilerOptions?.lib).toContain('DOM');
+  });
+
+  it('maps the current NestJS API catalog ID to the NestJS scaffold', () => {
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nestjs-api',
+    });
+    const paths = files.map((file) => file.path);
+    const pkg = packageJson(files);
+
+    expect(paths).toContain('src/app.module.ts');
+    expect(paths).toContain('src/main.ts');
+    expect(pkg.dependencies?.['@nestjs/core']).toBeDefined();
+  });
+
+  it('maps the current Node.js API catalog ID to the Node.js scaffold defaults', () => {
+    expect(defaultIncludeDocker('nodejs-api')).toBe(true);
+
+    const files = buildProjectScaffold({
+      ...baseOptions,
+      stack: 'nodejs-api',
+      includeDocker: true,
+    });
+    const paths = files.map((file) => file.path);
+    const pkg = packageJson(files);
+
+    expect(paths).toContain('Dockerfile');
+    expect(paths).toContain('src/index.ts');
+    expect(paths).not.toContain('src/app.module.ts');
+    expect(pkg.scripts?.start).toBe('node dist/index.js');
   });
 });
 
