@@ -141,6 +141,8 @@ function buildPackageJson(packageName: string, stack: string): string {
   const isNextJs = stack === 'nextjs';
   const isNestJs = stack === 'nestjs';
 
+  // Tests live in tests/ (type-checked and linted, never compiled), so
+  // compiled stacks build from tsconfig.build.json which includes src only.
   let scripts: Record<string, string>;
   if (isNextJs) {
     scripts = {
@@ -149,25 +151,25 @@ function buildPackageJson(packageName: string, stack: string): string {
       dev: 'next dev',
       test: 'jest',
       typecheck: 'tsc --noEmit',
-      lint: 'eslint src',
+      lint: 'eslint src tests',
     };
   } else if (isNestJs) {
     scripts = {
-      build: 'tsc -p tsconfig.json',
+      build: 'tsc -p tsconfig.build.json',
       start: 'node dist/main.js',
       dev: 'ts-node src/main.ts',
       test: 'jest',
       typecheck: 'tsc --noEmit',
-      lint: 'eslint src',
+      lint: 'eslint src tests',
     };
   } else {
     scripts = {
-      build: 'tsc -p tsconfig.json',
+      build: 'tsc -p tsconfig.build.json',
       start: 'node dist/index.js',
       dev: 'ts-node src/index.ts',
       test: 'jest',
       typecheck: 'tsc --noEmit',
-      lint: 'eslint src',
+      lint: 'eslint src tests',
     };
   }
 
@@ -213,6 +215,9 @@ function buildPackageJson(packageName: string, stack: string): string {
   return JSON.stringify(pkg, null, 2);
 }
 
+// Base tsconfig covers src AND tests so `tsc --noEmit` type-checks the test
+// suites. Emit settings (rootDir/outDir) live in tsconfig.build.json so tests
+// are never compiled into dist.
 function buildTsConfig(stack: string): string {
   const isNextJs = stack === 'nextjs';
   const isReact = stack === 'react';
@@ -224,19 +229,35 @@ function buildTsConfig(stack: string): string {
       module: isFrontend ? 'ESNext' : 'NodeNext',
       moduleResolution: isFrontend ? 'bundler' : 'NodeNext',
       strict: true,
-      outDir: 'dist',
-      rootDir: 'src',
       ...(isFrontend ? { jsx: 'react-jsx' } : {}),
       lib: isFrontend ? ['ES2022', 'DOM'] : ['ES2022'],
       esModuleInterop: true,
       skipLibCheck: true,
       forceConsistentCasingInFileNames: true,
     },
-    include: ['src'],
+    include: ['src', 'tests'],
     exclude: ['node_modules', 'dist'],
   };
 
   return JSON.stringify(config, null, 2);
+}
+
+// Build-only tsconfig for compiled stacks (nestjs/nodejs/react): compiles src
+// only so test files never land in dist or the published artifact.
+function buildBuildTsConfig(): string {
+  return JSON.stringify(
+    {
+      extends: './tsconfig.json',
+      compilerOptions: {
+        rootDir: 'src',
+        outDir: 'dist',
+      },
+      include: ['src'],
+      exclude: ['node_modules', 'dist'],
+    },
+    null,
+    2,
+  );
 }
 
 function buildJestConfig(): string {
@@ -266,7 +287,7 @@ function buildSonarProperties(
     `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
     `sonar.projectName=${serviceName}`,
     'sonar.sources=src',
-    'sonar.tests=src',
+    'sonar.tests=src,tests',
     'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
     'sonar.typescript.lcov.reportPaths=coverage/lcov.info',
     'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
@@ -277,15 +298,37 @@ function buildEntryPoint(serviceName: string): string {
   return [`export const SERVICE_NAME = '${serviceName}';`].join('\n');
 }
 
-function buildEntrySpec(serviceName: string): string {
+function buildEntrySpec(serviceName: string, importPath = './index'): string {
   return [
-    "import { SERVICE_NAME } from './index';",
+    `import { SERVICE_NAME } from '${importPath}';`,
     '',
     `describe('${serviceName}', () => {`,
     "  it('should export SERVICE_NAME', () => {",
     `    expect(SERVICE_NAME).toBe('${serviceName}');`,
     '  });',
     '});',
+  ].join('\n');
+}
+
+// README committed inside tests/ so the folder ships with every new repo and
+// developers know where each kind of test belongs.
+function buildTestsReadme(): string {
+  return [
+    '# Tests',
+    '',
+    'This folder is the home for all test suites in this repository.',
+    '',
+    '| Folder | Purpose |',
+    '| ------ | ------- |',
+    '| `unit/` | Unit tests. Run by `npm test` and enforced with coverage in CI. |',
+    '',
+    '## Conventions',
+    '',
+    '- Unit test files end with `.spec.ts` or `.test.ts` (`.tsx` for React components).',
+    '- Mirror the `src/` structure: `src/user/user.service.ts` is tested by `tests/unit/user/user.service.spec.ts`.',
+    '- Co-located specs inside `src/` also work, but `tests/unit/` is the checked convention: CI verifies this folder exists.',
+    '- When you add end-to-end suites, keep them in `tests/e2e/` and name files `*.e2e-spec.ts` so the unit test runner does not pick them up.',
+    '',
   ].join('\n');
 }
 
@@ -303,8 +346,33 @@ function buildEslintConfig(): string {
   ].join('\n');
 }
 
-function buildEnvExample(): string {
-  return ['NODE_ENV=development', 'PORT=3000'].join('\n');
+// Documents the env vars ALPHACI injects into managed hosting (Render and
+// Vercel) at project creation, with sensible local-dev values.
+function buildEnvExample(stack: string): string {
+  const isFrontend =
+    normalizeProjectStack(stack) === 'nextjs' ||
+    normalizeProjectStack(stack) === 'react';
+
+  if (isFrontend) {
+    return [
+      'NODE_ENV=development',
+      '',
+      '# Backend API base URL. On managed hosting ALPHACI sets this to the',
+      '# deployed backend service URL (e.g. https://<service>-uat.onrender.com).',
+      'NEXT_PUBLIC_API_URL=http://localhost:4000',
+      'API_URL=http://localhost:4000',
+    ].join('\n');
+  }
+
+  return [
+    'NODE_ENV=development',
+    'PORT=3000',
+    '',
+    '# Origins allowed to call this API. On managed hosting ALPHACI sets these',
+    '# to the deployed frontend URL(s).',
+    'CORS_ORIGINS=http://localhost:3000',
+    'FRONTEND_URL=http://localhost:3000',
+  ].join('\n');
 }
 
 // ─── NestJS-specific files ────────────────────────────────────────────────────
@@ -398,11 +466,11 @@ function buildReactApp(serviceName: string): string {
   ].join('\n');
 }
 
-function buildReactAppSpec(serviceName: string): string {
+function buildReactAppSpec(serviceName: string, importPath = './App'): string {
   return [
     "import { renderToString } from 'react-dom/server';",
     '',
-    "import { App } from './App';",
+    `import { App } from '${importPath}';`,
     '',
     "describe('App', () => {",
     "  it('renders the default service title', () => {",
@@ -505,7 +573,9 @@ function buildMonorepoRootTsConfig(): string {
         skipLibCheck: true,
         forceConsistentCasingInFileNames: true,
       },
-      references: [{ path: 'packages/core' }],
+      // Reference the build config so `tsc -b` compiles src only; the
+      // package's tsconfig.json (src + tests) is for typecheck and editors.
+      references: [{ path: 'packages/core/tsconfig.build.json' }],
       include: [],
     },
     null,
@@ -540,13 +610,39 @@ function buildMonorepoSonarProperties(
   ].join('\n');
 }
 
+// Package typecheck/editor config: covers src AND tests, never emits. The
+// root config's composite/declaration flags are switched off here because
+// composite projects cannot run with noEmit; tsconfig.build.json re-enables
+// them for the actual `tsc -b` build.
 function buildPackageTsConfig(): string {
   return JSON.stringify(
     {
       extends: '../../tsconfig.json',
       compilerOptions: {
-        outDir: 'dist',
+        composite: false,
+        declaration: false,
+        declarationMap: false,
+        noEmit: true,
+      },
+      include: ['src', 'tests'],
+      exclude: ['node_modules', 'dist'],
+    },
+    null,
+    2,
+  );
+}
+
+function buildPackageBuildTsConfig(): string {
+  return JSON.stringify(
+    {
+      extends: './tsconfig.json',
+      compilerOptions: {
+        composite: true,
+        declaration: true,
+        declarationMap: true,
+        noEmit: false,
         rootDir: 'src',
+        outDir: 'dist',
       },
       include: ['src'],
       exclude: ['node_modules', 'dist'],
@@ -561,10 +657,10 @@ function buildPackagePackageJson(packageName: string, stack: string): string {
     name: packageName,
     version: '0.1.0',
     scripts: {
-      build: 'tsc -p tsconfig.json',
+      build: 'tsc -p tsconfig.build.json',
       test: 'jest',
       typecheck: 'tsc --noEmit',
-      lint: 'eslint src',
+      lint: 'eslint src tests',
     },
     dependencies: {} as Record<string, string>,
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES } as Record<string, string>,
@@ -613,7 +709,7 @@ function buildMicroservicesSonarProperties(
     `sonar.projectKey=${sonarProjectKey ?? serviceName}`,
     `sonar.projectName=${serviceName}`,
     'sonar.sources=backend/src,frontend/src',
-    'sonar.tests=backend/src,frontend/src',
+    'sonar.tests=backend/src,frontend/src,backend/tests,frontend/tests',
     'sonar.test.inclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
     'sonar.typescript.lcov.reportPaths=backend/coverage/lcov.info,frontend/coverage/lcov.info',
     'sonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,**/*.spec.tsx,**/*.test.tsx',
@@ -637,10 +733,21 @@ function buildServiceSubdirFiles(
     { path: `${dir}/tsconfig.json`, content: buildTsConfig(stack) },
     { path: `${dir}/jest.config.ts`, content: buildJestConfig() },
     { path: `${dir}/eslint.config.mjs`, content: buildEslintConfig() },
-    { path: `${dir}/.env.example`, content: buildEnvExample() },
+    { path: `${dir}/.env.example`, content: buildEnvExample(stack) },
     { path: `${dir}/src/index.ts`, content: buildEntryPoint(serviceName) },
-    { path: `${dir}/src/index.spec.ts`, content: buildEntrySpec(serviceName) },
+    { path: `${dir}/tests/README.md`, content: buildTestsReadme() },
+    {
+      path: `${dir}/tests/unit/index.spec.ts`,
+      content: buildEntrySpec(serviceName, '../../src/index'),
+    },
   ];
+
+  if (stack !== 'nextjs') {
+    files.push({
+      path: `${dir}/tsconfig.build.json`,
+      content: buildBuildTsConfig(),
+    });
+  }
 
   if (stack === 'nestjs') {
     files.push(
@@ -673,8 +780,8 @@ function buildServiceSubdirFiles(
     files.push(
       { path: `${dir}/src/App.tsx`, content: buildReactApp(serviceName) },
       {
-        path: `${dir}/src/App.spec.tsx`,
-        content: buildReactAppSpec(serviceName),
+        path: `${dir}/tests/unit/App.spec.tsx`,
+        content: buildReactAppSpec(serviceName, '../../src/App'),
       },
     );
   }
@@ -706,10 +813,25 @@ function buildStandaloneScaffold(
       content: buildSonarProperties(serviceName, sonarProjectKey),
     },
     { path: 'eslint.config.mjs', content: buildEslintConfig() },
-    { path: '.env.example', content: buildEnvExample() },
+    { path: '.env.example', content: buildEnvExample(stack) },
     { path: 'src/index.ts', content: buildEntryPoint(serviceName) },
-    { path: 'src/index.spec.ts', content: buildEntrySpec(serviceName) },
+    // Dedicated test folder: starter unit spec plus a README documenting the
+    // convention, so every repo is born with a place to put tests.
+    { path: 'tests/README.md', content: buildTestsReadme() },
+    {
+      path: 'tests/unit/index.spec.ts',
+      content: buildEntrySpec(serviceName, '../../src/index'),
+    },
   ];
+
+  // next build compiles via its own pipeline; only tsc-built stacks need the
+  // src-only build config.
+  if (stack !== 'nextjs') {
+    sharedFiles.push({
+      path: 'tsconfig.build.json',
+      content: buildBuildTsConfig(),
+    });
+  }
 
   let stackFiles: ScaffoldFile[];
   if (stack === 'nestjs') {
@@ -726,7 +848,10 @@ function buildStandaloneScaffold(
   } else if (stack === 'react') {
     stackFiles = [
       { path: 'src/App.tsx', content: buildReactApp(serviceName) },
-      { path: 'src/App.spec.tsx', content: buildReactAppSpec(serviceName) },
+      {
+        path: 'tests/unit/App.spec.tsx',
+        content: buildReactAppSpec(serviceName, '../../src/App'),
+      },
     ];
   } else {
     stackFiles = [];
@@ -761,21 +886,26 @@ function buildMonorepoScaffold(options: BuildScaffoldOptions): ScaffoldFile[] {
       content: buildMonorepoSonarProperties(serviceName, sonarProjectKey),
     },
     { path: 'eslint.config.mjs', content: buildEslintConfig() },
-    { path: '.env.example', content: buildEnvExample() },
+    { path: '.env.example', content: buildEnvExample(stack) },
     // packages/core — rename or duplicate to add more packages
     {
       path: 'packages/core/package.json',
       content: buildPackagePackageJson(corePackageName, stack),
     },
     { path: 'packages/core/tsconfig.json', content: buildPackageTsConfig() },
+    {
+      path: 'packages/core/tsconfig.build.json',
+      content: buildPackageBuildTsConfig(),
+    },
     { path: 'packages/core/jest.config.ts', content: buildJestConfig() },
     {
       path: 'packages/core/src/index.ts',
       content: buildEntryPoint(serviceName),
     },
+    { path: 'packages/core/tests/README.md', content: buildTestsReadme() },
     {
-      path: 'packages/core/src/index.spec.ts',
-      content: buildEntrySpec(serviceName),
+      path: 'packages/core/tests/unit/index.spec.ts',
+      content: buildEntrySpec(serviceName, '../../src/index'),
     },
   ];
 }

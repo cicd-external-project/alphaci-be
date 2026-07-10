@@ -121,6 +121,13 @@ export interface StagedWorkflowOptions extends GenerateWorkflowDto {
    */
   workflowVariant?: 'backend' | 'frontend';
   centralWorkflowRef?: string;
+  /**
+   * True when the target repository carries the ALPHACI scaffold's tests/
+   * directory (all product-created repos since the tests-folder rollout).
+   * Enables the tests/unit folder guard and widens the Sonar tests path.
+   * Leave unset for existing/BYO repositories whose layout is unknown.
+   */
+  hasTestsDirectory?: boolean;
 }
 
 type DeployBranch = 'uat' | 'main';
@@ -234,9 +241,14 @@ export function buildStagedWorkflowBundle(
               'system-name': serviceName,
               ...(isBackend
                 ? { 'backend-stack': stack }
-                : // Scaffolded repos keep their specs in src/, not the
-                  // frontend-tests default of tests/unit.
-                  { 'unit-tests-directory': 'src' }),
+                : // Repos born with the ALPHACI scaffold ship tests/unit and
+                  // the guard enforces it stays; BYO repos fall back to src,
+                  // the one folder every layout is guaranteed to have.
+                  {
+                    'unit-tests-directory': dto.hasTestsDirectory
+                      ? 'tests/unit'
+                      : 'src',
+                  }),
               'node-version': Number(nodeVersion),
               'coverage-threshold':
                 '${{ fromJson(needs.branch-policy.outputs.coverage-threshold) }}',
@@ -283,7 +295,7 @@ export function buildStagedWorkflowBundle(
               'working-directory': servicePath,
               'system-name': serviceName,
               'sources-path': 'src',
-              'tests-path': 'src',
+              'tests-path': dto.hasTestsDirectory ? 'src,tests' : 'src',
               'coverage-report-path': 'coverage/lcov.info',
               'coverage-artifact-name': `${serviceName}-coverage`,
               'quality-gate-wait':

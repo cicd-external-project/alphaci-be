@@ -58,7 +58,41 @@ export class DeploymentTargetsService {
 
   async listDeploymentTargets(projectId: string, userId: string) {
     await this.getProjectOrThrow(projectId, userId);
-    return this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+    const targets =
+      await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+
+    // Enrich with copyable links: the live service URL and the provider
+    // dashboard, so the UI never has to re-derive provider URL conventions.
+    return targets.map((target) => ({
+      ...target,
+      publicUrl: this.targetPublicUrl(target),
+      dashboardUrl: this.providerDashboardUrl(target),
+    }));
+  }
+
+  /**
+   * The public URL the deployed service answers on. Prefers the URL the
+   * provider returned at creation (Render stores it in providerMetadata);
+   * falls back to each provider's deterministic naming convention.
+   */
+  private targetPublicUrl(target: DeploymentTargetSummary): string | null {
+    if (target.provider === 'render') {
+      const metadataUrl = target.providerMetadata?.['renderServiceUrl'];
+      if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
+        return metadataUrl.trim();
+      }
+      return target.providerProjectName
+        ? `https://${target.providerProjectName}.onrender.com`
+        : null;
+    }
+
+    if (target.provider === 'vercel') {
+      return target.providerProjectName
+        ? `https://${target.providerProjectName}.vercel.app`
+        : null;
+    }
+
+    return null;
   }
 
   async createDeploymentTarget(

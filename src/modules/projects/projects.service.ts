@@ -414,6 +414,9 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       customOutputFileName: dto.outputFileName,
+      // The standalone scaffold ships tests/ at the repo root; the monorepo
+      // keeps tests under packages/*, so the root-level guard stays off.
+      hasTestsDirectory: repoShape === 'standalone',
       deploymentProvider: this.extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
@@ -642,6 +645,9 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'backend',
+      // The scaffold seeds tests/ only inside its own backend/ dir; a custom
+      // servicePath points at a layout the scaffold does not control.
+      hasTestsDirectory: (backend.servicePath ?? 'backend') === 'backend',
       deploymentProvider: this.extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
@@ -663,6 +669,7 @@ export class ProjectsService {
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
       workflowVariant: 'frontend',
+      hasTestsDirectory: (frontend.servicePath ?? 'frontend') === 'frontend',
       deploymentTargets: this.resolveDeploymentWorkflowTargets(
         effectiveDeploymentProvisioning,
         ['frontend'],
@@ -2319,6 +2326,12 @@ export class ProjectsService {
     deploymentTargets?: DeploymentWorkflowTarget[] | undefined;
     workflowVariant?: 'backend' | 'frontend' | undefined;
     centralWorkflowRef?: string | undefined;
+    /**
+     * True when the workflow targets a service path that carries the
+     * scaffold's tests/ directory (product-created repos). Leave unset for
+     * BYO/setup repos and monorepo roots (their tests live under packages/).
+     */
+    hasTestsDirectory?: boolean | undefined;
   }): Promise<{ workflowFiles: StagedWorkflowFile[]; outputFileName: string }> {
     const {
       templateId,
@@ -2332,6 +2345,7 @@ export class ProjectsService {
       deploymentTargets = [],
       workflowVariant,
       centralWorkflowRef,
+      hasTestsDirectory,
     } = options;
 
     const template = await this.catalogService.getTemplateById(templateId);
@@ -2350,6 +2364,7 @@ export class ProjectsService {
       ...(deploymentTargets.length > 0 && { deploymentTargets }),
       ...(workflowVariant !== undefined && { workflowVariant }),
       ...(centralWorkflowRef !== undefined && { centralWorkflowRef }),
+      ...(hasTestsDirectory !== undefined && { hasTestsDirectory }),
     });
 
     const outputFileName = customOutputFileName ?? '00-alphaci-access.yml';
@@ -2498,7 +2513,7 @@ export class ProjectsService {
       return [
         `- \`backend/\` contains ${opts.backendServiceName ?? opts.projectName} as a ${this.describeGeneratedStack(opts.stack)}.`,
         `- \`frontend/\` contains ${opts.frontendServiceName ?? `${opts.projectName}-fe`} as a ${this.describeGeneratedStack(opts.frontendStack ?? 'nextjs')}.`,
-        '- Each service owns its own `package.json`, TypeScript config, Jest config, ESLint config, and source folder.',
+        '- Each service owns its own `package.json`, TypeScript config, Jest config, ESLint config, source folder, and `tests/` folder.',
         '- `docker-compose.yml` is included when Docker scaffolding is enabled for the backend service.',
       ];
     }
@@ -2507,7 +2522,7 @@ export class ProjectsService {
       return [
         '- `src/main.ts` boots the NestJS app.',
         '- `src/app.module.ts` is the initial application module.',
-        '- `src/index.ts` and `src/index.spec.ts` provide a tiny exported sanity check for the generated pipeline.',
+        '- `tests/unit/` holds the unit test suites; the starter spec verifies the exported service name.',
       ];
     }
 
@@ -2515,6 +2530,7 @@ export class ProjectsService {
       return [
         '- `src/app/layout.tsx` provides the App Router root layout.',
         '- `src/app/page.tsx` is the starter page.',
+        '- `tests/unit/` holds the unit test suites; CI verifies this folder exists.',
         '- `next.config.ts` and the shared TypeScript/Jest/ESLint configs are ready for the generated workflow.',
       ];
     }
@@ -2522,14 +2538,14 @@ export class ProjectsService {
     if (stack === 'react') {
       return [
         '- `src/App.tsx` contains the starter React component.',
-        '- `src/App.spec.tsx` renders the component with `react-dom/server` so unit tests pass without choosing a bundler for you.',
+        '- `tests/unit/App.spec.tsx` renders the component with `react-dom/server` so unit tests pass without choosing a bundler for you.',
         '- Add Vite, Next.js, or another bundler when you are ready to build the real app shell.',
       ];
     }
 
     return [
       '- `src/index.ts` is the starter Node.js entrypoint.',
-      '- `src/index.spec.ts` verifies the exported service name.',
+      '- `tests/unit/index.spec.ts` verifies the exported service name.',
       '- Docker scaffolding starts `dist/index.js`, matching the TypeScript build output.',
     ];
   }
@@ -2750,6 +2766,9 @@ export class ProjectsService {
       servicePath: '.',
       nodeVersion: dto.nodeVersion,
       coverageThreshold: dto.coverageThreshold,
+      // Each multi-repo repository carries the standalone scaffold, tests/
+      // included, at its root.
+      hasTestsDirectory: true,
       deploymentProvider: this.extractDeploymentProvider(
         effectiveDeploymentProvisioning,
         'backend',
@@ -2920,6 +2939,7 @@ export class ProjectsService {
         servicePath: '.',
         nodeVersion: dto.nodeVersion,
         coverageThreshold: dto.coverageThreshold,
+        hasTestsDirectory: true,
         deploymentTargets: this.resolveDeploymentWorkflowTargets(
           effectiveDeploymentProvisioning,
           ['frontend'],
@@ -3080,6 +3100,24 @@ export class ProjectsService {
           slots: ['frontend'],
         }),
       );
+
+      // The per-repo provisioning passes cannot see each other's targets, so
+      // cross-link the backend and frontend services here: the frontend gets
+      // the backend's API URL, the backend gets the frontend origin for CORS.
+      try {
+        await this.projectDeploymentProvisioningService.crossLinkServiceUrls({
+          userId,
+          request: effectiveDeploymentProvisioning,
+          groups: [
+            { projectId: backendRow.id, result: provisioningResults[0]! },
+            { projectId: feRow.id, result: provisioningResults[1]! },
+          ],
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Multi-repo cross-service env injection failed: ${String(error)}`,
+        );
+      }
     }
 
     return {

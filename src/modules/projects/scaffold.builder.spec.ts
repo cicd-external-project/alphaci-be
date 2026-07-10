@@ -163,7 +163,7 @@ describe('buildProjectScaffold', () => {
     const paths = files.map((file) => file.path);
 
     expect(paths).toContain('src/App.tsx');
-    expect(paths).toContain('src/App.spec.tsx');
+    expect(paths).toContain('tests/unit/App.spec.tsx');
 
     const pkg = JSON.parse(
       files.find((file) => file.path === 'package.json')!.content,
@@ -197,7 +197,111 @@ describe('buildProjectScaffold', () => {
     const paths = files.map((file) => file.path);
 
     expect(paths).toContain('frontend/src/App.tsx');
-    expect(paths).toContain('frontend/src/App.spec.tsx');
+    expect(paths).toContain('frontend/tests/unit/App.spec.tsx');
+  });
+
+  it('ships a tests/ folder with a starter unit spec in every shape', () => {
+    const standalone = buildProjectScaffold(baseOptions).map((f) => f.path);
+    expect(standalone).toContain('tests/README.md');
+    expect(standalone).toContain('tests/unit/index.spec.ts');
+    expect(standalone).not.toContain('src/index.spec.ts');
+
+    const mono = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'mono',
+    }).map((f) => f.path);
+    expect(mono).toContain('packages/core/tests/README.md');
+    expect(mono).toContain('packages/core/tests/unit/index.spec.ts');
+
+    const micro = buildProjectScaffold({
+      ...baseOptions,
+      repoShape: 'microservices',
+      frontendStack: 'nextjs',
+    }).map((f) => f.path);
+    expect(micro).toContain('backend/tests/unit/index.spec.ts');
+    expect(micro).toContain('frontend/tests/unit/index.spec.ts');
+    expect(micro).toContain('backend/tests/README.md');
+    expect(micro).toContain('frontend/tests/README.md');
+  });
+
+  it('keeps starter specs importable and type-checked from tests/unit', () => {
+    const files = buildProjectScaffold(baseOptions);
+
+    const spec = files.find(
+      (file) => file.path === 'tests/unit/index.spec.ts',
+    )!.content;
+    expect(spec).toContain("from '../../src/index'");
+
+    const tsconfig = JSON.parse(
+      files.find((file) => file.path === 'tsconfig.json')!.content,
+    ) as { include?: string[]; compilerOptions?: Record<string, unknown> };
+    expect(tsconfig.include).toEqual(['src', 'tests']);
+    expect(tsconfig.compilerOptions?.['rootDir']).toBeUndefined();
+
+    // The build config compiles src only so tests never land in dist.
+    const buildConfig = JSON.parse(
+      files.find((file) => file.path === 'tsconfig.build.json')!.content,
+    ) as { include?: string[]; compilerOptions?: Record<string, unknown> };
+    expect(buildConfig.include).toEqual(['src']);
+    expect(buildConfig.compilerOptions?.['rootDir']).toBe('src');
+
+    const pkg = JSON.parse(
+      files.find((file) => file.path === 'package.json')!.content,
+    ) as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.['build']).toBe('tsc -p tsconfig.build.json');
+    expect(pkg.scripts?.['lint']).toBe('eslint src tests');
+
+    const sonar = files.find(
+      (file) => file.path === 'sonar-project.properties',
+    )!.content;
+    expect(sonar).toContain('sonar.tests=src,tests');
+  });
+
+  it('keeps the Next.js build script free of the tsc build config', () => {
+    const files = buildProjectScaffold({
+      serviceName: 'orders-web',
+      stack: 'nextjs',
+      includeDocker: false,
+    });
+    const paths = files.map((file) => file.path);
+
+    expect(paths).not.toContain('tsconfig.build.json');
+    const pkg = JSON.parse(
+      files.find((file) => file.path === 'package.json')!.content,
+    ) as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.['build']).toBe('next build');
+  });
+
+  it('wires the monorepo build through the package build config', () => {
+    const files = buildProjectScaffold({ ...baseOptions, repoShape: 'mono' });
+    const paths = files.map((file) => file.path);
+
+    expect(paths).toContain('packages/core/tsconfig.build.json');
+
+    const rootTsConfig = JSON.parse(
+      files.find((file) => file.path === 'tsconfig.json')!.content,
+    ) as { references?: Array<{ path: string }> };
+    expect(rootTsConfig.references).toEqual([
+      { path: 'packages/core/tsconfig.build.json' },
+    ]);
+
+    // The package typecheck config must not be composite: composite projects
+    // cannot run with noEmit, which the root typecheck script relies on.
+    const packageTsConfig = JSON.parse(
+      files.find((file) => file.path === 'packages/core/tsconfig.json')!
+        .content,
+    ) as { include?: string[]; compilerOptions?: Record<string, unknown> };
+    expect(packageTsConfig.include).toEqual(['src', 'tests']);
+    expect(packageTsConfig.compilerOptions?.['composite']).toBe(false);
+    expect(packageTsConfig.compilerOptions?.['noEmit']).toBe(true);
+
+    const packageBuildConfig = JSON.parse(
+      files.find((file) => file.path === 'packages/core/tsconfig.build.json')!
+        .content,
+    ) as { include?: string[]; compilerOptions?: Record<string, unknown> };
+    expect(packageBuildConfig.include).toEqual(['src']);
+    expect(packageBuildConfig.compilerOptions?.['composite']).toBe(true);
+    expect(packageBuildConfig.compilerOptions?.['noEmit']).toBe(false);
   });
 });
 

@@ -508,4 +508,44 @@ describe('DeploymentTargetsService', () => {
       }),
     );
   });
+
+  it('enriches listed targets with the public service URL and dashboard URL', async () => {
+    deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+      {
+        id: 'target-render',
+        provider: 'render',
+        providerProjectId: 'srv-123',
+        providerProjectName: 'demo-backend-main',
+        providerMetadata: {
+          renderServiceUrl: 'https://demo-backend-main.onrender.com',
+        },
+      },
+      {
+        id: 'target-render-no-metadata',
+        provider: 'render',
+        providerProjectId: 'srv-456',
+        providerProjectName: 'demo-backend-uat',
+        providerMetadata: {},
+      },
+      {
+        id: 'target-vercel',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'demo-frontend',
+        providerMetadata: {},
+      },
+    ]);
+
+    const targets = await service.listDeploymentTargets('project-1', 'user-1');
+
+    expect(targets[0]).toMatchObject({
+      publicUrl: 'https://demo-backend-main.onrender.com',
+      dashboardUrl: 'https://dashboard.render.com/web/srv-123',
+    });
+    // Falls back to Render's naming convention when metadata has no URL.
+    expect(targets[1]?.publicUrl).toBe('https://demo-backend-uat.onrender.com');
+    expect(targets[2]).toMatchObject({
+      publicUrl: 'https://demo-frontend.vercel.app',
+    });
+  });
 });
