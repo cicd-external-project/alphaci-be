@@ -272,6 +272,35 @@ describe('buildStagedWorkflowBundle', () => {
     expect(frontend.workflowFiles[1]!.yaml).toContain('frontend-tests.yml@v1');
   });
 
+  it('enforces tests/unit for scaffolded repos and falls back to src for BYO', () => {
+    const scaffolded = buildStagedWorkflowBundle(makeTemplate('react'), {
+      templateId: 'fe-react',
+      serviceName: 'orders-web',
+      hasTestsDirectory: true,
+    });
+    const byo = buildStagedWorkflowBundle(makeTemplate('react'), {
+      templateId: 'fe-react',
+      serviceName: 'orders-web',
+    });
+
+    const scaffoldedQuality = yaml.load(
+      scaffolded.workflowFiles[1]!.yaml,
+    ) as ParsedWorkflow;
+    const byoQuality = yaml.load(byo.workflowFiles[1]!.yaml) as ParsedWorkflow;
+
+    expect(
+      scaffoldedQuality.jobs['frontend-tests']?.with?.['unit-tests-directory'],
+    ).toBe('tests/unit');
+    expect(scaffoldedQuality.jobs['sonar']?.with?.['tests-path']).toBe(
+      'src,tests',
+    );
+
+    expect(
+      byoQuality.jobs['frontend-tests']?.with?.['unit-tests-directory'],
+    ).toBe('src');
+    expect(byoQuality.jobs['sonar']?.with?.['tests-path']).toBe('src');
+  });
+
   it('resolves per-branch governance through the branch-policy job', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
