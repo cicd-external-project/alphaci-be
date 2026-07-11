@@ -16,6 +16,7 @@ import {
   helmetConfigSwagger,
 } from './common/config/security.config.js';
 import type { AppConfig } from './config/app.config.js';
+import { postgresSslConfig } from './modules/database/postgres-ssl.config.js';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
@@ -23,6 +24,14 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+
+  // Required for Render (and any reverse-proxy deployment).
+  // Render terminates TLS at the edge and sets X-Forwarded-Proto.
+  // Without this, Express ignores the header, treats every request as plain
+  // HTTP, and the secure:true + sameSite:none cookie combination silently
+  // breaks all sessions in production.
+  // Value 1 = trust exactly one hop â€” prevents X-Forwarded-For spoofing.
+  app.set('trust proxy', 1);
 
   const configService = app.get(ConfigService);
   const appCfg = configService.getOrThrow<AppConfig>('app');
@@ -39,7 +48,14 @@ async function bootstrap(): Promise<void> {
     ) => new (options: Record<string, unknown>) => session.Store;
     const PgStore = connectPg(session);
     sessionStore = new PgStore({
-      pool: new Pool({ connectionString: appCfg.supabase.dbUrl }),
+      pool: new Pool({
+        connectionString: appCfg.supabase.dbUrl,
+        ssl: postgresSslConfig(
+          appCfg.supabase.dbUrl,
+          appCfg.supabase.dbCaCert,
+          appCfg.supabase.dbSslRejectUnauthorized,
+        ),
+      }),
       tableName: 'session',
       createTableIfMissing: true,
     });
@@ -55,17 +71,35 @@ async function bootstrap(): Promise<void> {
       cookie: {
         httpOnly: true,
         secure: appCfg.session.secure,
-        sameSite: 'lax',
+        // 'none' is required when the FE and BE are on different origins
+        // (e.g. Vercel FE + Render BE). sameSite:'none' requires secure:true â€”
+        // the conditional prevents the invalid none+insecure combination in dev.
+        sameSite: appCfg.session.secure ? 'none' : 'lax',
         maxAge: appCfg.session.maxAgeMs,
+        // When SESSION_COOKIE_DOMAIN is set (FE + BE on one parent domain), the
+        // cookie is shared first-party across subdomains â€” required for Safari/iOS
+        // login. Omitted by default â†’ host-only cookie (current behavior).
+        ...(appCfg.session.cookieDomain
+          ? { domain: appCfg.session.cookieDomain }
+          : {}),
       },
     }),
   );
 
-  // Helmet — CISO-managed config (security.config.ts)
+  // Helmet â€” CISO-managed config (security.config.ts)
   app.use(helmet(enableSwagger ? helmetConfigSwagger : helmetConfig));
 
-  // Body parsers with size limit (bodyParser disabled at factory level)
-  app.use(express.json({ limit: BODY_SIZE_LIMIT }));
+  // Body parsers with size limit (bodyParser disabled at factory level).
+  // The verify callback captures the raw body buffer for webhook signature
+  // verification â€” consumed once here before JSON parsing discards it.
+  app.use(
+    express.json({
+      limit: BODY_SIZE_LIMIT,
+      verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(express.urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
   // Graceful shutdown
@@ -74,9 +108,12 @@ async function bootstrap(): Promise<void> {
   // Global API prefix
   app.setGlobalPrefix('api/v1');
 
-  // CORS — CISO-managed factory (security.config.ts)
+  // CORS â€” CISO-managed factory (security.config.ts)
   const allowedOriginsEnv = configService.get<string>('ALLOWED_ORIGINS');
-  app.enableCors(corsOptions(allowedOriginsEnv));
+  const allowedPatternsEnv = configService.get<string>(
+    'ALLOWED_ORIGIN_PATTERNS',
+  );
+  app.enableCors(corsOptions(allowedOriginsEnv, allowedPatternsEnv));
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -103,9 +140,15 @@ async function bootstrap(): Promise<void> {
     logger.log('Swagger docs available at /api/v1/docs');
   }
 
-  const port = configService.get<number>('PORT') ?? 3000;
-  await app.listen(port, '0.0.0.0');
-  logger.log(`Application running on 0.0.0.0:${String(port)}`);
+  const port = parseInt(process.env['PORT'] ?? '4000', 10);
+  // Browsers commonly resolve localhost to ::1 first. Bind local development
+  // on IPv6 so the existing localhost OAuth callback works on both address
+  // families; keep the container-safe IPv4 bind for production.
+  const host =
+    process.env['HOST'] ??
+    (process.env['NODE_ENV'] === 'production' ? '0.0.0.0' : '::');
+  await app.listen(port, host);
+  logger.log(`Application running on ${host}:${String(port)}`);
 }
 
 void bootstrap();

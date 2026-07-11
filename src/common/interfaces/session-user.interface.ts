@@ -1,4 +1,4 @@
-export type SubscriptionPlan = 'free' | 'pro' | 'enterprise';
+export type SubscriptionPlan = 'free' | 'pro';
 
 export type SubscriptionStatus = 'inactive' | 'active' | 'canceled';
 
@@ -8,12 +8,13 @@ export interface SessionUser {
   name?: string;
   avatarUrl?: string;
   email?: string;
+  onboardingCompleted: boolean;
 }
 
 export interface SubscriptionState {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
-  provider: 'mock' | 'supabase' | 'manual';
+  provider: 'mock' | 'supabase' | 'manual' | 'paymongo';
   updatedAt: string;
   planCode?: string;
   currentPeriodStart?: string | null;

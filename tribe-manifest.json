@@ -1,6 +1,6 @@
 {
-  "serviceId": "cicd-workflow",
-  "name": "CI/CD Workflow Backend",
+  "serviceId": "alphaci",
+  "name": "AlphaCI Backend",
   "serviceType": "tribe",
   "baseUrl": "http://localhost:4000",
   "requiredScopes": [
@@ -19,5 +19,5 @@
   "consumes": ["payment", "gauth"],
   "healthCheck": "/api/v1/health",
   "version": "1.0.0",
-  "description": "CI/CD Workflow backend — GitHub Actions pipeline provisioning and workflow management SaaS"
+  "description": "AlphaCI backend — GitHub Actions pipeline provisioning and workflow management SaaS"
 }

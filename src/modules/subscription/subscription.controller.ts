@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Req,
@@ -17,11 +18,11 @@ import { CreateCheckoutDto } from './dto/create-checkout.dto';
 import { SubscriptionService } from './subscription.service';
 
 @Controller('subscription')
-@UseGuards(SessionAuthGuard)
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 
   @Get('me')
+  @UseGuards(SessionAuthGuard)
   async getSubscription(@Req() req: Request) {
     const user = this.getUser(req);
 
@@ -31,12 +32,58 @@ export class SubscriptionController {
   }
 
   @Post('checkout')
+  @UseGuards(SessionAuthGuard)
   async createCheckout(@Req() req: Request, @Body() body: CreateCheckoutDto) {
     const user = this.getUser(req);
-    return this.subscriptionService.createCheckoutSession(user, body.plan);
+    return this.subscriptionService.createCheckoutSession(
+      user,
+      body.plan,
+      body.paymentMethod,
+    );
   }
 
+  @Post('payment-intent')
+  @UseGuards(SessionAuthGuard)
+  async createPaymentIntent(
+    @Req() req: Request,
+    @Body() body: CreateCheckoutDto,
+  ) {
+    const user = this.getUser(req);
+    return this.subscriptionService.createPaymentIntent(
+      user,
+      body.plan,
+      body.paymentMethod === 'gcash' ||
+        body.paymentMethod === 'paymaya' ||
+        body.paymentMethod === 'qrph'
+        ? body.paymentMethod
+        : 'card',
+    );
+  }
+
+  @Post('payment-intent/:paymentIntentId/cancel')
+  @UseGuards(SessionAuthGuard)
+  async cancelPaymentIntent(
+    @Req() req: Request,
+    @Param('paymentIntentId') paymentIntentId: string,
+  ) {
+    const user = this.getUser(req);
+    return this.subscriptionService.cancelPaymentIntent(user, paymentIntentId);
+  }
+
+  @Get('payment-intent/:paymentIntentId/status')
+  @UseGuards(SessionAuthGuard)
+  async getPaymentIntentStatus(
+    @Req() req: Request,
+    @Param('paymentIntentId') paymentIntentId: string,
+  ) {
+    const user = this.getUser(req);
+    return this.subscriptionService.getPaymentIntentStatus(
+      user,
+      paymentIntentId,
+    );
+  }
   @Get('checkout/:checkoutId/status')
+  @UseGuards(SessionAuthGuard)
   async getCheckoutStatus(
     @Req() req: Request,
     @Param('checkoutId') checkoutId: string,
@@ -46,6 +93,7 @@ export class SubscriptionController {
   }
 
   @Post('monthly/activate')
+  @UseGuards(SessionAuthGuard)
   async activateMonthly(
     @Req() req: Request,
     @Body() body: ActivateSubscriptionDto,
@@ -54,8 +102,22 @@ export class SubscriptionController {
   }
 
   @Post('monthly/cancel')
+  @UseGuards(SessionAuthGuard)
   async cancelMonthly(@Req() req: Request) {
     return this.cancelInternal(req);
+  }
+
+  @Post('webhooks/paymongo')
+  async handlePayMongoWebhook(
+    @Req() req: Request & { rawBody?: Buffer },
+    @Body() body: unknown,
+    @Headers('paymongo-signature') signature?: string,
+  ) {
+    return this.subscriptionService.handlePayMongoWebhook(
+      body,
+      req.rawBody,
+      signature,
+    );
   }
 
   private async activateInternal(req: Request, body: ActivateSubscriptionDto) {

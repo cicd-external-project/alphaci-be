@@ -97,4 +97,25 @@ describe('WorkflowHistoryRepository', () => {
       expect.arrayContaining(['user-1', 25]),
     );
   });
+
+  it('listForProjectIdentity filters by service name or template id', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [fakeRow] });
+
+    await expect(
+      repo.listForProjectIdentity({
+        userId: 'user-1',
+        serviceName: 'orders-api',
+        templateId: 'be-nestjs',
+        limit: 5,
+      }),
+    ).resolves.toHaveLength(1);
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('service_name = $2'),
+      ['user-1', 'orders-api', 'be-nestjs', 5],
+    );
+    expect((db.query as jest.Mock).mock.calls[0][0]).toContain(
+      'OR ($3::text IS NOT NULL AND template_id = $3)',
+    );
+  });
 });

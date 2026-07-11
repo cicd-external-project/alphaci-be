@@ -8,14 +8,18 @@ import {
 } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
-import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 import { CatalogService } from './catalog.service';
 
 @Controller('catalog')
-@UseGuards(SessionAuthGuard, SubscriptionGuard)
+@UseGuards(SessionAuthGuard)
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
+
+  @Get('project-options')
+  getProjectOptions() {
+    return this.catalogService.getProjectOptions();
+  }
 
   @Get('categories')
   async categories() {

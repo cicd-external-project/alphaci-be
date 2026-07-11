@@ -2,6 +2,22 @@
 
 This document is the onboarding and system map for teams creating a new backend repository from this template.
 
+## Product Backend Role
+
+This repository is the active backend for FlowCI Studio in the current implementation path.
+The frontend in `../cicd-workflow-fe` calls this service at `/api/v1`.
+
+The backend owns:
+
+- GitHub OAuth session login
+- subscription state
+- project catalog responses
+- workflow generation
+- GitHub App installation linking
+- repository creation and branch setup
+
+The separate `../cicd-saas-api` repository is reference material only for this path.
+
 ## 1) What This Repository Is
 
 This repository is a production-ready NestJS backend baseline for tribe services.
@@ -107,13 +123,13 @@ Required for default pipeline behavior:
 
 Optional:
 
-- RENDER_DEPLOY_HOOK_URL_TEST
-- RENDER_DEPLOY_HOOK_URL_UAT
-- RENDER_DEPLOY_HOOK_URL_MAIN
+- RENDER_API_KEY
+- RENDER_SERVICE_ID
+- RENDER_OWNER_ID
+- RENDER_REGISTRY_CREDENTIAL_ID
 - RENDER_HEALTHCHECK_URL_TEST
 - RENDER_HEALTHCHECK_URL_UAT
 - RENDER_HEALTHCHECK_URL_MAIN
-- RENDER_DEPLOY_HOOK_URL (optional fallback)
 - RENDER_HEALTHCHECK_URL (optional fallback)
 
 ### 4.3 Runtime Secrets (Render or Cluster Secret Store)

@@ -80,7 +80,7 @@ export class SubscriptionsRepository {
           cancel_at_period_end,
           metadata
         )
-        VALUES ($1, 'free', 'free', 'inactive', 'supabase', 0, 'month', NULL, NULL, false, '{}'::jsonb)
+        VALUES ($1, 'free', 'free', 'active', 'supabase', 0, 'month', NULL, NULL, false, '{}'::jsonb)
         RETURNING
           plan,
           status,
@@ -103,7 +103,7 @@ export class SubscriptionsRepository {
 
   async activateMonthlyPlan(
     userId: string,
-    planCode: 'pro_monthly' | 'enterprise_monthly',
+    planCode: 'pro_monthly',
     amountPhp: number,
     provider: 'manual' | 'mock' | 'supabase' | 'paymongo' = 'manual',
   ): Promise<SubscriptionState> {
@@ -142,7 +142,7 @@ export class SubscriptionsRepository {
               cancel_at_period_end,
               metadata
             )
-            VALUES ($1, $2, $2, 'active', $3, $4, 'month', NOW(), NOW() + INTERVAL '1 month', false, '{}'::jsonb)
+            VALUES ($1, 'pro', $2, 'active', $3, $4, 'month', NOW(), NOW() + INTERVAL '1 month', false, '{}'::jsonb)
             RETURNING
               plan,
               status,
@@ -155,7 +155,7 @@ export class SubscriptionsRepository {
               amount_php,
               interval_unit;
           `,
-          [userId, this.toPlanName(planCode), provider, amountPhp],
+          [userId, planCode, provider, amountPhp],
         );
 
         await client.query('COMMIT');
@@ -229,7 +229,6 @@ export class SubscriptionsRepository {
         try {
           await this.seedFreePlan(client);
           await this.seedProPlan(client);
-          await this.seedEnterprisePlan(client);
           await client.query('COMMIT');
         } catch (error) {
           await client.query('ROLLBACK');
@@ -271,32 +270,13 @@ export class SubscriptionsRepository {
     );
   }
 
-  private async seedEnterprisePlan(client: PoolClient): Promise<void> {
-    await client.query(
-      `
-        INSERT INTO subscription_plans (code, name, amount_php, interval_unit)
-        VALUES ('enterprise_monthly', 'Enterprise Monthly', 1200, 'month')
-        ON CONFLICT (code)
-        DO UPDATE SET
-          name = EXCLUDED.name,
-          amount_php = EXCLUDED.amount_php,
-          interval_unit = EXCLUDED.interval_unit,
-          updated_at = NOW();
-      `,
-    );
-  }
-
-  private toPlanName(
-    planCode: 'pro_monthly' | 'enterprise_monthly',
-  ): 'pro' | 'enterprise' {
-    return planCode === 'pro_monthly' ? 'pro' : 'enterprise';
-  }
-
   private toSubscriptionState(
     row: PersistedSubscriptionRow,
   ): SubscriptionState {
     const provider: SubscriptionState['provider'] =
-      row.provider === 'manual' || row.provider === 'mock'
+      row.provider === 'manual' ||
+      row.provider === 'mock' ||
+      row.provider === 'paymongo'
         ? row.provider
         : 'supabase';
 

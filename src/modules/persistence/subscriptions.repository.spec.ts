@@ -23,7 +23,12 @@ const makeDatabaseService = () => {
   };
   return {
     query: jest.fn().mockResolvedValue({ rows: [fakeRow] }),
-    withClient: jest.fn().mockImplementation(async (fn: (c: typeof clientMock) => Promise<unknown>) => fn(clientMock)),
+    withClient: jest
+      .fn()
+      .mockImplementation(
+        async (fn: (c: typeof clientMock) => Promise<unknown>) =>
+          fn(clientMock),
+      ),
     _clientMock: clientMock,
   } as unknown as DatabaseService & { _clientMock: typeof clientMock };
 };
@@ -92,13 +97,20 @@ describe('SubscriptionsRepository', () => {
     });
 
     it('inserts free subscription when none exists', async () => {
-      const freeRow = { ...fakeRow, plan: 'free' as const, plan_code: 'free', status: 'inactive' as const, amount_php: 0 };
+      const freeRow = {
+        ...fakeRow,
+        plan: 'free' as const,
+        plan_code: 'free',
+        status: 'active' as const,
+        amount_php: 0,
+      };
       const freshDb = {
         // withClient is mocked to resolve without calling the inner fn, so
         // seedPlans() makes no db.query calls. Only 2 direct db.query calls happen:
         // the SELECT in getCurrentByUserId and the INSERT for the free subscription.
-        query: jest.fn()
-          .mockResolvedValueOnce({ rows: [] })   // getCurrentByUserId SELECT → null
+        query: jest
+          .fn()
+          .mockResolvedValueOnce({ rows: [] }) // getCurrentByUserId SELECT → null
           .mockResolvedValueOnce({ rows: [freeRow] }), // INSERT free subscription
         withClient: jest.fn().mockResolvedValue(undefined),
       } as unknown as DatabaseService;
@@ -113,6 +125,14 @@ describe('SubscriptionsRepository', () => {
       const freshRepo = module.get(SubscriptionsRepository);
       const result = await freshRepo.ensureDefaultFreeSubscription('user-new');
       expect(result.plan).toBe('free');
+      expect(result.status).toBe('active');
+
+      const insertCall = (freshDb.query as jest.Mock).mock.calls.find(
+        ([query]) =>
+          typeof query === 'string' &&
+          query.includes('INSERT INTO user_subscriptions'),
+      );
+      expect(insertCall?.[0]).toContain("VALUES ($1, 'free', 'free', 'active'");
     });
   });
 
@@ -125,6 +145,17 @@ describe('SubscriptionsRepository', () => {
         'manual',
       );
 
+      const insertCall = db._clientMock.query.mock.calls.find(
+        ([query]) =>
+          typeof query === 'string' &&
+          query.includes('INSERT INTO user_subscriptions'),
+      );
+
+      expect(insertCall).toBeDefined();
+      expect(insertCall?.[0]).toContain(
+        "VALUES ($1, 'pro', $2, 'active', $3, $4",
+      );
+      expect(insertCall?.[1]).toEqual(['user-1', 'pro_monthly', 'manual', 300]);
       expect(result.plan).toBe('pro');
       expect(result.status).toBe('active');
     });
@@ -148,7 +179,11 @@ describe('SubscriptionsRepository', () => {
 
   describe('cancelCurrent', () => {
     it('returns canceled subscription state', async () => {
-      const canceledRow = { ...fakeRow, status: 'canceled' as const, cancel_at_period_end: true };
+      const canceledRow = {
+        ...fakeRow,
+        status: 'canceled' as const,
+        cancel_at_period_end: true,
+      };
       (db.query as jest.Mock)
         .mockResolvedValueOnce({ rows: [] }) // ensurePlanCatalog
         .mockResolvedValueOnce({ rows: [canceledRow] }); // UPDATE
@@ -158,16 +193,22 @@ describe('SubscriptionsRepository', () => {
     });
 
     it('falls back to ensureDefaultFreeSubscription when no row updated', async () => {
-      const freeRow = { ...fakeRow, plan: 'free' as const, plan_code: 'free', status: 'inactive' as const };
+      const freeRow = {
+        ...fakeRow,
+        plan: 'free' as const,
+        plan_code: 'free',
+        status: 'active' as const,
+      };
       // ensurePlanCatalog goes through withClient → clientMock.query, not db.query.
       // Only 3 db.query calls occur: the UPDATE, the fallback SELECT, and the fallback INSERT.
       (db.query as jest.Mock)
-        .mockResolvedValueOnce({ rows: [] })   // UPDATE returns no row
-        .mockResolvedValueOnce({ rows: [] })   // getCurrentByUserId SELECT in fallback
+        .mockResolvedValueOnce({ rows: [] }) // UPDATE returns no row
+        .mockResolvedValueOnce({ rows: [] }) // getCurrentByUserId SELECT in fallback
         .mockResolvedValueOnce({ rows: [freeRow] }); // INSERT free in fallback
 
       const result = await repo.cancelCurrent('user-1');
       expect(result.plan).toBe('free');
+      expect(result.status).toBe('active');
     });
   });
 });

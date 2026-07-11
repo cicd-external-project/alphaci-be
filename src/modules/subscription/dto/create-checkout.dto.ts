@@ -1,6 +1,18 @@
-import { IsIn } from 'class-validator';
+import { IsIn, IsOptional } from 'class-validator';
+
+export type HostedCheckoutPaymentMethod =
+  | 'card'
+  | 'ewallets'
+  | 'gcash'
+  | 'maya'
+  | 'paymaya'
+  | 'qrph';
 
 export class CreateCheckoutDto {
-  @IsIn(['pro', 'enterprise'])
-  plan: 'pro' | 'enterprise' = 'pro';
+  @IsIn(['pro'])
+  plan = 'pro' as const;
+
+  @IsOptional()
+  @IsIn(['card', 'ewallets', 'gcash', 'maya', 'paymaya', 'qrph'])
+  paymentMethod?: HostedCheckoutPaymentMethod;
 }

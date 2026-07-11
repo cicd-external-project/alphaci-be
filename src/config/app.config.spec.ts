@@ -2,34 +2,102 @@ import { appConfig } from './app.config.js';
 
 describe('appConfig factory', () => {
   const originalEnv = process.env;
+  const validSessionSecret = 'a'.repeat(32);
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
+    process.env = { ...originalEnv, SESSION_SECRET: validSessionSecret };
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  it('returns defaults when no env vars are set', () => {
+  it('returns defaults when only the required session secret is set', () => {
     delete process.env['FRONTEND_URL'];
     delete process.env['GITHUB_CLIENT_ID'];
-    delete process.env['SESSION_SECRET'];
+    delete process.env['GITHUB_APP_SLUG'];
     delete process.env['SUBSCRIPTION_MOCK_ENABLED'];
+    delete process.env['PAYMENT_SUCCESS_URL'];
+    delete process.env['PROJECT_SYNC_SNAPSHOTS_ENABLED'];
+    delete process.env['PROJECT_SYNC_LIVE_GITHUB_ENABLED'];
+    delete process.env['PROJECT_SYNC_LIVE_PROVIDERS_ENABLED'];
+    delete process.env['WORKFLOW_SETTINGS_PREVIEW_ENABLED'];
+    delete process.env['WORKFLOW_UPDATE_PR_ENABLED'];
+    delete process.env['PROJECT_TARGET_MANAGEMENT_ENABLED'];
+    delete process.env['CI_RUN_TRACKING_ENABLED'];
+    delete process.env['CI_RUN_LIVE_GITHUB_ENABLED'];
+    delete process.env['DEPLOYMENT_HISTORY_ENABLED'];
+    delete process.env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'];
+    delete process.env['DRIFT_DETECTION_ENABLED'];
+    delete process.env['DRIFT_REPAIR_ENABLED'];
+    delete process.env['DRIFT_LIVE_PROVIDER_CHECKS_ENABLED'];
+    delete process.env['DRIFT_LIVE_REPAIR_ENABLED'];
+    delete process.env['USAGE_QUOTAS_ENABLED'];
+    delete process.env['WORKSPACES_ENABLED'];
+    delete process.env['AUDIT_EVENTS_ENABLED'];
+    delete process.env['NOTIFICATIONS_ENABLED'];
     delete process.env['SESSION_STORE_DRIVER'];
+    delete process.env['GCP_DEPLOYMENTS_ENABLED'];
+    delete process.env['GCP_SHARED_PROJECT_ID'];
+    delete process.env['GCP_REGION'];
+    delete process.env['GCP_WORKLOAD_IDENTITY_PROVIDER'];
+    delete process.env['GCP_DEPLOYER_SERVICE_ACCOUNT'];
+    delete process.env['GCP_ARTIFACT_REGISTRY_REPOSITORY'];
+    delete process.env['GCP_DEDICATED_PROJECTS_ENABLED'];
+    delete process.env['GCP_CUSTOM_DOMAINS_ENABLED'];
+    delete process.env['GCP_PREVIEW_DEPLOYMENTS_ENABLED'];
+    delete process.env['LEGACY_VERCEL_PROVIDER_ENABLED'];
+    delete process.env['LEGACY_RENDER_PROVIDER_ENABLED'];
+    delete process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'];
 
     const config = appConfig();
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
     expect(config.github.clientId).toBe('');
-    expect(config.session.secret).toBe('change-me-in-production');
+    expect(config.github.appSlug).toBe('');
+    expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
+    expect(config.subscription.successUrl).toBe('http://localhost:3000/onboarding');
+    expect(config.projectSyncSnapshots.enabled).toBe(false);
+    expect(config.projectSyncSnapshots.liveGithubEnabled).toBe(false);
+    expect(config.projectSyncSnapshots.liveProvidersEnabled).toBe(false);
+    expect(config.workflowSettingsPreview.enabled).toBe(false);
+    expect(config.workflowUpdatePr.enabled).toBe(false);
+    expect(config.projectTargetManagement.enabled).toBe(false);
+    expect(config.ciRunTracking.enabled).toBe(false);
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(false);
+    expect(config.deploymentHistory.enabled).toBe(false);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(false);
+    expect(config.driftDetection.enabled).toBe(false);
+    expect(config.driftRepair.enabled).toBe(false);
+    expect(config.driftRepair.liveRepairEnabled).toBe(false);
+    expect(config.driftLiveChecks.enabled).toBe(false);
+    expect(config.usageQuotas.enabled).toBe(false);
+    expect(config.workspaces.enabled).toBe(false);
+    expect(config.auditEvents.enabled).toBe(false);
+    expect(config.notifications.enabled).toBe(false);
     expect(config.session.storeDriver).toBe('memory');
+    expect(config.gcpDeployments.enabled).toBe(false);
+    expect(config.gcpDeployments.sharedProjectId).toBeNull();
+    expect(config.gcpDeployments.region).toBe('asia-southeast1');
+    expect(config.gcpDeployments.workloadIdentityProvider).toBeNull();
+    expect(config.gcpDeployments.deployerServiceAccount).toBeNull();
+    expect(config.gcpDeployments.artifactRegistryRepository).toBeNull();
+    expect(config.gcpDeployments.dedicatedProjectsEnabled).toBe(false);
+    expect(config.gcpDeployments.customDomainsEnabled).toBe(false);
+    expect(config.gcpDeployments.previewDeploymentsEnabled).toBe(false);
+    expect(config.legacyProviders.vercelEnabled).toBe(false);
+    expect(config.legacyProviders.renderEnabled).toBe(false);
+    expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(false);
   });
 
   it('reads environment variables when set', () => {
     process.env['FRONTEND_URL'] = 'https://app.example.com';
     process.env['GITHUB_CLIENT_ID'] = 'gh-id';
+    process.env['GITHUB_APP_SLUG'] = 'alphaci';
+    process.env['SUPABASE_DB_CA_CERT'] =
+      '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----';
+    process.env['SUPABASE_DB_SSL_REJECT_UNAUTHORIZED'] = 'false';
     process.env['SUBSCRIPTION_MOCK_ENABLED'] = 'true';
     process.env['SESSION_STORE_DRIVER'] = 'postgres';
     process.env['SESSION_SECURE'] = 'true';
@@ -38,13 +106,20 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('https://app.example.com');
     expect(config.github.clientId).toBe('gh-id');
+    expect(config.github.appSlug).toBe('alphaci');
+    expect(config.supabase.dbCaCert).toBe(
+      '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----',
+    );
+    expect(config.supabase.dbSslRejectUnauthorized).toBe(false);
     expect(config.subscription.mockEnabled).toBe(true);
     expect(config.session.storeDriver).toBe('postgres');
     expect(config.session.secure).toBe(true);
   });
 
   it('parses SUBSCRIPTION_MOCK_MAP_JSON correctly', () => {
-    process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({ testuser: 'pro' });
+    process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({
+      testuser: 'pro',
+    });
 
     const config = appConfig();
     expect(config.subscription.seededPlans).toEqual({ testuser: 'pro' });
@@ -69,5 +144,160 @@ describe('appConfig factory', () => {
 
     const config = appConfig();
     expect(config.session.storeDriver).toBe('memory');
+  });
+
+  it('reads FlowCI-managed Render owner id when set', () => {
+    process.env['FLOWCI_RENDER_OWNER_ID'] = 'tea-configured';
+
+    const config = appConfig();
+    expect(config.envProvisioning.flowciManaged.renderOwnerId).toBe(
+      'tea-configured',
+    );
+  });
+
+  it('enables project sync snapshots when explicitly flagged', () => {
+    process.env['PROJECT_SYNC_SNAPSHOTS_ENABLED'] = 'true';
+    process.env['PROJECT_SYNC_LIVE_GITHUB_ENABLED'] = 'true';
+    process.env['PROJECT_SYNC_LIVE_PROVIDERS_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.projectSyncSnapshots.enabled).toBe(true);
+    expect(config.projectSyncSnapshots.liveGithubEnabled).toBe(true);
+    expect(config.projectSyncSnapshots.liveProvidersEnabled).toBe(true);
+  });
+
+  it('enables workflow settings preview when explicitly flagged', () => {
+    process.env['WORKFLOW_SETTINGS_PREVIEW_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.workflowSettingsPreview.enabled).toBe(true);
+  });
+
+  it('enables workflow update PR creation when explicitly flagged', () => {
+    process.env['WORKFLOW_UPDATE_PR_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.workflowUpdatePr.enabled).toBe(true);
+  });
+
+  it('enables project target management when explicitly flagged', () => {
+    process.env['PROJECT_TARGET_MANAGEMENT_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.projectTargetManagement.enabled).toBe(true);
+  });
+
+  it('enables CI run tracking flags when explicitly flagged', () => {
+    process.env['CI_RUN_TRACKING_ENABLED'] = 'true';
+    process.env['CI_RUN_LIVE_GITHUB_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.ciRunTracking.enabled).toBe(true);
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(true);
+  });
+
+  it('enables deployment history flags when explicitly flagged', () => {
+    process.env['DEPLOYMENT_HISTORY_ENABLED'] = 'true';
+    process.env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.deploymentHistory.enabled).toBe(true);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
+  });
+
+  it('enables drift detection when explicitly flagged', () => {
+    process.env['DRIFT_DETECTION_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.driftDetection.enabled).toBe(true);
+  });
+
+  it('enables drift repair when explicitly flagged', () => {
+    process.env['DRIFT_REPAIR_ENABLED'] = 'true';
+    process.env['DRIFT_LIVE_REPAIR_ENABLED'] = 'true';
+    process.env['DRIFT_LIVE_PROVIDER_CHECKS_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.driftRepair.enabled).toBe(true);
+    expect(config.driftRepair.liveRepairEnabled).toBe(true);
+    expect(config.driftLiveChecks.enabled).toBe(true);
+  });
+
+  it('enables usage quotas when explicitly flagged', () => {
+    process.env['USAGE_QUOTAS_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.usageQuotas.enabled).toBe(true);
+  });
+
+  it('enables workspace audit and notification flags when explicitly flagged', () => {
+    process.env['WORKSPACES_ENABLED'] = 'true';
+    process.env['AUDIT_EVENTS_ENABLED'] = 'true';
+    process.env['NOTIFICATIONS_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.workspaces.enabled).toBe(true);
+    expect(config.auditEvents.enabled).toBe(true);
+    expect(config.notifications.enabled).toBe(true);
+  });
+
+  it('reads GCP and legacy provider rollout flags when explicitly flagged', () => {
+    process.env['GCP_DEPLOYMENTS_ENABLED'] = 'true';
+    process.env['GCP_SHARED_PROJECT_ID'] = 'alphaci-runtime';
+    process.env['GCP_REGION'] = 'asia-southeast1';
+    process.env['GCP_WORKLOAD_IDENTITY_PROVIDER'] =
+      'projects/123/locations/global/workloadIdentityPools/github/providers/github';
+    process.env['GCP_DEPLOYER_SERVICE_ACCOUNT'] =
+      'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com';
+    process.env['GCP_ARTIFACT_REGISTRY_REPOSITORY'] = 'alphaci-services';
+    process.env['GCP_DEDICATED_PROJECTS_ENABLED'] = 'true';
+    process.env['GCP_CUSTOM_DOMAINS_ENABLED'] = 'true';
+    process.env['GCP_PREVIEW_DEPLOYMENTS_ENABLED'] = 'true';
+    process.env['LEGACY_VERCEL_PROVIDER_ENABLED'] = 'true';
+    process.env['LEGACY_RENDER_PROVIDER_ENABLED'] = 'true';
+    process.env['BYO_DEPLOYMENT_PROVIDER_ENABLED'] = 'true';
+
+    const config = appConfig();
+
+    expect(config.gcpDeployments.enabled).toBe(true);
+    expect(config.gcpDeployments.sharedProjectId).toBe('alphaci-runtime');
+    expect(config.gcpDeployments.region).toBe('asia-southeast1');
+    expect(config.gcpDeployments.workloadIdentityProvider).toBe(
+      'projects/123/locations/global/workloadIdentityPools/github/providers/github',
+    );
+    expect(config.gcpDeployments.deployerServiceAccount).toBe(
+      'alphaci-deployer@alphaci-runtime.iam.gserviceaccount.com',
+    );
+    expect(config.gcpDeployments.artifactRegistryRepository).toBe(
+      'alphaci-services',
+    );
+    expect(config.gcpDeployments.dedicatedProjectsEnabled).toBe(true);
+    expect(config.gcpDeployments.customDomainsEnabled).toBe(true);
+    expect(config.gcpDeployments.previewDeploymentsEnabled).toBe(true);
+    expect(config.legacyProviders.vercelEnabled).toBe(true);
+    expect(config.legacyProviders.renderEnabled).toBe(true);
+    expect(config.legacyProviders.byoDeploymentProviderEnabled).toBe(true);
+  });
+
+  it('defaults archivedAccountRetentionDays to 30', () => {
+    delete process.env['ARCHIVED_ACCOUNT_RETENTION_DAYS'];
+    const config = appConfig();
+    expect(config.archivedAccountRetentionDays).toBe(30);
+  });
+
+  it('reads ARCHIVED_ACCOUNT_RETENTION_DAYS from env', () => {
+    process.env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] = '60';
+    const config = appConfig();
+    expect(config.archivedAccountRetentionDays).toBe(60);
   });
 });

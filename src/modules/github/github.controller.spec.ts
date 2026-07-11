@@ -1,7 +1,9 @@
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { GithubController } from './github.controller.js';
 import { GithubService } from './github.service.js';
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard.js';
 import type { Request } from 'express';
 
 const fakeRepos = [
@@ -18,11 +20,41 @@ const fakeRepos = [
 ];
 
 const makeRequest = (githubToken?: string) =>
-  ({ session: { githubAccessToken: githubToken } }) as unknown as Request;
+  ({
+    session: {
+      user: { id: 'user-1' },
+      githubAccessToken: githubToken,
+    },
+  }) as unknown as Request;
 
 const makeGithubService = () =>
   ({
     listRepos: jest.fn().mockResolvedValue(fakeRepos),
+    getAppInstallUrl: jest
+      .fn()
+      .mockReturnValue('https://github.com/apps/flowci/installations/new'),
+    linkInstallation: jest.fn().mockResolvedValue({
+      reposLinked: 3,
+      repositorySelection: 'selected',
+    }),
+    listLinkedRepos: jest.fn().mockResolvedValue(['tone/orders-api']),
+    listInstallationAccounts: jest.fn().mockResolvedValue([
+      {
+        installationId: 123,
+        accountLogin: 'tone',
+        accountId: 456,
+        repositorySelection: 'selected',
+        reposLinked: 3,
+      },
+    ]),
+    createRepo: jest.fn().mockResolvedValue({
+      repoUrl: 'https://github.com/tone/orders-api',
+      cloneUrl: 'https://github.com/tone/orders-api.git',
+      ownerLogin: 'tone',
+      repoName: 'orders-api',
+    }),
+    createBranch: jest.fn().mockResolvedValue(undefined),
+    applyBranchProtection: jest.fn().mockResolvedValue(undefined),
   }) as unknown as GithubService;
 
 describe('GithubController', () => {
@@ -36,7 +68,9 @@ describe('GithubController', () => {
       controllers: [GithubController],
       providers: [{ provide: GithubService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -45,6 +79,112 @@ describe('GithubController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('returns the GitHub App installation URL', () => {
+    expect(controller.getAppInstallUrl()).toEqual({
+      installUrl: 'https://github.com/apps/flowci/installations/new',
+    });
+  });
+
+  it('keeps the GitHub App install URL public while guarding account-bound endpoints', () => {
+    expect(
+      Reflect.getMetadata(GUARDS_METADATA, GithubController) ?? [],
+    ).toEqual([]);
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        GithubController.prototype.getAppInstallUrl,
+      ) ?? [],
+    ).toEqual([]);
+
+    for (const handler of [
+      GithubController.prototype.linkInstallation,
+      GithubController.prototype.listLinkedRepos,
+      GithubController.prototype.listInstallationAccounts,
+      GithubController.prototype.tokenScopes,
+      GithubController.prototype.repos,
+      GithubController.prototype.createRepo,
+    ]) {
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(
+        SessionAuthGuard,
+      );
+    }
+  });
+  it('links a GitHub App installation to the current user', async () => {
+    await expect(
+      controller.linkInstallation(makeRequest(), { installationId: 123 }),
+    ).resolves.toEqual({
+      reposLinked: 3,
+      repositorySelection: 'selected',
+    });
+    expect(service.linkInstallation).toHaveBeenCalledWith('user-1', 123);
+  });
+
+  it('lists linked repos for the current GitHub App installation', async () => {
+    await expect(controller.listLinkedRepos(makeRequest())).resolves.toEqual({
+      repos: ['tone/orders-api'],
+    });
+    expect(service.listLinkedRepos).toHaveBeenCalledWith('user-1');
+  });
+
+  it('normalizes installation accounts for the frontend', async () => {
+    await expect(
+      controller.listInstallationAccounts(makeRequest()),
+    ).resolves.toEqual({
+      accounts: [
+        {
+          installationId: 123,
+          accountLogin: 'tone',
+          accountId: 456,
+          repositorySelection: 'selected',
+        },
+      ],
+    });
+    expect(service.listInstallationAccounts).toHaveBeenCalledWith('user-1');
+  });
+
+  describe('tokenScopes', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('returns no-token diagnostics when OAuth token is missing', async () => {
+      await expect(controller.tokenScopes(makeRequest())).resolves.toEqual({
+        hasToken: false,
+        scopes: null,
+      });
+    });
+
+    it('returns OAuth scopes from GitHub response headers', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        status: 200,
+        headers: {
+          get: jest.fn((name: string) =>
+            name.toLowerCase() === 'x-oauth-scopes' ? 'repo, user:email' : null,
+          ),
+        },
+      }) as never;
+
+      await expect(
+        controller.tokenScopes(makeRequest('gh-token')),
+      ).resolves.toEqual({
+        hasToken: true,
+        scopes: ['repo', 'user:email'],
+        status: 200,
+        hasRepoScope: true,
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.github.com/user',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer gh-token',
+          }),
+        }),
+      );
+    });
   });
 
   describe('repos', () => {
@@ -62,6 +202,58 @@ describe('GithubController', () => {
 
       expect(service.listRepos).not.toHaveBeenCalled();
       expect(result).toEqual({ repos: [] });
+    });
+  });
+
+  describe('createRepo', () => {
+    it('returns an error contract when OAuth token is missing', async () => {
+      await expect(
+        controller.createRepo(makeRequest(), {
+          repoName: 'orders-api',
+          private: true,
+        }),
+      ).resolves.toEqual({
+        error:
+          'GitHub access token not found. Re-authenticate via GitHub OAuth.',
+      });
+      expect(service.createRepo).not.toHaveBeenCalled();
+    });
+
+    it('creates default branches and protection for a new OAuth repo', async () => {
+      await expect(
+        controller.createRepo(makeRequest('gh-token'), {
+          repoName: 'orders-api',
+          private: true,
+        }),
+      ).resolves.toEqual({
+        repoUrl: 'https://github.com/tone/orders-api',
+        cloneUrl: 'https://github.com/tone/orders-api.git',
+        defaultBranch: 'main',
+        branchesCreated: ['main', 'uat', 'test'],
+      });
+
+      expect(service.createRepo).toHaveBeenCalledWith('gh-token', {
+        repoName: 'orders-api',
+        private: true,
+      });
+      expect(service.createBranch).toHaveBeenCalledTimes(2);
+      expect(service.createBranch).toHaveBeenNthCalledWith(
+        1,
+        'gh-token',
+        'tone',
+        'orders-api',
+        'uat',
+        'main',
+      );
+      expect(service.createBranch).toHaveBeenNthCalledWith(
+        2,
+        'gh-token',
+        'tone',
+        'orders-api',
+        'test',
+        'main',
+      );
+      expect(service.applyBranchProtection).toHaveBeenCalledTimes(3);
     });
   });
 });

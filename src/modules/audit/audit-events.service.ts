@@ -1,0 +1,68 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+import type { AppConfig } from '../../config/app.config';
+import {
+  AuditEventsRepository,
+  type AuditEventRecord,
+  type CreateAuditEventInput,
+} from './audit-events.repository';
+
+export const GCP_RUNTIME_AUDIT_EVENT_CODES = [
+  'gcp.runtime.provision.requested',
+  'gcp.runtime.provision.succeeded',
+  'gcp.runtime.provision.failed',
+  'gcp.runtime.reconcile.drifted',
+  'gcp.domain.verification.requested',
+  'gcp.domain.verification.succeeded',
+  'gcp.preview.cleanup.requested',
+  'gcp.preview.cleanup.succeeded',
+  'legacy_provider_connection.create_blocked',
+] as const;
+
+export type GcpRuntimeAuditEventCode =
+  (typeof GCP_RUNTIME_AUDIT_EVENT_CODES)[number];
+@Injectable()
+export class AuditEventsService {
+  private readonly logger = new Logger(AuditEventsService.name);
+
+  constructor(
+    private readonly repository: AuditEventsRepository,
+    private readonly configService: ConfigService,
+  ) {}
+
+  async record(input: CreateAuditEventInput): Promise<void> {
+    if (!this.enabled()) {
+      return;
+    }
+    await this.repository.create(input);
+  }
+
+  async recordProjectEvent(input: CreateAuditEventInput): Promise<void> {
+    try {
+      await this.record(input);
+    } catch (error) {
+      this.logger.warn(
+        `Audit event '${input.eventCode}' was not recorded: ${String(error)}`,
+      );
+    }
+  }
+
+  async listProjectEvents(
+    projectId: string,
+    userId: string,
+  ): Promise<{ enabled: boolean; items: AuditEventRecord[] }> {
+    if (!this.enabled()) {
+      return { enabled: false, items: [] };
+    }
+    return {
+      enabled: true,
+      items: await this.repository.listByProjectForUser(projectId, userId),
+    };
+  }
+
+  private enabled(): boolean {
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    return config.auditEvents?.enabled ?? false;
+  }
+}
