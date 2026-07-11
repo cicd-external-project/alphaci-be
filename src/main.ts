@@ -141,8 +141,14 @@ async function bootstrap(): Promise<void> {
   }
 
   const port = parseInt(process.env['PORT'] ?? '4000', 10);
-  await app.listen(port, '0.0.0.0');
-  logger.log(`Application running on 0.0.0.0:${String(port)}`);
+  // Browsers commonly resolve localhost to ::1 first. Bind local development
+  // on IPv6 so the existing localhost OAuth callback works on both address
+  // families; keep the container-safe IPv4 bind for production.
+  const host =
+    process.env['HOST'] ??
+    (process.env['NODE_ENV'] === 'production' ? '0.0.0.0' : '::');
+  await app.listen(port, host);
+  logger.log(`Application running on ${host}:${String(port)}`);
 }
 
 void bootstrap();
