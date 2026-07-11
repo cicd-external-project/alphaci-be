@@ -21,6 +21,11 @@ export class CatalogController {
     return this.catalogService.getProjectOptions();
   }
 
+  @Get('central-workflow-tags')
+  async centralWorkflowTags() {
+    return this.catalogService.getCentralWorkflowTags();
+  }
+
   @Get('categories')
   async categories() {
     return {
