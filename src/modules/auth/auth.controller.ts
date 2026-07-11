@@ -49,6 +49,8 @@ export class AuthController {
     @Res() res: Response,
     @Query('returnTo') returnTo?: string,
   ) {
+    // Keep the popup opener alive while the browser crosses to GitHub and back.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     const redirectUrl = await this.authService.startGitHubAuth(req, returnTo);
     return res.redirect(redirectUrl);
   }
@@ -98,6 +100,8 @@ export class AuthController {
     @Res() res: Response,
     @Query('returnTo') returnTo?: string,
   ) {
+    // Apply the same popup policy to Google OAuth for consistent provider behavior.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
     const redirectUrl = await this.authService.startGoogleAuth(req, returnTo);
     return res.redirect(redirectUrl);
   }

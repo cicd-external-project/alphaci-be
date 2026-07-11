@@ -44,6 +44,7 @@ const makeRequest = (
 const makeResponse = () => {
   const res = {
     redirect: jest.fn(),
+    setHeader: jest.fn(),
     clearCookie: jest.fn(),
   };
   return res as unknown as Response;
@@ -212,6 +213,7 @@ describe('AuthController', () => {
       await controller.googleStart(req, res, '/signup');
 
       expect(authService.startGoogleAuth).toHaveBeenCalledWith(req, '/signup');
+      expect(res.setHeader).toHaveBeenCalledWith('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
       expect(res.redirect).toHaveBeenCalledWith(
         'https://accounts.google.com/o/oauth2/v2/auth?mock=1',
       );
@@ -241,6 +243,7 @@ describe('AuthController', () => {
       const res = makeResponse();
       await controller.githubStart(req, res);
       // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(res.setHeader).toHaveBeenCalledWith('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
       expect(res.redirect).toHaveBeenCalledWith(
         'https://github.com/login/oauth/authorize?mock=1',
       );
