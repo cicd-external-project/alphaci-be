@@ -54,13 +54,14 @@ export class DatabaseService implements OnModuleDestroy {
       ssl: postgresSslConfig(
         this.config.supabase.dbUrl,
         this.config.supabase.dbCaCert,
+        this.config.supabase.dbSslRejectUnauthorized,
       ),
       max: 10,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,
       statement_timeout: 10_000,
       idleTimeoutMillis: 30_000,
-      // Keep idle TCP connections alive. Render → Supabase traffic crosses a
+      // Keep idle TCP connections alive. Render â†’ Supabase traffic crosses a
       // load balancer / NAT that silently drops idle sockets; without keepalive
       // the next query on a reaped connection throws "Connection terminated" /
       // ECONNRESET. This was the root cause of intermittent 500s on the OAuth
@@ -73,7 +74,7 @@ export class DatabaseService implements OnModuleDestroy {
 
     // pg emits 'error' on IDLE clients when the server or network drops them
     // out from under the pool. Without a handler this error is unhandled and
-    // can crash the Node process. We only need to log it — pg automatically
+    // can crash the Node process. We only need to log it â€” pg automatically
     // removes the dead client from the pool, and the next query acquires a
     // fresh connection.
     this.pool.on('error', (err) => {
@@ -100,7 +101,7 @@ export class DatabaseService implements OnModuleDestroy {
       // Supabase pooler / network). The first query to use it throws a
       // connection-level error. pg has already discarded the bad client, so a
       // single retry transparently acquires a fresh connection. We retry only
-      // for connection-level failures — never for query/constraint errors,
+      // for connection-level failures â€” never for query/constraint errors,
       // which would be wrong to re-run.
       if (!this.isRetryableConnectionError(error)) {
         throw error;

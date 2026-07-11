@@ -15,7 +15,9 @@ describe('appConfig factory', () => {
   it('returns defaults when only the required session secret is set', () => {
     delete process.env['FRONTEND_URL'];
     delete process.env['GITHUB_CLIENT_ID'];
+    delete process.env['GITHUB_APP_SLUG'];
     delete process.env['SUBSCRIPTION_MOCK_ENABLED'];
+    delete process.env['PAYMENT_SUCCESS_URL'];
     delete process.env['PROJECT_SYNC_SNAPSHOTS_ENABLED'];
     delete process.env['PROJECT_SYNC_LIVE_GITHUB_ENABLED'];
     delete process.env['PROJECT_SYNC_LIVE_PROVIDERS_ENABLED'];
@@ -52,8 +54,10 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('http://localhost:3000');
     expect(config.github.clientId).toBe('');
+    expect(config.github.appSlug).toBe('');
     expect(config.session.secret).toBe(validSessionSecret);
     expect(config.subscription.mockEnabled).toBe(false);
+    expect(config.subscription.successUrl).toBe('http://localhost:3000/onboarding');
     expect(config.projectSyncSnapshots.enabled).toBe(false);
     expect(config.projectSyncSnapshots.liveGithubEnabled).toBe(false);
     expect(config.projectSyncSnapshots.liveProvidersEnabled).toBe(false);
@@ -90,8 +94,10 @@ describe('appConfig factory', () => {
   it('reads environment variables when set', () => {
     process.env['FRONTEND_URL'] = 'https://app.example.com';
     process.env['GITHUB_CLIENT_ID'] = 'gh-id';
+    process.env['GITHUB_APP_SLUG'] = 'alphaci';
     process.env['SUPABASE_DB_CA_CERT'] =
       '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----';
+    process.env['SUPABASE_DB_SSL_REJECT_UNAUTHORIZED'] = 'false';
     process.env['SUBSCRIPTION_MOCK_ENABLED'] = 'true';
     process.env['SESSION_STORE_DRIVER'] = 'postgres';
     process.env['SESSION_SECURE'] = 'true';
@@ -100,9 +106,11 @@ describe('appConfig factory', () => {
 
     expect(config.frontendUrl).toBe('https://app.example.com');
     expect(config.github.clientId).toBe('gh-id');
+    expect(config.github.appSlug).toBe('alphaci');
     expect(config.supabase.dbCaCert).toBe(
       '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----',
     );
+    expect(config.supabase.dbSslRejectUnauthorized).toBe(false);
     expect(config.subscription.mockEnabled).toBe(true);
     expect(config.session.storeDriver).toBe('postgres');
     expect(config.session.secure).toBe(true);

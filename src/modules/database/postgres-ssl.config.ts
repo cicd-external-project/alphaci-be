@@ -5,6 +5,7 @@ const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 export function postgresSslConfig(
   databaseUrl: string,
   caCert?: string,
+  rejectUnauthorized = true,
 ): boolean | ConnectionOptions {
   if (isLocalDatabase(databaseUrl)) {
     return false;
@@ -15,7 +16,7 @@ export function postgresSslConfig(
     return { ca: normalizedCa };
   }
 
-  return true;
+  return rejectUnauthorized ? true : { rejectUnauthorized: false };
 }
 
 function isLocalDatabase(databaseUrl: string): boolean {

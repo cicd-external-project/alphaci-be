@@ -1,10 +1,11 @@
 import { generateKeyPairSync } from 'node:crypto';
 
-import type { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
 
 import type { AppConfig } from '../../config/app.config.js';
 import { GithubService } from './github.service.js';
-import type { GithubInstallationsRepository } from './github-installations.repository.js';
+import { GithubInstallationsRepository } from './github-installations.repository.js';
 
 const makeRepo = (overrides = {}) => ({
   id: 1,
@@ -88,8 +89,8 @@ const appConfig: AppConfig = {
     seededPlans: {},
     proMonthlyPricePhp: 300,
     paymentProvider: 'none',
-    successUrl: 'http://localhost:3000/subscribe?status=success',
-    cancelUrl: 'http://localhost:3000/subscribe?status=cancelled',
+    successUrl: 'http://localhost:3000/settings?billing=success',
+    cancelUrl: 'http://localhost:3000/settings?billing=cancelled',
     paymongo: {
       secretKey: '',
       webhookSecret: '',
@@ -97,6 +98,7 @@ const appConfig: AppConfig = {
   },
   supabase: {
     dbUrl: undefined,
+    dbSslRejectUnauthorized: true,
   },
   session: {
     secret: 'x'.repeat(32),
@@ -172,6 +174,66 @@ describe('GithubService', () => {
       );
     });
 
+    it('receives ConfigService through Nest dependency injection', async () => {
+      const module = await Test.createTestingModule({
+        providers: [
+          GithubService,
+          { provide: ConfigService, useValue: makeConfigService() },
+          {
+            provide: GithubInstallationsRepository,
+            useValue: installationsRepository,
+          },
+        ],
+      }).compile();
+
+      expect(module.get(GithubService).getAppInstallUrl()).toBe(
+        'https://github.com/apps/flowci-test/installations/new',
+      );
+    });
+    it('reads the GitHub App slug lazily from ConfigService', () => {
+      let currentConfig: AppConfig = {
+        ...appConfig,
+        github: {
+          ...appConfig.github,
+          appSlug: '',
+        },
+      };
+      const dynamicConfigService = {
+        get: jest.fn(() => currentConfig),
+      } as unknown as ConfigService;
+      const dynamicService = new GithubService(
+        dynamicConfigService,
+        installationsRepository,
+      );
+
+      currentConfig = {
+        ...currentConfig,
+        github: {
+          ...currentConfig.github,
+          appSlug: 'alphaci-studio',
+        },
+      };
+
+      expect(dynamicService.getAppInstallUrl()).toBe(
+        'https://github.com/apps/alphaci-studio/installations/new',
+      );
+    });
+    it('throws instead of returning the placeholder GitHub App install URL when app slug is missing', () => {
+      const unconfigured = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: {
+            ...appConfig.github,
+            appSlug: '',
+          },
+        }),
+        installationsRepository,
+      );
+
+      expect(() => unconfigured.getAppInstallUrl()).toThrow(
+        'GitHub App slug is not configured',
+      );
+    });
     it('throws when app credentials are missing for JWT creation', () => {
       const unconfigured = new GithubService(
         makeConfigService({

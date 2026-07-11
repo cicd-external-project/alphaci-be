@@ -3,9 +3,9 @@ import { createSign } from 'node:crypto';
 import {
   BadGatewayException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
-  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -77,24 +77,43 @@ export class GithubService {
   private readonly appPrivateKey: string;
 
   constructor(
-    @Optional() private readonly configService: ConfigService | null,
-    @Optional()
-    private readonly githubInstallationsRepository: GithubInstallationsRepository | null,
+    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(GithubInstallationsRepository)
+    private readonly githubInstallationsRepository: GithubInstallationsRepository,
   ) {
-    const config = this.configService?.get<AppConfig>('app');
+    const config = this.configService.get<AppConfig>('app');
     this.appId = config?.github.appId ?? '';
-    this.appSlug = config?.github.appSlug ?? 'my-github-app';
+    this.appSlug = config?.github.appSlug ?? '';
     this.appPrivateKey = config?.github.appPrivateKey ?? '';
   }
 
-  getAppInstallUrl(): string {
-    return `https://github.com/apps/${this.appSlug}/installations/new`;
+  private getGithubAppConfig(): {
+    appId: string;
+    appSlug: string;
+    appPrivateKey: string;
+  } {
+    const github = this.configService.get<AppConfig>('app')?.github;
+    return {
+      appId: github?.appId ?? this.appId,
+      appSlug: github?.appSlug ?? this.appSlug,
+      appPrivateKey: github?.appPrivateKey ?? this.appPrivateKey,
+    };
   }
 
+  getAppInstallUrl(): string {
+    const { appSlug } = this.getGithubAppConfig();
+    if (!appSlug.trim()) {
+      throw new UnprocessableEntityException(
+        'GitHub App slug is not configured. Set GITHUB_APP_SLUG to your public GitHub App slug.',
+      );
+    }
+
+    return `https://github.com/apps/${appSlug}/installations/new`;
+  }
   /**
    * Wraps fetch with bounded retry/backoff for GitHub rate limits.
    *
-   * Retries only on 429 and rate-limit 403s — detected via response headers so
+   * Retries only on 429 and rate-limit 403s, detected via response headers so
    * the body is never consumed and remains readable by callers (a permission
    * 403 is NOT retried because its x-ratelimit-remaining is non-zero). Honors
    * Retry-After / X-RateLimit-Reset but caps the inline wait so a provisioning
@@ -159,7 +178,8 @@ export class GithubService {
   }
 
   createAppJwt(nowSeconds = Math.floor(Date.now() / 1000)): string {
-    if (!this.appId || !this.appPrivateKey) {
+    const { appId, appPrivateKey } = this.getGithubAppConfig();
+    if (!appId || !appPrivateKey) {
       throw new UnprocessableEntityException(
         'GitHub App credentials are not configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.',
       );
@@ -169,12 +189,12 @@ export class GithubService {
     const payload = this.base64UrlJson({
       iat: nowSeconds - 60,
       exp: nowSeconds + 540,
-      iss: this.appId,
+      iss: appId,
     });
     const unsigned = `${header}.${payload}`;
     const signature = createSign('RSA-SHA256')
       .update(unsigned)
-      .sign(this.appPrivateKey, 'base64url');
+      .sign(appPrivateKey, 'base64url');
 
     return `${unsigned}.${signature}`;
   }

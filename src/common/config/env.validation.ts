@@ -8,7 +8,7 @@
  *   ConfigModule.forRoot({ validate: validateEnv })
  *
  * Design notes:
- *   - Uses a plain validate function — no Joi or class-validator runtime
+ *   - Uses a plain validate function - no Joi or class-validator runtime
  *     dependency needed. The check runs once at bootstrap.
  *   - Required vars cause a hard crash (fail-fast). Missing required config
  *     in a running service is a security risk: the service may silently fall
@@ -30,6 +30,7 @@ export interface EnvironmentVariables {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   SUPABASE_DB_CA_CERT?: string;
+  SUPABASE_DB_SSL_REJECT_UNAUTHORIZED?: string;
   ALLOWED_ORIGINS: string;
   ENV_PROVISIONING_ENABLED?: string;
   ENV_PROVISIONING_ENCRYPTION_KEY?: string;
@@ -63,6 +64,9 @@ export interface EnvironmentVariables {
   LEGACY_RENDER_PROVIDER_ENABLED?: string;
   BYO_DEPLOYMENT_PROVIDER_ENABLED?: string;
   AUTH_EMAIL_CODE_DELIVERY?: string;
+  AUTH_EMAIL_PROVIDER?: string;
+  RESEND_API_KEY?: string;
+  AUTH_EMAIL_FROM?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -149,7 +153,7 @@ function countScopedSupabaseClients(env: RawEnv): number {
 /**
  * Require SESSION_SECRET to be present and at least 32 characters long.
  * Extracted into its own function to keep validateEnv's cognitive complexity
- * within the project limit (≤ 15).
+ * within the project limit (<= 15).
  */
 function requireSessionSecret(env: RawEnv): string {
   const raw = env['SESSION_SECRET'];
@@ -205,6 +209,110 @@ function requirePort(env: RawEnv, key: string, defaultValue = 4000): number {
   }
   return parsed;
 }
+function validateEmailDeliveryConfig(env: RawEnv): void {
+  const rawDelivery = env['AUTH_EMAIL_CODE_DELIVERY'];
+  if (
+    rawDelivery !== undefined &&
+    rawDelivery !== 'log' &&
+    rawDelivery !== 'provider'
+  ) {
+    throw new Error(
+      "[env] AUTH_EMAIL_CODE_DELIVERY must be 'log' or 'provider' when set.",
+    );
+  }
+
+  if (rawDelivery !== 'provider') {
+    return;
+  }
+
+  const provider = getTrimmedString(env, ['AUTH_EMAIL_PROVIDER']) ?? 'resend';
+  if (provider !== 'resend') {
+    throw new Error("[env] AUTH_EMAIL_PROVIDER must be 'resend' when set.");
+  }
+
+  requireString(env, 'RESEND_API_KEY');
+  requireString(env, 'AUTH_EMAIL_FROM');
+}
+function validateSupabaseDbTlsConfig(env: RawEnv, nodeEnv: string): void {
+  const raw = env['SUPABASE_DB_SSL_REJECT_UNAUTHORIZED'];
+  if (raw === undefined || raw === '') {
+    return;
+  }
+
+  if (raw !== 'true' && raw !== 'false') {
+    throw new Error(
+      "[env] SUPABASE_DB_SSL_REJECT_UNAUTHORIZED must be 'true' or 'false' when set.",
+    );
+  }
+
+  if (nodeEnv === 'production' && raw === 'false') {
+    throw new Error(
+      '[env] SUPABASE_DB_SSL_REJECT_UNAUTHORIZED=false is only allowed outside production. Configure SUPABASE_DB_CA_CERT instead.',
+    );
+  }
+}
+
+function parseUrlOrigin(value: string | undefined): URL | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function hostnameMatchesCookieDomain(
+  hostname: string,
+  cookieDomain: string,
+): boolean {
+  const normalizedHost = hostname.toLowerCase();
+  const normalizedDomain = cookieDomain.replace(/^\.+/, '').toLowerCase();
+  return (
+    normalizedHost === normalizedDomain ||
+    normalizedHost.endsWith(`.${normalizedDomain}`)
+  );
+}
+
+function validateProductionAuthCookieConfig(
+  env: RawEnv,
+  nodeEnv: string,
+): void {
+  if (nodeEnv !== 'production' || env['SESSION_SECURE'] !== 'true') {
+    return;
+  }
+
+  const frontendUrl = parseUrlOrigin(getTrimmedString(env, ['FRONTEND_URL']));
+  const callbackUrl = parseUrlOrigin(
+    getTrimmedString(env, ['GITHUB_CALLBACK_URL']),
+  );
+
+  if (
+    !frontendUrl ||
+    !callbackUrl ||
+    frontendUrl.origin === callbackUrl.origin
+  ) {
+    return;
+  }
+
+  const cookieDomain = getTrimmedString(env, ['SESSION_COOKIE_DOMAIN']);
+  if (!cookieDomain) {
+    throw new Error(
+      '[env] SESSION_COOKIE_DOMAIN must be set when production GitHub OAuth redirects between separate frontend/backend origins. Use shared custom domains such as app.example.com and api.example.com with SESSION_COOKIE_DOMAIN=.example.com.',
+    );
+  }
+
+  if (
+    !hostnameMatchesCookieDomain(frontendUrl.hostname, cookieDomain) ||
+    !hostnameMatchesCookieDomain(callbackUrl.hostname, cookieDomain)
+  ) {
+    throw new Error(
+      '[env] SESSION_COOKIE_DOMAIN must match both FRONTEND_URL and GITHUB_CALLBACK_URL hostnames. Use frontend/backend hosts under the same parent domain before enabling GitHub OAuth.',
+    );
+  }
+}
 
 function validateEnvProvisioningConfig(env: RawEnv): void {
   if (env['ENV_PROVISIONING_ENABLED'] !== 'true') {
@@ -225,7 +333,7 @@ function validateEnvProvisioningConfig(env: RawEnv): void {
 // ---------------------------------------------------------------------------
 
 /**
- * validateEnv — passed directly to ConfigModule.forRoot({ validate }).
+ * validateEnv - passed directly to ConfigModule.forRoot({ validate }).
  *
  * Called by NestJS at bootstrap with the raw process.env object.
  * Must return the parsed/typed config or throw to abort startup.
@@ -296,8 +404,10 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
 
   // --- Required: frontend URL ---
   // FRONTEND_URL is the redirect target after OAuth. If missing, every login
-  // silently redirects to localhost:3000 — invisible in logs, fatal in prod.
+  // silently redirects to localhost:3000 - invisible in logs, fatal in prod.
   requireString(env, 'FRONTEND_URL');
+
+  validateProductionAuthCookieConfig(env, NODE_ENV);
 
   // --- Required: GitHub OAuth credentials ---
   // Both must be set; a missing secret causes silent login failure at runtime
@@ -308,16 +418,9 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';
-  const rawEmailDelivery = env['AUTH_EMAIL_CODE_DELIVERY'];
-  if (
-    rawEmailDelivery !== undefined &&
-    rawEmailDelivery !== 'log' &&
-    rawEmailDelivery !== 'provider'
-  ) {
-    throw new Error(
-      "[env] AUTH_EMAIL_CODE_DELIVERY must be 'log' or 'provider' when set.",
-    );
-  }
+  validateEmailDeliveryConfig(env);
+  validateSupabaseDbTlsConfig(env, NODE_ENV);
+
   validateEnvProvisioningConfig(env);
 
   // Pass all raw env vars through first so appConfig and other factories can

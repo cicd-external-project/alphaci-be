@@ -17,6 +17,10 @@ export class EmailSignupDto {
   password!: string;
 }
 
+export class EmailAvailabilityDto {
+  @IsEmail()
+  email!: string;
+}
 export class EmailLoginDto {
   @IsEmail()
   email!: string;

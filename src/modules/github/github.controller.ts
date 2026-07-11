@@ -7,19 +7,19 @@ import { LinkInstallationDto } from './dto/link-installation.dto';
 import { GithubService } from './github.service';
 
 @Controller('github')
-@UseGuards(SessionAuthGuard)
 export class GithubController {
   constructor(private readonly githubService: GithubService) {}
 
-  // ─── GitHub App endpoints ───────────────────────────────────────────────
+  // GitHub App endpoints
 
-  /** GET /github/app/install-url — returns the GitHub App installation URL */
+  /** GET /github/app/install-url - returns the GitHub App installation URL */
   @Get('app/install-url')
   getAppInstallUrl() {
     return { installUrl: this.githubService.getAppInstallUrl() };
   }
 
-  /** POST /github/installations — link a GitHub App installation to the current user */
+  @UseGuards(SessionAuthGuard)
+  /** POST /github/installations - link a GitHub App installation to the current user */
   @Post('installations')
   async linkInstallation(
     @Req() req: Request,
@@ -30,7 +30,8 @@ export class GithubController {
     return this.githubService.linkInstallation(userId, body.installationId);
   }
 
-  /** GET /github/installations/repos — list repos linked via GitHub App */
+  @UseGuards(SessionAuthGuard)
+  /** GET /github/installations/repos - list repos linked via GitHub App */
   @Get('installations/repos')
   async listLinkedRepos(@Req() req: Request) {
     // SessionAuthGuard guarantees req.session.user is populated before this runs.
@@ -39,7 +40,8 @@ export class GithubController {
     return { repos };
   }
 
-  /** GET /github/installations/accounts — list GitHub App installation accounts */
+  @UseGuards(SessionAuthGuard)
+  /** GET /github/installations/accounts - list GitHub App installation accounts */
   @Get('installations/accounts')
   async listInstallationAccounts(@Req() req: Request) {
     // SessionAuthGuard guarantees req.session.user is populated before this runs.
@@ -55,9 +57,10 @@ export class GithubController {
     return { accounts };
   }
 
-  // ─── Token diagnostics ─────────────────────────────────────────────────
+  // Token diagnostics
 
-  /** GET /github/token-scopes — returns the scopes on the current OAuth token */
+  @UseGuards(SessionAuthGuard)
+  /** GET /github/token-scopes - returns the scopes on the current OAuth token */
   @Get('token-scopes')
   async tokenScopes(@Req() req: Request) {
     const accessToken = req.session.githubAccessToken;
@@ -88,8 +91,9 @@ export class GithubController {
     };
   }
 
-  // ─── OAuth repos (existing) ─────────────────────────────────────────────
+  // OAuth repos (existing)
 
+  @UseGuards(SessionAuthGuard)
   @Get('repos')
   async repos(@Req() req: Request) {
     const accessToken = req.session.githubAccessToken;
@@ -101,7 +105,8 @@ export class GithubController {
     return { repos };
   }
 
-  /** POST /github/repos — create a new GitHub repository with branch structure */
+  @UseGuards(SessionAuthGuard)
+  /** POST /github/repos - create a new GitHub repository with branch structure */
   @Post('repos')
   async createRepo(@Req() req: Request, @Body() body: CreateRepoDto) {
     const accessToken = req.session.githubAccessToken;

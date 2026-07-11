@@ -74,6 +74,11 @@ const makeAuthService = () =>
     getPendingArchivedAccount: jest.fn().mockResolvedValue({ pending: false }),
     restoreArchivedAccount: jest.fn().mockResolvedValue(undefined),
     startFreshAccount: jest.fn().mockResolvedValue(undefined),
+    checkEmailSignupAvailability: jest.fn().mockResolvedValue({
+      ok: true,
+      available: true,
+    }),
+
     startEmailSignup: jest.fn().mockResolvedValue({
       ok: true,
       verificationRequired: true,
@@ -144,6 +149,16 @@ describe('AuthController', () => {
   });
 
   describe('email auth endpoints', () => {
+    it('checks email signup availability', async () => {
+      const result = await controller.checkEmailSignup({
+        email: 'tone@example.test',
+      });
+
+      expect(result).toEqual({ ok: true, available: true });
+      expect(authService.checkEmailSignupAvailability).toHaveBeenCalledWith(
+        'tone@example.test',
+      );
+    });
     it('starts email signup', async () => {
       const body = {
         firstName: 'Tone',
@@ -274,8 +289,10 @@ describe('AuthController', () => {
       expect(result).toMatchObject({
         authenticated: true,
         user: fakeUser,
+        githubConnected: true,
         subscription: fakeFreeSub,
       });
+      expect(authService.listConnectedIdentities).toHaveBeenCalledWith(req);
     });
 
     it('returns unauthenticated when no user', async () => {

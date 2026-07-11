@@ -68,8 +68,8 @@ const makeConfig = (
         seededPlans: overrides.seededPlans ?? {},
         proMonthlyPricePhp: 300,
         paymentProvider: overrides.paymentProvider ?? 'none',
-        successUrl: 'http://localhost:3000/subscribe?status=success',
-        cancelUrl: 'http://localhost:3000/subscribe?status=cancelled',
+        successUrl: 'http://localhost:3000/onboarding',
+        cancelUrl: 'http://localhost:3000/settings?billing=cancelled',
         paymongo: {
           secretKey: overrides.paymongoSecretKey ?? '',
           webhookSecret: 'whsec_test_123',
@@ -208,12 +208,12 @@ describe('SubscriptionService', () => {
               {
                 currency: 'PHP',
                 amount: 30000,
-                name: 'FlowCI Studio Pro Monthly',
+                name: 'AlphaCI Starter Monthly',
                 quantity: 1,
               },
             ],
-            success_url: 'http://localhost:3000/subscribe?status=success',
-            cancel_url: 'http://localhost:3000/subscribe?status=cancelled',
+            success_url: 'http://localhost:3000/onboarding',
+            cancel_url: 'http://localhost:3000/settings?billing=cancelled',
             payment_method_types: ['card', 'gcash', 'qrph'],
             metadata: { userId: 'user-1', plan: 'pro' },
           },
@@ -226,8 +226,123 @@ describe('SubscriptionService', () => {
         metadata: { userId: 'user-1', plan: 'pro' },
       });
     });
+
+    it.each([
+      ['gcash', ['gcash']],
+      ['maya', ['paymaya']],
+      ['qrph', ['qrph']],
+    ] as const)(
+      'restricts hosted checkout to %s',
+      async (paymentMethod, expectedTypes) => {
+        fetchMock.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            data: {
+              id: 'cs_paymongo_123',
+              attributes: {
+                status: 'active',
+                checkout_url: 'https://checkout.paymongo.com/cs_paymongo_123',
+              },
+            },
+          }),
+        } as unknown as Response);
+
+        const { service } = await createService({
+          paymentProvider: 'paymongo',
+          paymongoSecretKey: 'sk_test_123',
+        });
+
+        await service.createCheckoutSession(fakeUser, 'pro', paymentMethod);
+
+        const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          data: {
+            attributes: {
+              payment_method_types: expectedTypes,
+            },
+          },
+        });
+      },
+    );
   });
 
+  describe('createPaymentIntent', () => {
+    it('creates a PayMongo payment intent for the custom card form', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'pi_paymongo_123',
+            attributes: {
+              status: 'awaiting_payment_method',
+              client_key: 'pi_client_key_123',
+              metadata: { userId: 'user-1', plan: 'pro' },
+            },
+          },
+        }),
+      } as unknown as Response);
+
+      const { service } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      const result = await service.createPaymentIntent(fakeUser, 'pro');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.paymongo.com/v1/payment_intents',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: expect.stringMatching(/^Basic /),
+          }),
+        }),
+      );
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        data: {
+          attributes: {
+            amount: 30000,
+            currency: 'PHP',
+            payment_method_allowed: ['card'],
+            description: 'AlphaCI Starter Monthly',
+            metadata: { userId: 'user-1', plan: 'pro' },
+          },
+        },
+      });
+      expect(result).toEqual({
+        paymentIntentId: 'pi_paymongo_123',
+        clientKey: 'pi_client_key_123',
+        status: 'awaiting_payment_method',
+      });
+    });
+
+    it('allows the QR Ph Payment Intent method', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'pi_qrph_123',
+            attributes: {
+              status: 'awaiting_payment_method',
+              client_key: 'pi_client_key_123',
+            },
+          },
+        }),
+      } as unknown as Response);
+      const { service } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      await service.createPaymentIntent(fakeUser, 'pro', 'qrph');
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        data: { attributes: { payment_method_allowed: ['qrph'] } },
+      });
+    });
+  });
   describe('getCheckoutStatus', () => {
     it('activates Pro after a paid PayMongo checkout session', async () => {
       fetchMock.mockResolvedValueOnce({
@@ -267,6 +382,44 @@ describe('SubscriptionService', () => {
     });
   });
 
+  describe('getPaymentIntentStatus', () => {
+    it('activates Pro after a succeeded PayMongo payment intent', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'pi_paymongo_123',
+            attributes: {
+              status: 'succeeded',
+              metadata: { userId: 'user-1', plan: 'pro' },
+            },
+          },
+        }),
+      } as unknown as Response);
+
+      const { service, subsRepo, outboxRepo } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+
+      const result = await service.getPaymentIntentStatus(
+        fakeUser,
+        'pi_paymongo_123',
+      );
+
+      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
+        'user-1',
+        'pro_monthly',
+        300,
+        'paymongo',
+      );
+      expect(outboxRepo.publishLater).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'subscription.activated' }),
+      );
+      expect(result.status).toBe('succeeded');
+      expect(result.subscription?.plan).toBe('pro');
+    });
+  });
   describe('handlePayMongoWebhook', () => {
     it('activates Pro when PayMongo sends a paid checkout webhook', async () => {
       const { service, subsRepo, outboxRepo } = await createService({
@@ -298,6 +451,50 @@ describe('SubscriptionService', () => {
       );
       expect(outboxRepo.publishLater).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'subscription.activated' }),
+      );
+    });
+
+    it('activates Pro when a direct Payment Intent payment is confirmed', async () => {
+      const { service, subsRepo } = await createService({
+        paymentProvider: 'paymongo',
+        paymongoSecretKey: 'sk_test_123',
+      });
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'pi_paymongo_123',
+            attributes: {
+              status: 'succeeded',
+              metadata: { userId: 'user-1', plan: 'pro' },
+            },
+          },
+        }),
+      });
+
+      const payload = {
+        data: {
+          type: 'payment.paid',
+          data: {
+            attributes: { payment_intent_id: 'pi_paymongo_123' },
+          },
+        },
+      };
+      const { rawBody, signatureHeader } = signedPayMongoPayload(payload);
+
+      await expect(
+        service.handlePayMongoWebhook(payload, rawBody, signatureHeader),
+      ).resolves.toEqual({ received: true });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.paymongo.com/v1/payment_intents/pi_paymongo_123',
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+      expect(subsRepo.activateMonthlyPlan).toHaveBeenCalledWith(
+        'user-1',
+        'pro_monthly',
+        300,
+        'paymongo',
       );
     });
   });

@@ -1,5 +1,5 @@
 {
-  "name": "template-repo-be-single",
+  "name": "alphaci-be",
   "version": "0.0.1",
   "description": "",
   "author": "",
@@ -21,7 +21,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./tests/e2e/jest-e2e.json",
     "db:verify:gcp-runtime-migration": "node ./scripts/verify-gcp-runtime-migration.cjs",
-    "dummy:show": "node ./scripts/show-dummy-account.cjs"
+    "dummy:show": "node ./scripts/show-dummy-account.cjs",
+    "auth:reset-test-identity": "ts-node --project tsconfig.json src/scripts/reset-test-auth-identity.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

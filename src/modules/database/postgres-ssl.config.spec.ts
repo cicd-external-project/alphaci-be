@@ -26,6 +26,28 @@ describe('postgresSslConfig', () => {
     });
   });
 
+  it('allows explicitly relaxed TLS verification for remote database URLs', () => {
+    expect(
+      postgresSslConfig(
+        'postgres://user:pass@db.example.com:5432/app',
+        undefined,
+        false,
+      ),
+    ).toEqual({ rejectUnauthorized: false });
+  });
+
+  it('prefers a configured CA certificate over relaxed TLS verification', () => {
+    expect(
+      postgresSslConfig(
+        'postgres://user:pass@db.example.com:5432/app',
+        '-----BEGIN CERTIFICATE-----\\nabc\\n-----END CERTIFICATE-----',
+        false,
+      ),
+    ).toEqual({
+      ca: '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
+    });
+  });
+
   it('fails closed to verified TLS when the database URL is malformed', () => {
     expect(postgresSslConfig('not-a-valid-url')).toBe(true);
   });

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import type { ProvisioningJobsRepository } from './provisioning-jobs.repository';
+import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
 import type {
   ProvisioningJobSummary,
   SafeProvisioningError,

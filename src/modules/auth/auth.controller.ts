@@ -21,6 +21,7 @@ import { SubscriptionService } from '../subscription/subscription.service';
 import { PlatformAdminsRepository } from '../admin/platform-admins.repository';
 import { AuthService } from './auth.service';
 import {
+  EmailAvailabilityDto,
   EmailLoginDto,
   EmailSignupDto,
   ResendEmailCodeDto,
@@ -67,8 +68,10 @@ export class AuthController {
     );
     return res.redirect(redirectUrl);
   }
-
-  /** GET /auth/config-check — non-sensitive config diagnostic (no secrets exposed) */
+  @Post('email/check')
+  async checkEmailSignup(@Body() body: EmailAvailabilityDto) {
+    return this.authService.checkEmailSignupAvailability(body.email);
+  }
   @Post('email/signup')
   async emailSignup(@Body() body: EmailSignupDto) {
     return this.authService.startEmailSignup(body);
@@ -153,9 +156,14 @@ export class AuthController {
       };
     }
 
+    const identities = await this.authService.listConnectedIdentities(req);
+
     return {
       authenticated: true,
       user,
+      githubConnected: identities.methods.some(
+        (identity) => identity.provider === 'github',
+      ),
       // null for ordinary users; 'admin' | 'super_admin' for platform admins.
       // The frontend uses this to gate the /admin surface.
       platformRole: await this.platformAdminsRepository.findRole(user.id),

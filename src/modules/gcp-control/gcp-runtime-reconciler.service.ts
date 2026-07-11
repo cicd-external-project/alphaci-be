@@ -1,12 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import type { GcpDeploymentTargetsRepository } from '../gcp-runtime/deployment-targets-gcp.repository';
+import { GcpDeploymentTargetsRepository } from '../gcp-runtime/deployment-targets-gcp.repository';
 import type {
   GcpDeploymentStatus,
   GcpDeploymentTargetSummary,
   GcpRuntimeReconciliationStatus,
 } from '../gcp-runtime/gcp-runtime.types';
-import type { ProvisioningJobsRepository } from './provisioning-jobs.repository';
+import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
 import {
   GCP_RUNTIME_ADAPTER,
   GcpRuntimeAdapterError,

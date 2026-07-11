@@ -8,8 +8,8 @@ Start with `START_HERE_BACKEND.md` for a full onboarding and system-level explan
 
 ## Product Backend Role
 
-This repository is the active backend for FlowCI Studio in the current implementation path.
-The frontend in `../cicd-workflow-fe` calls this service at `/api/v1`.
+This repository is the active backend for AlphaCI in the current implementation path.
+The frontend in `../alphaci-fe` calls this service at `/api/v1`.
 
 The backend owns:
 

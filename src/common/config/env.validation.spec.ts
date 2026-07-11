@@ -89,6 +89,14 @@ describe('validateEnv', () => {
       expect(result.ENABLE_SWAGGER).toBe('true');
     });
 
+    it('accepts disabled Supabase DB TLS verification outside production', () => {
+      const result = validateEnv(
+        validEnv({ SUPABASE_DB_SSL_REJECT_UNAUTHORIZED: 'false' }),
+      );
+
+      expect(result.SUPABASE_DB_SSL_REJECT_UNAUTHORIZED).toBe('false');
+    });
+
     it('trims leading/trailing whitespace from string values', () => {
       const result = validateEnv(
         validEnv({ SUPABASE_URL: '  https://abc.supabase.co  ' }),
@@ -115,6 +123,109 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('email delivery validation', () => {
+    it('accepts Resend config when provider delivery is enabled', () => {
+      const result = validateEnv(
+        validEnv({
+          AUTH_EMAIL_CODE_DELIVERY: 'provider',
+          AUTH_EMAIL_PROVIDER: 'resend',
+          RESEND_API_KEY: 're_test_key',
+          AUTH_EMAIL_FROM: 'AlphaCI <no-reply@example.test>',
+        }),
+      );
+
+      expect(result.AUTH_EMAIL_PROVIDER).toBe('resend');
+      expect(result.RESEND_API_KEY).toBe('re_test_key');
+      expect(result.AUTH_EMAIL_FROM).toBe('AlphaCI <no-reply@example.test>');
+    });
+
+    it('throws when provider delivery has an unsupported email provider', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            AUTH_EMAIL_CODE_DELIVERY: 'provider',
+            AUTH_EMAIL_PROVIDER: 'smtp',
+            RESEND_API_KEY: 're_test_key',
+            AUTH_EMAIL_FROM: 'AlphaCI <no-reply@example.test>',
+          }),
+        ),
+      ).toThrow(/AUTH_EMAIL_PROVIDER/);
+    });
+
+    it('throws when provider delivery is missing a Resend API key', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            AUTH_EMAIL_CODE_DELIVERY: 'provider',
+            AUTH_EMAIL_PROVIDER: 'resend',
+            AUTH_EMAIL_FROM: 'AlphaCI <no-reply@example.test>',
+          }),
+        ),
+      ).toThrow(/RESEND_API_KEY/);
+    });
+
+    it('throws when provider delivery is missing a from address', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            AUTH_EMAIL_CODE_DELIVERY: 'provider',
+            AUTH_EMAIL_PROVIDER: 'resend',
+            RESEND_API_KEY: 're_test_key',
+          }),
+        ),
+      ).toThrow(/AUTH_EMAIL_FROM/);
+    });
+  });
+
+  describe('Supabase DB TLS validation', () => {
+    it('throws for an invalid SUPABASE_DB_SSL_REJECT_UNAUTHORIZED value', () => {
+      expect(() =>
+        validateEnv(validEnv({ SUPABASE_DB_SSL_REJECT_UNAUTHORIZED: 'nope' })),
+      ).toThrow(/SUPABASE_DB_SSL_REJECT_UNAUTHORIZED/);
+    });
+
+    it('throws when Supabase DB TLS verification is disabled in production', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            NODE_ENV: 'production',
+            SUPABASE_DB_SSL_REJECT_UNAUTHORIZED: 'false',
+          }),
+        ),
+      ).toThrow(/SUPABASE_DB_SSL_REJECT_UNAUTHORIZED/);
+    });
+  });
+
+  describe('production auth cookie validation', () => {
+    it('throws for split frontend/backend domains without a shared cookie domain', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            NODE_ENV: 'production',
+            SESSION_SECURE: 'true',
+            FRONTEND_URL: 'https://alphaci.vercel.app',
+            GITHUB_CALLBACK_URL:
+              'https://alphaci-api.onrender.com/api/v1/auth/github/callback',
+          }),
+        ),
+      ).toThrow(/SESSION_COOKIE_DOMAIN/);
+    });
+
+    it('accepts split frontend/backend subdomains when SESSION_COOKIE_DOMAIN is set', () => {
+      const result = validateEnv(
+        validEnv({
+          NODE_ENV: 'production',
+          SESSION_SECURE: 'true',
+          FRONTEND_URL: 'https://app.example.com',
+          GITHUB_CALLBACK_URL:
+            'https://api.example.com/api/v1/auth/github/callback',
+          SESSION_COOKIE_DOMAIN: '.example.com',
+        }),
+      );
+
+      expect(result.SESSION_COOKIE_DOMAIN).toBe('.example.com');
+    });
+  });
   describe('PORT validation', () => {
     it('defaults PORT to 4000 when missing', () => {
       const env = validEnv();

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { DomainsRepository } from './domains.repository';
 import { FakeDomainVerifier } from './fake-domain-verifier';
-import type { DomainVerifier, RuntimeDomainSummary } from './domains.types';
+import type { RuntimeDomainSummary } from './domains.types';
 
 export interface ReserveManagedDomainInput {
   deploymentTargetId: string;
@@ -27,7 +27,7 @@ export interface VerifyDomainInput {
 export class DomainsService {
   constructor(
     private readonly repository: DomainsRepository,
-    private readonly verifier: DomainVerifier = new FakeDomainVerifier(),
+    private readonly verifier: FakeDomainVerifier,
   ) {}
 
   async reserveManagedDomain(

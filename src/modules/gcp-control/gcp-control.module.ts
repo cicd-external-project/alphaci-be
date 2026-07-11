@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../database/database.module';
+import { GcpRuntimeModule } from '../gcp-runtime/gcp-runtime.module';
 import { FakeGcpRuntimeAdapter } from './fake-gcp-runtime.adapter';
 import { GcpProviderCapabilitiesService } from './gcp-provider-capabilities.service';
 import { GcpProvisioningOrchestratorService } from './gcp-provisioning-orchestrator.service';
@@ -10,7 +11,7 @@ import { ProvisioningJobsRepository } from './provisioning-jobs.repository';
 import { RuntimeEntitlementsService } from './runtime-entitlements.service';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, GcpRuntimeModule],
   providers: [
     GcpProviderCapabilitiesService,
     ProvisioningJobsRepository,

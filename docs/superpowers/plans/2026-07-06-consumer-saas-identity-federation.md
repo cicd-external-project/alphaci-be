@@ -39,6 +39,8 @@ Backend files:
 - Create: `src/modules/auth/identity.service.spec.ts` - verified-email linking and legacy compatibility tests.
 - Create: `src/modules/auth/password-hasher.service.ts` - scrypt password/code hashing.
 - Create: `src/modules/auth/password-hasher.service.spec.ts` - hash/verify tests.
+- Create: `src/modules/auth/email-code-template.service.ts` - reusable HTML/text verification email content.
+- Create: `src/modules/auth/email-code-template.service.spec.ts` - verification email rendering tests.
 - Create: `src/modules/auth/email-code-delivery.service.ts` - adapter boundary for sending verification codes.
 - Create: `src/modules/auth/email-code-delivery.service.spec.ts` - development/production delivery behavior tests.
 - Create: `src/modules/auth/dto/email-auth.dto.ts` - email signup/login/verify/resend DTOs.
@@ -1390,11 +1392,28 @@ git commit -m "refactor: route github login through identity resolver"
 **Files:**
 - Create: `src/modules/auth/password-hasher.service.ts`
 - Create: `src/modules/auth/password-hasher.service.spec.ts`
+- Create: `src/modules/auth/email-code-template.service.ts`
+- Create: `src/modules/auth/email-code-template.service.spec.ts`
 - Create: `src/modules/auth/email-code-delivery.service.ts`
 - Create: `src/modules/auth/email-code-delivery.service.spec.ts`
 - Modify: `src/modules/auth/auth.module.ts`
 - Modify: `src/config/app.config.ts`
 - Modify: `src/common/config/env.validation.ts`
+
+**Verification email design requirement:**
+
+The email sender must use a reusable template service, not inline provider-specific HTML. The template should mirror the approved reference email:
+
+- subject: `Verify your email address`
+- centered white email body with a thin border and small top logo block
+- heading: `Verify your email`
+- body copy: `We need to verify your email address <email> before you can access your account. Enter the code below in your open browser window.`
+- large six-digit numeric code, formatted as plain text so it copies cleanly
+- horizontal separator
+- footer copy: `This code expires in 10 minutes.` and mistaken-signup ignore copy
+- both HTML and plaintext output, covered by `email-code-template.service.spec.ts`
+
+Use a dedicated `EmailCodeTemplateService.renderVerificationCodeEmail(...)` method so production providers can send the same content that development logging previews.
 
 - [ ] **Step 1: Add password hasher tests**
 
@@ -1526,6 +1545,7 @@ providers: [
   AuthService,
   IdentityService,
   PasswordHasherService,
+  EmailCodeTemplateService,
   EmailCodeDeliveryService,
   DevOnlyGuard,
   SessionAuthGuard,
@@ -1535,6 +1555,7 @@ providers: [
 Add imports:
 
 ```ts
+import { EmailCodeTemplateService } from './email-code-template.service';
 import { EmailCodeDeliveryService } from './email-code-delivery.service';
 import { PasswordHasherService } from './password-hasher.service';
 ```
@@ -1544,7 +1565,7 @@ import { PasswordHasherService } from './password-hasher.service';
 Run:
 
 ```powershell
-npm test -- src/modules/auth/password-hasher.service.spec.ts src/modules/auth/email-code-delivery.service.spec.ts
+npm test -- src/modules/auth/password-hasher.service.spec.ts src/modules/auth/email-code-template.service.spec.ts src/modules/auth/email-code-delivery.service.spec.ts
 ```
 
 Expected: PASS.
@@ -1554,7 +1575,7 @@ Expected: PASS.
 Run:
 
 ```powershell
-git add src/modules/auth/password-hasher.service.ts src/modules/auth/password-hasher.service.spec.ts src/modules/auth/email-code-delivery.service.ts src/modules/auth/email-code-delivery.service.spec.ts src/modules/auth/auth.module.ts src/config/app.config.ts src/common/config/env.validation.ts
+git add src/modules/auth/password-hasher.service.ts src/modules/auth/password-hasher.service.spec.ts src/modules/auth/email-code-template.service.ts src/modules/auth/email-code-template.service.spec.ts src/modules/auth/email-code-delivery.service.ts src/modules/auth/email-code-delivery.service.spec.ts src/modules/auth/auth.module.ts src/config/app.config.ts src/common/config/env.validation.ts
 git commit -m "feat: add email verification primitives"
 ```
 

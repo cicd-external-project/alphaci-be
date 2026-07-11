@@ -128,6 +128,7 @@ export interface AppConfig {
   supabase: {
     dbUrl: string | undefined;
     dbCaCert?: string;
+    dbSslRejectUnauthorized: boolean;
   };
   session: {
     secret: string;
@@ -174,7 +175,7 @@ export const appConfig = registerAs('app', (): AppConfig => {
         'http://localhost:4000/api/v1/auth/github/callback',
       scope: env['GITHUB_SCOPE'] ?? 'read:user user:email',
       appId: env['GITHUB_APP_ID'] ?? '',
-      appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
+      appSlug: env['GITHUB_APP_SLUG'] ?? '',
       appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
         /\\n/g,
         '\n',
@@ -205,10 +206,10 @@ export const appConfig = registerAs('app', (): AppConfig => {
         env['PAYMENT_PROVIDER'] === 'paymongo' ? 'paymongo' : 'none',
       successUrl:
         env['PAYMENT_SUCCESS_URL'] ??
-        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/subscribe?status=success`,
+        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/onboarding`,
       cancelUrl:
         env['PAYMENT_CANCEL_URL'] ??
-        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/subscribe?status=cancelled`,
+        `${env['FRONTEND_URL'] ?? 'http://localhost:3000'}/settings?billing=cancelled`,
       paymongo: {
         secretKey: env['PAYMONGO_SECRET_KEY'] ?? '',
         webhookSecret: env['PAYMONGO_WEBHOOK_SECRET'] ?? '',
@@ -328,6 +329,8 @@ export const appConfig = registerAs('app', (): AppConfig => {
       ...(env['SUPABASE_DB_CA_CERT']?.trim()
         ? { dbCaCert: env['SUPABASE_DB_CA_CERT'].trim() }
         : {}),
+      dbSslRejectUnauthorized:
+        env['SUPABASE_DB_SSL_REJECT_UNAUTHORIZED'] === 'false' ? false : true,
     },
     session: {
       secret: (() => {

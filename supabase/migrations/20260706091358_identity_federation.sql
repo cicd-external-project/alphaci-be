@@ -4,6 +4,13 @@
 
 BEGIN;
 
+ALTER TABLE identity.app_users
+  DROP CONSTRAINT IF EXISTS app_users_provider_check;
+
+ALTER TABLE identity.app_users
+  ADD CONSTRAINT app_users_provider_check
+  CHECK (provider IN ('github', 'google', 'email'));
+
 CREATE TABLE IF NOT EXISTS identity.user_identities (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES identity.app_users(id) ON DELETE CASCADE,

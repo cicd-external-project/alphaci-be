@@ -44,6 +44,12 @@ const makeSubscriptionService = () =>
       redirectUrl: 'https://checkout.paymongo.com/test',
     }),
     getCheckoutStatus: jest.fn().mockResolvedValue({ status: 'pending' }),
+    createPaymentIntent: jest.fn().mockResolvedValue({
+      paymentIntentId: 'pi_test_123',
+      clientKey: 'pi_client_key_123',
+      status: 'awaiting_payment_method',
+    }),
+    getPaymentIntentStatus: jest.fn().mockResolvedValue({ status: 'succeeded' }),
     handlePayMongoWebhook: jest.fn().mockResolvedValue({ received: true }),
     activateForUser: jest.fn().mockResolvedValue(fakeProSub),
     cancelForUser: jest.fn().mockResolvedValue(fakeFreeSub),
@@ -94,8 +100,23 @@ describe('SubscriptionController', () => {
       expect(service.createCheckoutSession).toHaveBeenCalledWith(
         fakeUser,
         'pro',
+        undefined,
       );
       expect((result as { checkoutId: string }).checkoutId).toBe('cs_test_123');
+    });
+
+
+    it('passes the hosted payment method to service', async () => {
+      await controller.createCheckout(makeRequest(), {
+        plan: 'pro',
+        paymentMethod: 'gcash',
+      });
+
+      expect(service.createCheckoutSession).toHaveBeenCalledWith(
+        fakeUser,
+        'pro',
+        'gcash',
+      );
     });
 
     it('throws UnauthorizedException when no user in session', async () => {
@@ -170,3 +191,4 @@ describe('SubscriptionController', () => {
     });
   });
 });
+

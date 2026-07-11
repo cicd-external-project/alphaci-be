@@ -1,7 +1,9 @@
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import type { TestingModule } from '@nestjs/testing';
 import { GithubController } from './github.controller.js';
 import { GithubService } from './github.service.js';
+import { SessionAuthGuard } from '../../common/guards/session-auth.guard.js';
 import type { Request } from 'express';
 
 const fakeRepos = [
@@ -85,6 +87,30 @@ describe('GithubController', () => {
     });
   });
 
+  it('keeps the GitHub App install URL public while guarding account-bound endpoints', () => {
+    expect(
+      Reflect.getMetadata(GUARDS_METADATA, GithubController) ?? [],
+    ).toEqual([]);
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        GithubController.prototype.getAppInstallUrl,
+      ) ?? [],
+    ).toEqual([]);
+
+    for (const handler of [
+      GithubController.prototype.linkInstallation,
+      GithubController.prototype.listLinkedRepos,
+      GithubController.prototype.listInstallationAccounts,
+      GithubController.prototype.tokenScopes,
+      GithubController.prototype.repos,
+      GithubController.prototype.createRepo,
+    ]) {
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(
+        SessionAuthGuard,
+      );
+    }
+  });
   it('links a GitHub App installation to the current user', async () => {
     await expect(
       controller.linkInstallation(makeRequest(), { installationId: 123 }),
