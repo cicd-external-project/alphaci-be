@@ -83,6 +83,19 @@ export class DeploymentTargetsController {
     );
   }
 
+  @Get(':targetId/logs')
+  logs(
+    @Req() req: Request,
+    @Param('projectId') projectId: string,
+    @Param('targetId') targetId: string,
+  ) {
+    return this.service.getDeploymentTargetLogs(
+      projectId,
+      targetId,
+      req.session.user!.id,
+    );
+  }
+
   @Delete(':targetId')
   detach(
     @Req() req: Request,

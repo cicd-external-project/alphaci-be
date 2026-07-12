@@ -383,15 +383,9 @@ describe('AuthService', () => {
     it('returns success after successful GitHub OAuth flow (new user)', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
       // findByGithubUserIdIncludingArchived returns null → new user path
-      const { service } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(null),
-        },
-      );
+      const { service } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null),
+      });
       const req = makeRequest();
 
       const url = await service.handleGitHubCallback(
@@ -410,15 +404,11 @@ describe('AuthService', () => {
         archivedAt: null,
         githubUserId: '12345',
       };
-      const { service } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(activeRow),
-        },
-      );
+      const { service } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest
+          .fn()
+          .mockResolvedValue(activeRow),
+      });
       const req = makeRequest();
 
       const url = await service.handleGitHubCallback(
@@ -697,12 +687,15 @@ describe('AuthService', () => {
         archivedAt: '2026-05-01T00:00:00Z',
         githubUserId: '12345',
       };
-      const { service, subsRepo, outboxRepo } =
-        await createService(true, undefined, {
+      const { service, subsRepo, outboxRepo } = await createService(
+        true,
+        undefined,
+        {
           findByGithubUserIdIncludingArchived: jest
             .fn()
             .mockResolvedValue(archivedRow),
-        });
+        },
+      );
 
       const req = makeRequest();
       await service.handleGitHubCallback(req, 'code123', 'valid-state');
@@ -989,11 +982,14 @@ describe('AuthService', () => {
     it('hard-deletes old row, upserts new row, provisions subscription, establishes session', async () => {
       const hardDeleteSpy = jest.fn().mockResolvedValue(undefined);
       const upsertSpy = jest.fn().mockResolvedValue(fakeUser);
-      const { service, usersRepo, subsRepo } =
-        await createService(true, undefined, {
+      const { service, usersRepo, subsRepo } = await createService(
+        true,
+        undefined,
+        {
           hardDeleteByGithubUserId: hardDeleteSpy,
           upsertGitHubUser: upsertSpy,
-        });
+        },
+      );
 
       const pending = {
         githubUserId: '12345',

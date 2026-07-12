@@ -92,7 +92,10 @@ function unreportedFailureMessage(
     const isTypecheck = firstJob.includes('type') || firstJob.includes('tsc');
     const isTest = firstJob.includes('test');
     const isBuild = firstJob.includes('build') || firstJob.includes('package');
-    const isSecurity = firstJob.includes('sonar') || firstJob.includes('security') || firstJob.includes('audit');
+    const isSecurity =
+      firstJob.includes('sonar') ||
+      firstJob.includes('security') ||
+      firstJob.includes('audit');
 
     return {
       severity: 'error',
@@ -125,19 +128,22 @@ function unreportedFailureMessage(
     access: {
       severity: 'error',
       title: 'Access check failed before diagnostics were reported',
-      detail: 'GitHub confirmed the access workflow failed, but it did not provide the failing job or error output.',
+      detail:
+        'GitHub confirmed the access workflow failed, but it did not provide the failing job or error output.',
       hint: 'Open the workflow logs. Check ALPHACI_TOKEN and GitHub App access to this repository, fix the first failed step, then re-run.',
     },
     quality: {
       severity: 'error',
       title: 'Quality check failed before diagnostics were reported',
-      detail: 'GitHub confirmed the quality workflow failed, but it did not provide test, lint, typecheck, or scan output.',
+      detail:
+        'GitHub confirmed the quality workflow failed, but it did not provide test, lint, typecheck, or scan output.',
       hint: 'Open the workflow logs, fix the first failed quality step, then re-run. Updated ALPHACI workflows report the failed job here automatically.',
     },
     package: {
       severity: 'error',
       title: 'Build or package check failed before diagnostics were reported',
-      detail: 'GitHub confirmed the package workflow failed, but it did not provide the failed build step or error output.',
+      detail:
+        'GitHub confirmed the package workflow failed, but it did not provide the failed build step or error output.',
       hint: 'Open the workflow logs, fix the first failed build or package step, then re-run the workflow.',
     },
   };

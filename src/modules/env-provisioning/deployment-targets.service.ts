@@ -33,6 +33,12 @@ import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import type { WorkspaceRole } from '../workspaces/workspaces.repository';
 
+export interface DeploymentTargetLogEntry {
+  timestamp: string;
+  message: string;
+  level: string;
+}
+
 @Injectable()
 export class DeploymentTargetsService {
   private readonly logger = new Logger(DeploymentTargetsService.name);
@@ -1001,5 +1007,307 @@ export class DeploymentTargetsService {
     }
 
     return value.trim();
+  }
+
+  async getDeploymentTargetLogs(
+    projectId: string,
+    targetId: string,
+    userId: string,
+  ): Promise<{ logs: DeploymentTargetLogEntry[] }> {
+    const target =
+      await this.deploymentTargetsRepository.findDeploymentTargetForUser(
+        targetId,
+        userId,
+      );
+    if (!target || target.projectId !== projectId) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    if (target.provider === 'render') {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          {
+            ownershipMode: target.ownershipMode,
+            ...(target.providerConnectionId
+              ? { providerConnectionId: target.providerConnectionId }
+              : {}),
+          },
+        );
+        const ownerId =
+          target.providerMetadata?.['renderOwnerId'] ??
+          target.providerMetadata?.['ownerId'];
+        if (token && typeof ownerId === 'string' && ownerId.trim()) {
+          const response = await fetch(
+            `https://api.render.com/v1/logs?ownerId=${encodeURIComponent(
+              ownerId,
+            )}&resource=${encodeURIComponent(
+              target.providerProjectId,
+            )}&limit=100`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            },
+          );
+          if (response.ok) {
+            const data = (await response.json()) as {
+              logs?: Array<{
+                timestamp?: string;
+                message?: string;
+                level?: string;
+              }>;
+            };
+            return {
+              logs: (data.logs || []).map((l) => ({
+                timestamp: l.timestamp ?? new Date().toISOString(),
+                message: l.message ?? '',
+                level:
+                  l.level === 'error' ||
+                  l.level === 'warn' ||
+                  l.level === 'info' ||
+                  l.level === 'system'
+                    ? l.level
+                    : 'info',
+              })),
+            };
+          } else {
+            this.logger.warn(
+              `Render API logs fetch failed: ${response.status}`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Failed to retrieve Render logs: ${(err as Error).message}`,
+        );
+      }
+    } else if (target.provider === 'vercel') {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          {
+            ownershipMode: target.ownershipMode,
+            ...(target.providerConnectionId
+              ? { providerConnectionId: target.providerConnectionId }
+              : {}),
+          },
+        );
+        if (token) {
+          const deploymentsUrl = this.withVercelScope(
+            `https://api.vercel.com/v6/deployments?projectId=${encodeURIComponent(
+              target.providerProjectId,
+            )}&limit=1`,
+            target,
+          );
+          const depResponse = await fetch(deploymentsUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (depResponse.ok) {
+            const depData = (await depResponse.json()) as {
+              deployments?: Array<{ uid: string }>;
+            };
+            const latestDep = depData.deployments?.[0];
+            if (latestDep?.uid) {
+              const logsUrl = this.withVercelScope(
+                `https://api.vercel.com/v1/projects/${encodeURIComponent(
+                  target.providerProjectId,
+                )}/deployments/${encodeURIComponent(latestDep.uid)}/runtime-logs?limit=100`,
+                target,
+              );
+              const logsResponse = await fetch(logsUrl, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (logsResponse.ok) {
+                interface VercelLogEntry {
+                  timestamp: number;
+                  text?: string;
+                  message?: string;
+                  type?: string;
+                  level?: string;
+                }
+                const logsData = (await logsResponse.json()) as
+                  | VercelLogEntry[]
+                  | { logs?: VercelLogEntry[] };
+                const logsList = Array.isArray(logsData)
+                  ? logsData
+                  : (logsData as { logs?: VercelLogEntry[] }).logs || [];
+                return {
+                  logs: logsList.map((l) => ({
+                    timestamp: l.timestamp
+                      ? new Date(Number(l.timestamp)).toISOString()
+                      : new Date().toISOString(),
+                    message: l.text || l.message || '',
+                    level:
+                      l.type === 'err' || l.level === 'error'
+                        ? 'error'
+                        : l.type === 'warning' || l.level === 'warn'
+                          ? 'warn'
+                          : 'info',
+                  })),
+                };
+              } else {
+                this.logger.warn(
+                  `Vercel API runtime-logs fetch failed: ${logsResponse.status}`,
+                );
+              }
+            }
+          } else {
+            this.logger.warn(
+              `Vercel API deployments fetch failed: ${depResponse.status}`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Failed to retrieve Vercel logs: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return {
+      logs: this.getMockLogs(target),
+    };
+  }
+
+  private withVercelScope(
+    url: string,
+    target: DeploymentTargetSummary,
+  ): string {
+    const teamId =
+      typeof target.providerMetadata?.['vercelTeamId'] === 'string'
+        ? target.providerMetadata['vercelTeamId'].trim()
+        : '';
+    const slug =
+      typeof target.providerMetadata?.['vercelTeamSlug'] === 'string'
+        ? target.providerMetadata['vercelTeamSlug'].trim()
+        : '';
+    if (teamId || slug) {
+      const scopedUrl = new URL(url);
+      if (teamId) {
+        scopedUrl.searchParams.set('teamId', teamId);
+      } else if (slug) {
+        scopedUrl.searchParams.set('slug', slug);
+      }
+      return scopedUrl.toString();
+    }
+
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    const defaultTeamId =
+      config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
+    const defaultSlug =
+      config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
+    if (!defaultTeamId && !defaultSlug) {
+      return url;
+    }
+
+    const scopedUrl = new URL(url);
+    if (defaultTeamId) {
+      scopedUrl.searchParams.set('teamId', defaultTeamId);
+    } else {
+      scopedUrl.searchParams.set('slug', defaultSlug);
+    }
+
+    return scopedUrl.toString();
+  }
+
+  private getMockLogs(
+    target: DeploymentTargetSummary,
+  ): DeploymentTargetLogEntry[] {
+    const now = new Date();
+    const offsetDate = (secondsAgo: number) => {
+      return new Date(now.getTime() - secondsAgo * 1000).toISOString();
+    };
+
+    if (target.provider === 'vercel') {
+      return [
+        {
+          timestamp: offsetDate(70),
+          message:
+            ' ready   - started server on 0.0.0.0:3000, url: http://localhost:3000',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(68),
+          message: ' info    - Loaded env from /app/.env',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(60),
+          message:
+            ' event   - compiled client and server successfully in 835ms (192 modules)',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(50),
+          message: ' info    - [request] GET / 200 in 89ms',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(40),
+          message: ' info    - [request] GET /api/capabilities 200 in 12ms',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(30),
+          message:
+            ' warn    - [warning] Large page data detected in /projects/[projectId] (120kb)',
+          level: 'warn',
+        },
+        {
+          timestamp: offsetDate(15),
+          message:
+            ' error   - [problem] Failed to proxy socket connection: connection timeout at /api/ws',
+          level: 'error',
+        },
+      ];
+    }
+
+    const dateStr = now.toLocaleDateString('en-US');
+    return [
+      {
+        timestamp: offsetDate(90),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [RouterExplorer] Mapped {/api/v1/capabilities, GET} route +1ms`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(88),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [NestApplication] Nest application successfully started +402ms`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(86),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [Bootstrap] Application running on 0.0.0.0:10000`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(75),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:41 AM    WARN [AllExceptionsFilter] HTTP 404 on HEAD /: Cannot HEAD /`,
+        level: 'warn',
+      },
+      {
+        timestamp: offsetDate(65),
+        message: `==> Your service is live 🚀`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(64),
+        message: `==> Available at your primary URL https://${target.providerProjectName || 'flowci-be-test'}.onrender.com`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(60),
+        message: `==> //////////////////////////////////////////////////////`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(30),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:13:27 AM    WARN [CatalogService] Could not fetch central-workflow tags from GitHub; falling back to the default ref only; GitHub tags request failed with status 403`,
+        level: 'warn',
+      },
+    ];
   }
 }
