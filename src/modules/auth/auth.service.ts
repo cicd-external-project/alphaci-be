@@ -10,7 +10,6 @@ import { OAuthStateRepository } from '../persistence/oauth-state.repository';
 import { OutboxRepository } from '../persistence/outbox.repository';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository';
 import { UsersRepository } from '../persistence/users.repository';
-import { ExampleProjectSeederService } from '../projects/example-project-seeder.service';
 
 interface GitHubTokenResponse {
   access_token?: string;
@@ -94,7 +93,6 @@ export class AuthService {
     private readonly subscriptionsRepository: SubscriptionsRepository,
     private readonly outboxRepository: OutboxRepository,
     private readonly oauthStateRepository: OAuthStateRepository,
-    private readonly exampleProjectSeederService: ExampleProjectSeederService,
   ) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
     this.returnToOrigins = this.buildReturnToOrigins(
@@ -329,7 +327,6 @@ export class AuthService {
     await this.subscriptionsRepository.ensureDefaultFreeSubscription(
       newUser.id,
     );
-    await this.seedExampleProjectSafelyFor(newUser.id);
     await this.establishSession(request, newUser);
     request.session.githubAccessToken = pending.accessToken;
     delete request.session.pendingArchived;
@@ -432,9 +429,6 @@ export class AuthService {
       await this.subscriptionsRepository.ensureDefaultFreeSubscription(
         persistedUser.id,
       );
-      if (accountState.kind === 'new') {
-        await this.seedExampleProjectSafelyFor(persistedUser.id);
-      }
       await this.establishSession(request, persistedUser);
       request.session.githubAccessToken = accessToken;
       // Persist the access token to the store. `session.regenerate()` inside
@@ -462,16 +456,6 @@ export class AuthService {
         err instanceof Error ? err.stack : undefined,
       );
       return this.withQuery(fallbackReturnTo, 'auth', 'failed');
-    }
-  }
-
-  private async seedExampleProjectSafelyFor(userId: string): Promise<void> {
-    try {
-      await this.exampleProjectSeederService.ensureExampleProjectSeeded(userId);
-    } catch (error) {
-      this.logger.warn(
-        `Example project seeding rejected unexpectedly for user ${userId}: ${(error as Error).message}`,
-      );
     }
   }
 

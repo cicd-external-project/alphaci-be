@@ -194,7 +194,7 @@ describe('ProjectsRepository', () => {
     expect(query).toContain('member.workspace_id');
   });
 
-  it('defaults isExample to false when creating a real project', async () => {
+  it('marks every created project as non-example', async () => {
     await repo.create({
       userId: 'user-1',
       repoFullName: 'tone/orders-api',
@@ -212,43 +212,4 @@ describe('ProjectsRepository', () => {
     expect(values[values.length - 1]).toBe(false);
   });
 
-  it('persists isExample = true when explicitly requested', async () => {
-    await repo.create({
-      userId: 'user-1',
-      repoFullName: 'alphaci-demo/alphaci-demo-app',
-      templateId: 'nest-service-pipeline',
-      serviceName: 'alphaci-demo-backend',
-      workflowPath:
-        '.github/workflows/alphaci-demo-backend-nest-service-pipeline.yml',
-      status: 'provisioned',
-      visibility: 'public',
-      isExample: true,
-    });
-
-    const [, values] = (db.query as jest.Mock).mock.calls[0] as [
-      string,
-      unknown[],
-    ];
-    expect(values[values.length - 1]).toBe(true);
-  });
-
-  it('hasExampleProject returns true when a row is found', async () => {
-    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
-
-    const result = await repo.hasExampleProject('user-1');
-
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('is_example = true'),
-      ['user-1'],
-    );
-    expect(result).toBe(true);
-  });
-
-  it('hasExampleProject returns false when no row is found', async () => {
-    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
-
-    const result = await repo.hasExampleProject('user-1');
-
-    expect(result).toBe(false);
-  });
 });
