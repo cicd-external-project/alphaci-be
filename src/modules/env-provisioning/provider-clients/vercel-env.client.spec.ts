@@ -529,6 +529,84 @@ describe('VercelEnvClient', () => {
     expect(thrown?.message).not.toContain('vercel-secret');
   });
 
+  it('reports the Vercel project exists with its latest deployment url', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+          latestDeployments: [{ url: 'web-app-test.vercel.app' }],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getTargetStatus({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual({
+      exists: true,
+      url: 'web-app-test.vercel.app',
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v9/projects/prj_1',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel',
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('reports the Vercel project does not exist on a 404', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().getTargetStatus({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual({ exists: false });
+  });
+
+  it('deletes the Vercel project', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteTarget({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual({ deleted: true });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v9/projects/prj_1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('treats an already-gone Vercel project (404) as deleted', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteTarget({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual({ deleted: true });
+  });
+
   it('returns an actionable message when Vercel GitHub integration is missing', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: false,

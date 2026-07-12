@@ -327,12 +327,12 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     ciRunTracking: {
       enabled: env['CI_RUN_TRACKING_ENABLED'] === 'true',
-      liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] === 'true',
+      liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] !== 'false',
     },
     deploymentHistory: {
       enabled: env['DEPLOYMENT_HISTORY_ENABLED'] === 'true',
       liveProvidersEnabled:
-        env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] === 'true',
+        env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] !== 'false',
     },
     driftDetection: {
       enabled: env['DRIFT_DETECTION_ENABLED'] === 'true',

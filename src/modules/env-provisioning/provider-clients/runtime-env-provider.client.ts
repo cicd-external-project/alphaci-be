@@ -62,6 +62,26 @@ export interface DeleteProviderEnvInput {
   key: string;
 }
 
+export interface ProviderTargetStatusInput {
+  token: string;
+  targetId: string;
+}
+
+export interface ProviderTargetStatus {
+  exists: boolean;
+  state?: string;
+  url?: string | null;
+}
+
+export interface DeleteProviderTargetInput {
+  token: string;
+  targetId: string;
+}
+
+export interface DeleteProviderTargetResult {
+  deleted: boolean;
+}
+
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
@@ -79,4 +99,10 @@ export interface RuntimeEnvProviderClient {
   deleteEnvironmentVariable(
     input: DeleteProviderEnvInput,
   ): Promise<{ key: string; status: 'removed' }>;
+  getTargetStatus(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderTargetStatus>;
+  deleteTarget(
+    input: DeleteProviderTargetInput,
+  ): Promise<DeleteProviderTargetResult>;
 }

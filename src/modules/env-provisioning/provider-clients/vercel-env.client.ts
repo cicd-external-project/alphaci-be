@@ -5,9 +5,13 @@ import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
+  DeleteProviderTargetInput,
+  DeleteProviderTargetResult,
   ProviderAccountSummary,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
+  ProviderTargetStatus,
+  ProviderTargetStatusInput,
   RuntimeEnvProviderClient,
   UpsertProviderEnvInput,
 } from './runtime-env-provider.client';
@@ -206,6 +210,46 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     await this.assertOk(deleteResponse, 'Vercel env var could not be deleted');
 
     return { key: input.key, status: 'removed' };
+  }
+
+  async getTargetStatus(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderTargetStatus> {
+    const response = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`),
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { exists: false };
+    }
+    await this.assertOk(response, 'Vercel project status could not be loaded');
+    const payload = (await response.json()) as {
+      id?: string;
+      name?: string;
+      latestDeployments?: Array<{ url?: string }>;
+    };
+
+    const url = payload.latestDeployments?.[0]?.url;
+
+    return {
+      exists: true,
+      ...(url !== undefined ? { url } : {}),
+    };
+  }
+
+  async deleteTarget(
+    input: DeleteProviderTargetInput,
+  ): Promise<DeleteProviderTargetResult> {
+    const response = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`),
+      { method: 'DELETE', headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { deleted: true };
+    }
+    await this.assertOk(response, 'Vercel project could not be deleted');
+
+    return { deleted: true };
   }
 
   private withScope(url: string): string {

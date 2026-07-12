@@ -581,6 +581,102 @@ describe('RenderEnvClient', () => {
     },
   );
 
+  describe('getTargetStatus', () => {
+    it('reports the Render service exists with its state and url', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        jsonResponse({
+          service: {
+            id: 'srv-1',
+            name: 'orders-api-test',
+            suspended: 'not_suspended',
+            serviceDetails: { url: 'https://orders-api-test.onrender.com' },
+          },
+        }),
+      );
+
+      await expect(
+        new RenderEnvClient().getTargetStatus({
+          token: 'rnd',
+          targetId: 'srv-1',
+        }),
+      ).resolves.toEqual({
+        exists: true,
+        state: 'not_suspended',
+        url: 'https://orders-api-test.onrender.com',
+      });
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.render.com/v1/services/srv-1',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer rnd',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('reports the Render service does not exist on a 404', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(
+        new RenderEnvClient().getTargetStatus({
+          token: 'rnd',
+          targetId: 'srv-missing',
+        }),
+      ).resolves.toEqual({ exists: false });
+    });
+
+    it('throws an actionable error for non-404 failures', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(
+        new RenderEnvClient().getTargetStatus({
+          token: 'rnd',
+          targetId: 'srv-1',
+        }),
+      ).rejects.toThrow('Render API key is invalid');
+    });
+  });
+
+  describe('deleteTarget', () => {
+    it('deletes the Render service', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+
+      await expect(
+        new RenderEnvClient().deleteTarget({ token: 'rnd', targetId: 'srv-1' }),
+      ).resolves.toEqual({ deleted: true });
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.render.com/v1/services/srv-1',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+
+    it('treats an already-gone Render service (404) as deleted', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(
+        new RenderEnvClient().deleteTarget({
+          token: 'rnd',
+          targetId: 'srv-missing',
+        }),
+      ).resolves.toEqual({ deleted: true });
+    });
+  });
+
   describe('Render project + environment grouping', () => {
     it('reuses an existing project and environment without creating either', async () => {
       const fetchMock = jest

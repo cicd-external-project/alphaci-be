@@ -5,9 +5,13 @@ import type { AppConfig } from '../../../config/app.config';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
+  DeleteProviderTargetInput,
+  DeleteProviderTargetResult,
   ProviderAccountSummary,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
+  ProviderTargetStatus,
+  ProviderTargetStatusInput,
   RuntimeEnvProviderClient,
   UpsertProviderEnvInput,
 } from './runtime-env-provider.client';
@@ -220,6 +224,65 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     await this.assertOk(response, 'Render env vars could not be updated');
 
     return { key: input.key, status: 'removed' };
+  }
+
+  async getTargetStatus(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderTargetStatus> {
+    const response = await fetch(
+      `${RENDER_API_URL}/services/${input.targetId}`,
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { exists: false };
+    }
+    await this.assertOk(response, 'Render service status could not be loaded');
+    const payload = (await response.json()) as {
+      id?: string;
+      name?: string;
+      suspended?: string;
+      service?: {
+        id?: string;
+        name?: string;
+        suspended?: string;
+        serviceDetails?: { url?: string };
+        details?: { url?: string };
+        url?: string;
+      };
+      serviceDetails?: { url?: string };
+      details?: { url?: string };
+      url?: string;
+    };
+    const serviceUrl =
+      payload.service?.serviceDetails?.url ??
+      payload.service?.details?.url ??
+      payload.service?.url ??
+      payload.serviceDetails?.url ??
+      payload.details?.url ??
+      payload.url ??
+      null;
+    const state = payload.service?.suspended ?? payload.suspended;
+
+    return {
+      exists: true,
+      ...(state !== undefined ? { state } : {}),
+      url: serviceUrl,
+    };
+  }
+
+  async deleteTarget(
+    input: DeleteProviderTargetInput,
+  ): Promise<DeleteProviderTargetResult> {
+    const response = await fetch(
+      `${RENDER_API_URL}/services/${input.targetId}`,
+      { method: 'DELETE', headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { deleted: true };
+    }
+    await this.assertOk(response, 'Render service could not be deleted');
+
+    return { deleted: true };
   }
 
   private async getDefaultOwnerId(token: string): Promise<string> {

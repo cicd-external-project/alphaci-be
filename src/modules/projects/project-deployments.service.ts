@@ -62,6 +62,7 @@ export class ProjectDeploymentsService {
   }
 
   private liveProvidersEnabled(): boolean {
-    return false;
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.deploymentHistory?.liveProvidersEnabled ?? true;
   }
 }

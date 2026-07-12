@@ -114,4 +114,48 @@ describe('ProjectDeploymentsService', () => {
     });
     expect(provider.listDeployments).not.toHaveBeenCalled();
   });
+
+  it('reports liveProvidersEnabled true when explicitly configured', async () => {
+    configService.getOrThrow.mockReturnValue({
+      deploymentHistory: {
+        enabled: true,
+        liveProvidersEnabled: true,
+      },
+    });
+
+    await expect(
+      createService().listDeployments('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveProvidersEnabled: true,
+    });
+  });
+
+  it('reports liveProvidersEnabled false when explicitly disabled', async () => {
+    configService.getOrThrow.mockReturnValue({
+      deploymentHistory: {
+        enabled: true,
+        liveProvidersEnabled: false,
+      },
+    });
+
+    await expect(
+      createService().listDeployments('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveProvidersEnabled: false,
+    });
+  });
+
+  it('defaults liveProvidersEnabled to true when configService is absent', async () => {
+    const service = new ProjectDeploymentsService(
+      projectsRepository as never,
+      deploymentTargetsRepository as never,
+      provider as never,
+    );
+
+    await expect(
+      service.listDeployments('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveProvidersEnabled: true,
+    });
+  });
 });
