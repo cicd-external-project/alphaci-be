@@ -875,4 +875,124 @@ describe('DeploymentTargetsService', () => {
       publicUrl: 'https://demo-frontend.vercel.app',
     });
   });
+
+  describe('getDeploymentTargetLogs', () => {
+    it('returns live logs, including a genuinely empty result, when the provider call succeeds', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'vercel',
+          ownershipMode: 'byo',
+          providerConnectionId: 'connection-1',
+          providerProjectId: 'prj_1',
+          providerMetadata: {},
+        },
+      );
+      const client = { getLogs: jest.fn().mockResolvedValue([]) };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      await expect(
+        service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1'),
+      ).resolves.toEqual({ source: 'live', logs: [] });
+      expect(client.getLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 'vercel-token', targetId: 'prj_1' }),
+      );
+    });
+
+    it('passes filters and Render owner ID through to the client', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: { renderOwnerId: 'owner-1' },
+        },
+      );
+      const client = {
+        getLogs: jest.fn().mockResolvedValue([
+          { timestamp: '2026-07-12T00:00:00.000Z', message: 'hello', level: 'info' },
+        ]),
+      };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      await expect(
+        service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1', {
+          type: 'build',
+          startTime: '2026-07-11T00:00:00.000Z',
+        }),
+      ).resolves.toEqual({
+        source: 'live',
+        logs: [{ timestamp: '2026-07-12T00:00:00.000Z', message: 'hello', level: 'info' }],
+      });
+      expect(client.getLogs).toHaveBeenCalledWith({
+        token: 'render-token',
+        targetId: 'srv-1',
+        type: 'build',
+        startTime: '2026-07-11T00:00:00.000Z',
+        renderOwnerId: 'owner-1',
+      });
+    });
+
+    it('reports simulated with the client error as the reason when the provider call fails', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      const client = {
+        getLogs: jest
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+            ),
+          ),
+      };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+      expect(result.source).toBe('simulated');
+      expect(result.reason).toBe(
+        'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+      );
+      expect(result.logs.length).toBeGreaterThan(0);
+    });
+
+    it('reports simulated when the provider client does not support live logs', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      clientRegistry.getClient.mockReturnValue({});
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+      expect(result.source).toBe('simulated');
+      expect(result.reason).toContain('not supported');
+    });
+  });
 });
