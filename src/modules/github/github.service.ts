@@ -74,6 +74,26 @@ export interface GitHubRepo {
   updatedAt: string;
 }
 
+export type GithubRepoDeleteErrorCode = 'missing_scope' | 'not_found' | 'other';
+
+/**
+ * Thrown by deleteRepoForUser() (never by deleteRepo(), which stays silent
+ * for its compensating-transaction call sites). Carries a machine-readable
+ * `code` so a user-initiated delete can surface *why* it failed instead of
+ * a generic failure — in particular, distinguishing a missing `delete_repo`
+ * OAuth scope (the caller should prompt the user to reconnect GitHub) from a
+ * repo that's simply already gone.
+ */
+export class GithubRepoDeleteError extends Error {
+  constructor(
+    public readonly code: GithubRepoDeleteErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GithubRepoDeleteError';
+  }
+}
+
 /**
  * Organization every product-created repository is locked to when no
  * GITHUB_ENFORCED_ORG override is configured. This is the same default as
@@ -953,6 +973,63 @@ export class GithubService {
       );
       return false;
     }
+  }
+
+  /**
+   * User-initiated repository deletion (project delete's opt-in "also delete
+   * the GitHub repo" path). Unlike deleteRepo() above — a silent best-effort
+   * compensating action that other call sites depend on staying silent —
+   * this throws a typed GithubRepoDeleteError on any non-success response so
+   * the caller can show the user *why* it failed, most importantly
+   * distinguishing a missing `delete_repo` OAuth scope (session token was
+   * issued before that scope was added; user must reconnect GitHub) from a
+   * repo that's already gone or some other API error.
+   */
+  async deleteRepoForUser(
+    accessToken: string,
+    owner: string,
+    repo: string,
+  ): Promise<void> {
+    const response = await this.fetchWithRetry(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'cicd-workflow-product',
+        },
+      },
+    );
+
+    if (response.status === 204) {
+      return;
+    }
+
+    if (response.status === 404) {
+      throw new GithubRepoDeleteError(
+        'not_found',
+        `GitHub repository ${owner}/${repo} was not found (it may already be deleted, or this token no longer has access to it).`,
+      );
+    }
+
+    if (response.status === 403 || response.status === 401) {
+      // Curated, canned message only — never mix the raw GitHub response
+      // body into a message that flows into the API response
+      // (githubRepoDeleteError.message). Mirrors
+      // RenderEnvironmentClient.assertOk's per-status canned messages.
+      throw new GithubRepoDeleteError(
+        'missing_scope',
+        `GitHub denied deleting ${owner}/${repo} (${String(response.status)}). This usually means the session's GitHub token was issued before the delete_repo scope was granted — reconnect your GitHub account to grant repository-deletion permission.`,
+      );
+    }
+
+    const body = await response.text().catch(() => '');
+    const summary = body ? ` ${body.slice(0, 300)}` : '';
+    throw new GithubRepoDeleteError(
+      'other',
+      `GitHub repo deletion failed (${String(response.status)}):${summary}`,
+    );
   }
 
   async createBranch(

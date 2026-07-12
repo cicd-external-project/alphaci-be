@@ -69,10 +69,87 @@ function capItems(
   ];
 }
 
+function reportedFailedJobs(rawLogs?: string): string[] {
+  if (!rawLogs) return [];
+
+  return rawLogs
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^Failed GitHub Actions job:\s*/i, '').trim())
+    .filter((line) => line.length > 0)
+    .filter((line, index, lines) => lines.indexOf(line) === index)
+    .slice(0, 5);
+}
+
+function unreportedFailureMessage(
+  stage: Stage,
+  rawLogs?: string,
+): FriendlyMessage {
+  const failedJobs = reportedFailedJobs(rawLogs);
+
+  if (failedJobs.length > 0) {
+    const firstJob = failedJobs[0]!.toLowerCase();
+    const isLint = firstJob.includes('lint');
+    const isTypecheck = firstJob.includes('type') || firstJob.includes('tsc');
+    const isTest = firstJob.includes('test');
+    const isBuild = firstJob.includes('build') || firstJob.includes('package');
+    const isSecurity = firstJob.includes('sonar') || firstJob.includes('security') || firstJob.includes('audit');
+
+    return {
+      severity: 'error',
+      title: isLint
+        ? 'Lint check failed'
+        : isTypecheck
+          ? 'Type check failed'
+          : isTest
+            ? 'Tests failed'
+            : isBuild
+              ? 'Build or package step failed'
+              : isSecurity
+                ? 'Security or code-quality check failed'
+                : `GitHub job "${failedJobs[0]}" failed`,
+      detail: `GitHub reported ${failedJobs.length === 1 ? 'this failed job' : `${String(failedJobs.length)} failed jobs`} for the ${stage} stage.`,
+      hint: isLint
+        ? 'Run npm run lint locally, fix the reported violations, then re-run the workflow.'
+        : isTypecheck
+          ? 'Run npm run typecheck locally, fix the reported TypeScript errors, then re-run the workflow.'
+          : isTest
+            ? 'Run the failing test command locally, fix the first failure, then re-run the workflow.'
+            : isBuild
+              ? 'Run the project build locally, fix the first build error, then re-run the workflow.'
+              : 'Open the workflow logs, fix the first failed job listed below, then re-run the workflow.',
+      items: failedJobs.map((job) => ({ label: job })),
+    };
+  }
+
+  const fallback: Record<Stage, FriendlyMessage> = {
+    access: {
+      severity: 'error',
+      title: 'Access check failed before diagnostics were reported',
+      detail: 'GitHub confirmed the access workflow failed, but it did not provide the failing job or error output.',
+      hint: 'Open the workflow logs. Check ALPHACI_TOKEN and GitHub App access to this repository, fix the first failed step, then re-run.',
+    },
+    quality: {
+      severity: 'error',
+      title: 'Quality check failed before diagnostics were reported',
+      detail: 'GitHub confirmed the quality workflow failed, but it did not provide test, lint, typecheck, or scan output.',
+      hint: 'Open the workflow logs, fix the first failed quality step, then re-run. Updated ALPHACI workflows report the failed job here automatically.',
+    },
+    package: {
+      severity: 'error',
+      title: 'Build or package check failed before diagnostics were reported',
+      detail: 'GitHub confirmed the package workflow failed, but it did not provide the failed build step or error output.',
+      hint: 'Open the workflow logs, fix the first failed build or package step, then re-run the workflow.',
+    },
+  };
+
+  return fallback[stage];
+}
+
 export function translateResults(
   stage: Stage,
   conclusion: Conclusion,
   results: CiResults,
+  rawLogs?: string,
 ): FriendlyMessage[] {
   const messages: FriendlyMessage[] = [];
 
@@ -87,21 +164,7 @@ export function translateResults(
   }
 
   if (conclusion === 'failure' && !hasResults(results)) {
-    if (stage === 'access') {
-      messages.push({
-        severity: 'error',
-        title: 'Access gate failed',
-        detail: 'The access stage failed with no reported results.',
-        hint: 'Verify ALPHACI_TOKEN is set as a GitHub Actions secret and that the platform is reachable.',
-      });
-    } else {
-      messages.push({
-        severity: 'error',
-        title: 'Pipeline job crashed',
-        detail: 'The stage failed before producing any results.',
-        hint: 'Open the GitHub Actions run logs to diagnose the failure.',
-      });
-    }
+    messages.push(unreportedFailureMessage(stage, rawLogs));
     return messages;
   }
 

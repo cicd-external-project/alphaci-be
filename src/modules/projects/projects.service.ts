@@ -27,7 +27,11 @@ import type {
   DeploymentTargetSummary,
   EnvVarMetadata,
 } from '../env-provisioning/env-provisioning.types';
-import { GithubService } from '../github/github.service';
+import {
+  GithubRepoDeleteError,
+  GithubService,
+  type GithubRepoDeleteErrorCode,
+} from '../github/github.service';
 import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
 import {
   WorkflowHistoryRepository,
@@ -53,6 +57,7 @@ import {
 } from './project-workflow-update-requests.repository';
 import type { CreateProjectDto } from './dto/create-project.dto';
 import type { SetupProjectDto } from './dto/setup-project.dto';
+import type { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import {
   ALPHACI_REPORT_URL,
   buildStagedWorkflowBundle,
@@ -67,6 +72,8 @@ import type {
 import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import type { WorkspaceRole } from '../workspaces/workspaces.repository';
 import { NotificationEventsService } from '../notifications/notification-events.service';
 import {
   buildProjectScaffold,
@@ -162,13 +169,21 @@ export interface ProvisionedProject {
   projectTypeId?: string | null;
   workflowRecipeId?: string | null;
   projectOptions?: Record<string, unknown> | null;
-  isExample?: boolean;
 }
 
 export interface SyncProjectsResponse {
   orphaned: number;
   reachable: number;
   total: number;
+}
+
+export interface DisconnectProjectResponse {
+  ok: true;
+  githubRepoDeleted: boolean;
+  githubRepoDeleteError?: {
+    code: GithubRepoDeleteErrorCode;
+    message: string;
+  };
 }
 
 export interface ProvisionedProjectsResponse {
@@ -349,6 +364,8 @@ export class ProjectsService {
     private readonly workspacesService?: WorkspacesService,
     @Optional()
     private readonly notificationEventsService?: NotificationEventsService,
+    @Optional()
+    private readonly workspaceAccessService?: WorkspaceAccessService,
   ) {}
 
   // ─── POST /projects ────────────────────────────────────────────────────────
@@ -1436,16 +1453,189 @@ export class ProjectsService {
     };
   }
 
-  async disconnectProject(projectId: string, userId: string): Promise<void> {
+  /**
+   * DELETE /api/v1/projects/:id.
+   *
+   * Default (options.deleteGithubRepo not true): unchanged plain DB-only
+   * disconnect at the existing permissive role set (owner/admin/developer,
+   * enforced by deleteByIdAndUser's SQL) — the GitHub repository is never
+   * touched.
+   *
+   * Opt-in (options.deleteGithubRepo === true): tightens the required role
+   * to owner/admin only, re-validates options.confirmRepoName server-side
+   * against the project's actual repo_full_name (never trusting the client
+   * alone), and attempts to delete the GitHub repository. A GitHub failure
+   * (including a missing delete_repo OAuth scope) is reported back in
+   * githubRepoDeleteError but never blocks the local ALPHACI disconnect —
+   * the project row is still removed either way.
+   */
+  async disconnectProject(
+    projectId: string,
+    userId: string,
+    options?: DisconnectProjectDto,
+    githubAccessToken?: string | null,
+  ): Promise<DisconnectProjectResponse> {
+    const deleteGithubRepo = options?.deleteGithubRepo === true;
+    // Single source of truth for the tightened role set, used both as the
+    // app-layer fast-fail pre-check below AND passed down into the
+    // repository so the SQL itself enforces it (see findByIdAndUser /
+    // deleteByIdAndUser). The app-layer check alone is not sufficient: it
+    // depends on workspaceAccessService being wired in (it's `@Optional()`
+    // and no-ops via `?.` when absent), so it must not be the only gate for
+    // a destructive, external-side-effecting action.
+    const destructiveRoles: WorkspaceRole[] = ['owner', 'admin'];
+
+    try {
+      await this.assertProjectMutationAccess(
+        projectId,
+        userId,
+        deleteGithubRepo ? destructiveRoles : undefined,
+      );
+    } catch (error) {
+      if (deleteGithubRepo) {
+        await this.recordProductEvent({
+          userId,
+          projectId,
+          eventCode: 'project_github_repo_delete_rejected',
+          title: 'GitHub repository deletion rejected',
+          body: 'Insufficient workspace role for deleteGithubRepo=true (owner/admin required).',
+          metadata: { reason: 'insufficient_role' },
+        });
+      }
+      throw error;
+    }
+
+    let githubRepoDeleted = false;
+    let githubRepoDeleteError:
+      | { code: GithubRepoDeleteErrorCode; message: string }
+      | undefined;
+
+    if (deleteGithubRepo) {
+      // Role-scoped fetch: this is the SQL-level enforcement point. If the
+      // caller's workspace role isn't owner/admin, no row comes back — this
+      // fails closed independent of whether the app-layer check above ran.
+      const project = await this.projectsRepository.findByIdAndUser(
+        projectId,
+        userId,
+        destructiveRoles,
+      );
+      if (!project) {
+        await this.recordProductEvent({
+          userId,
+          projectId,
+          eventCode: 'project_github_repo_delete_rejected',
+          title: 'GitHub repository deletion rejected',
+          body: `Project '${projectId}' was not found, does not belong to the current user, or the current workspace role does not permit deleting its GitHub repository (owner/admin required).`,
+          metadata: { reason: 'not_found_or_insufficient_role' },
+        });
+        throw new NotFoundException(
+          `Project '${projectId}' not found or does not belong to the current user.`,
+        );
+      }
+
+      const repoFullName = project.repo_full_name;
+      // CRITICAL: re-validate the typed confirmation server-side against the
+      // project's actual repo_full_name. Never trust client-side gating —
+      // a modified or replayed request without this check would let a
+      // caller delete the GitHub repo without ever having typed the
+      // confirmation the UI showed them.
+      if (options?.confirmRepoName !== repoFullName) {
+        await this.recordProductEvent({
+          userId,
+          projectId,
+          eventCode: 'project_github_repo_delete_rejected',
+          title: 'GitHub repository deletion rejected',
+          body: `confirmRepoName did not match this project's repository name (${repoFullName}). The GitHub repository was not deleted.`,
+          metadata: { reason: 'confirmation_mismatch', repoFullName },
+        });
+        throw new BadRequestException(
+          "confirmRepoName does not match this project's repository name. The GitHub repository was not deleted.",
+        );
+      }
+
+      if (!githubAccessToken) {
+        githubRepoDeleteError = {
+          code: 'missing_scope',
+          message:
+            'No GitHub access token on this session — reconnect your GitHub account to grant repository-deletion permission.',
+        };
+        await this.recordProductEvent({
+          userId,
+          projectId,
+          eventCode: 'project_github_repo_delete_missing_scope',
+          title: 'GitHub repository deletion needs reconnect',
+          body: `Could not delete ${repoFullName} on GitHub: no GitHub access token on this session.`,
+          metadata: { repoFullName, code: 'missing_scope' },
+        });
+      } else {
+        const [owner, repo] = repoFullName.split('/');
+        if (!owner || !repo) {
+          githubRepoDeleteError = {
+            code: 'other',
+            message: `Could not derive an owner/repo from '${repoFullName}'.`,
+          };
+          await this.recordProductEvent({
+            userId,
+            projectId,
+            eventCode: 'project_github_repo_delete_failed',
+            title: 'GitHub repository deletion failed',
+            body: `Could not derive an owner/repo from '${repoFullName}'.`,
+            metadata: { repoFullName, code: 'other' },
+          });
+        } else {
+          try {
+            await this.githubService.deleteRepoForUser(
+              githubAccessToken,
+              owner,
+              repo,
+            );
+            githubRepoDeleted = true;
+            await this.recordProductEvent({
+              userId,
+              projectId,
+              eventCode: 'project_github_repo_deleted',
+              title: 'GitHub repository deleted',
+              body: `${repoFullName} was deleted from GitHub.`,
+              metadata: { repoFullName },
+            });
+          } catch (error) {
+            const deleteError =
+              error instanceof GithubRepoDeleteError
+                ? { code: error.code, message: error.message }
+                : { code: 'other' as const, message: (error as Error).message };
+            githubRepoDeleteError = deleteError;
+            await this.recordProductEvent({
+              userId,
+              projectId,
+              eventCode:
+                deleteError.code === 'missing_scope'
+                  ? 'project_github_repo_delete_missing_scope'
+                  : 'project_github_repo_delete_failed',
+              title: 'GitHub repository deletion failed',
+              body: `Could not delete ${repoFullName} on GitHub: ${deleteError.message}`,
+              metadata: { repoFullName, code: deleteError.code },
+            });
+          }
+        }
+      }
+    }
+
     const deleted = await this.projectsRepository.deleteByIdAndUser(
       projectId,
       userId,
+      deleteGithubRepo ? destructiveRoles : undefined,
     );
     if (!deleted) {
       throw new NotFoundException(
         `Project '${projectId}' not found or does not belong to the current user.`,
       );
     }
+
+    return {
+      ok: true,
+      githubRepoDeleted,
+      ...(githubRepoDeleteError ? { githubRepoDeleteError } : {}),
+    };
   }
 
   // ─── POST /projects/sync ───────────────────────────────────────────────────
@@ -3318,6 +3508,28 @@ export class ProjectsService {
     }
   }
 
+  /**
+   * Role gate for project-mutating actions. Defaults to the existing
+   * permissive set (owner/admin/developer) when no override is given, so
+   * plain callers are unaffected; pass a narrower `roles` list (e.g.
+   * ['owner', 'admin']) for actions with real external side effects, such as
+   * deleting the linked GitHub repository. Mirrors
+   * DeploymentTargetsService.assertProjectMutationAccess. No-ops when
+   * workspaceAccessService isn't wired in (e.g. some test doubles), matching
+   * the optional-injection pattern used throughout this service.
+   */
+  private async assertProjectMutationAccess(
+    projectId: string,
+    userId: string,
+    roles: WorkspaceRole[] = ['owner', 'admin', 'developer'],
+  ): Promise<void> {
+    await this.workspaceAccessService?.assertProjectRole(
+      projectId,
+      userId,
+      roles,
+    );
+  }
+
   private async recordProductEvent(input: {
     userId: string;
     projectId: string | null;
@@ -3774,7 +3986,6 @@ export class ProjectsService {
       projectTypeId: row.project_type_id,
       workflowRecipeId: row.workflow_recipe_id,
       projectOptions: row.project_options,
-      isExample: row.is_example ?? false,
     };
   }
 

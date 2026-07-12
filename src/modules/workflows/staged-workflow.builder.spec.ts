@@ -189,6 +189,8 @@ describe('buildStagedWorkflowBundle', () => {
       (item) => item.stage !== 'guard',
     )) {
       expect(file.yaml).toContain('ALPHACI_REPORT_URL');
+      expect(file.yaml).toContain('FAILED_JOBS');
+      expect(file.yaml).toContain('rawLogs');
       // graceful degradation: curl failure must not fail the pipeline
       expect(file.yaml).toContain(
         '|| echo "::warning::Failed to report pipeline results to ALPHACI"',

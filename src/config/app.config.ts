@@ -181,7 +181,13 @@ export const appConfig = registerAs('app', (): AppConfig => {
         'http://localhost:4000/api/v1/auth/github/callback',
       // read:org is required so the OAuth token can query the signed-in user's
       // org membership (GET /user/memberships/orgs/{org}) for internal gating.
-      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow,read:org',
+      // delete_repo is required separately from `repo` for the opt-in
+      // "delete GitHub repo too" project-delete path (GET /repos DELETE)
+      // — GitHub classic OAuth Apps gate repo deletion behind this scope even
+      // when `repo` is already granted. Sessions established before this
+      // scope was added will keep 403ing on delete until the user
+      // reconnects GitHub (see GithubService.deleteRepoForUser).
+      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow,read:org,delete_repo',
       // Accept GITHUB_APP_ID with a plain GITHUB_APP alias, and the private key
       // under either GITHUB_APP_PRIVATE_KEY or the shorter GITHUB_PRIVATE_KEY
       // used by the sibling deployment — so a key provisioned under that naming

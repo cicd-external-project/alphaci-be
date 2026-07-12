@@ -51,7 +51,6 @@ export interface CreateProvisionedProjectInput {
   projectOptions?: Record<string, unknown> | null;
   workflowSha256?: string | null;
   workspaceId?: string | null;
-  isExample?: boolean;
 }
 
 @Injectable()
@@ -156,7 +155,7 @@ export class ProjectsRepository {
         data.templateId,
         JSON.stringify(projectOptions),
         data.workspaceId ?? null,
-        data.isExample ?? false,
+        false,
       ],
     );
 
@@ -166,25 +165,6 @@ export class ProjectsRepository {
     }
 
     return row;
-  }
-
-  /**
-   * Checks whether userId already has a seeded example/demo project row.
-   * Used as the idempotency guard before seeding so this is safe to call
-   * repeatedly (e.g. on every login), not just once at signup.
-   */
-  async hasExampleProject(userId: string): Promise<boolean> {
-    const result = await this.databaseService.query(
-      `
-        SELECT 1
-        FROM projects.provisioned_projects
-        WHERE user_id = $1
-          AND is_example = true
-        LIMIT 1;
-      `,
-      [userId],
-    );
-    return (result.rowCount ?? 0) > 0;
   }
 
   async listByUser(
@@ -244,9 +224,21 @@ export class ProjectsRepository {
     return result.rows;
   }
 
+  /**
+   * `allowedRoles` is a fail-closed SQL-level gate, not just an app-layer
+   * convenience: when provided, a caller whose workspace role isn't in the
+   * list gets no row back at all (indistinguishable from "not found"),
+   * regardless of whether any optional app-layer role-checking service is
+   * wired in. Omitted (the default) preserves the original unrestricted
+   * behavior — any workspace member, any role, can read — so every existing
+   * 2-arg call site is unaffected. Callers that need a *tightened* role set
+   * for a destructive/sensitive read (e.g. before an opt-in GitHub repo
+   * delete) should pass an explicit allowedRoles list.
+   */
   async findByIdAndUser(
     id: string,
     userId: string,
+    allowedRoles?: string[],
   ): Promise<ProvisionedProjectRow | null> {
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
@@ -280,11 +272,12 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $2
+                AND ($3::text[] IS NULL OR member.role = ANY($3::text[]))
             )
           )
         LIMIT 1;
       `,
-      [id, userId],
+      [id, userId, allowedRoles ?? null],
     );
 
     return result.rows[0] ?? null;
@@ -317,8 +310,20 @@ export class ProjectsRepository {
    * CASCADE takes care of ci.project_ci_tokens automatically.
    * Scoped to userId to prevent cross-user deletions.
    * Returns true if a row was deleted, false if not found or wrong user.
+   *
+   * `allowedRoles` defaults to the original permissive set (owner/admin/
+   * developer) so every existing 2-arg call site is unaffected. This is the
+   * FINAL enforcement point for the delete itself — pass a tightened list
+   * (e.g. ['owner', 'admin']) for destructive variants (opt-in GitHub repo
+   * delete) so the restriction is enforced by the SQL statement that
+   * actually performs the delete, independent of any optional app-layer
+   * pre-check.
    */
-  async deleteByIdAndUser(id: string, userId: string): Promise<boolean> {
+  async deleteByIdAndUser(
+    id: string,
+    userId: string,
+    allowedRoles: string[] = ['owner', 'admin', 'developer'],
+  ): Promise<boolean> {
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM projects.provisioned_projects
@@ -330,12 +335,12 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role = ANY($3::text[])
             )
           )
         RETURNING id;
       `,
-      [id, userId],
+      [id, userId, allowedRoles],
     );
     return (result.rowCount ?? 0) > 0;
   }

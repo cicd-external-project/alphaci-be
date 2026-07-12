@@ -67,6 +67,7 @@ export class CiReportsService {
         body.stage,
         body.conclusion,
         body.results,
+        body.rawLogs,
       );
 
       await this.ciRunReportsRepository.upsert({
