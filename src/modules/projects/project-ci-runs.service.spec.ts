@@ -139,13 +139,57 @@ describe('ProjectCiRunsService', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('returns disabled rerun when live GitHub is off', async () => {
+  it('returns disabled rerun with an accurate reason regardless of live-sync flags', async () => {
     await expect(
       createService().rerun('project-1', 'run-1', 'user-1'),
     ).resolves.toEqual({
       enabled: false,
       runId: 'run-1',
-      reason: 'Live GitHub run sync is not enabled',
+      reason:
+        'Manual rerun requires a live GitHub Actions integration, which is not implemented yet.',
+    });
+  });
+
+  it('reports liveGithubEnabled true when explicitly configured', async () => {
+    configService.getOrThrow.mockReturnValue({
+      ciRunTracking: {
+        enabled: true,
+        liveGithubEnabled: true,
+      },
+    });
+
+    await expect(
+      createService().listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: true,
+    });
+  });
+
+  it('reports liveGithubEnabled false when explicitly disabled', async () => {
+    configService.getOrThrow.mockReturnValue({
+      ciRunTracking: {
+        enabled: true,
+        liveGithubEnabled: false,
+      },
+    });
+
+    await expect(
+      createService().listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: false,
+    });
+  });
+
+  it('defaults liveGithubEnabled to true when configService is absent', async () => {
+    const service = new ProjectCiRunsService(
+      projectsRepository as never,
+      provider as never,
+    );
+
+    await expect(
+      service.listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: true,
     });
   });
 });

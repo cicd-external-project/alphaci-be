@@ -49,9 +49,12 @@ describe('appConfig factory', () => {
     expect(config.workflowUpdatePr.enabled).toBe(false);
     expect(config.projectTargetManagement.enabled).toBe(false);
     expect(config.ciRunTracking.enabled).toBe(false);
-    expect(config.ciRunTracking.liveGithubEnabled).toBe(false);
+    // liveGithubEnabled/liveProvidersEnabled default to true (opt-out via
+    // an explicit 'false'), unlike every other flag in this block which
+    // defaults to false (opt-in via an explicit 'true').
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(true);
     expect(config.deploymentHistory.enabled).toBe(false);
-    expect(config.deploymentHistory.liveProvidersEnabled).toBe(false);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
     expect(config.driftDetection.enabled).toBe(false);
     expect(config.driftRepair.enabled).toBe(false);
     expect(config.driftRepair.liveRepairEnabled).toBe(false);
@@ -209,6 +212,16 @@ describe('appConfig factory', () => {
 
     expect(config.deploymentHistory.enabled).toBe(true);
     expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
+  });
+
+  it('disables live-sync flags only when explicitly set to false', () => {
+    process.env['CI_RUN_LIVE_GITHUB_ENABLED'] = 'false';
+    process.env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] = 'false';
+
+    const config = appConfig();
+
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(false);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(false);
   });
 
   it('enables drift detection when explicitly flagged', () => {

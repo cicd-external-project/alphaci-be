@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import {
 } from './deployment-targets.repository';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,
@@ -29,9 +31,11 @@ import { RenderCostPolicyService } from './render-cost-policy.service';
 import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import type { WorkspaceRole } from '../workspaces/workspaces.repository';
 
 @Injectable()
 export class DeploymentTargetsService {
+  private readonly logger = new Logger(DeploymentTargetsService.name);
   private readonly renderCostPolicy: RenderCostPolicyService;
 
   constructor(
@@ -319,9 +323,13 @@ export class DeploymentTargetsService {
     targetId: string,
     userId: string,
   ): Promise<{
-    mode: 'local_metadata';
+    mode: 'provider_live' | 'local_metadata';
     status: DeploymentTargetSummary['status'];
-    findings: Array<{ code: string; severity: 'warning'; message: string }>;
+    findings: Array<{
+      code: string;
+      severity: 'warning' | 'error';
+      message: string;
+    }>;
     target: DeploymentTargetSummary;
   }> {
     if (!this.projectTargetManagementEnabled()) {
@@ -336,7 +344,7 @@ export class DeploymentTargetsService {
     );
     const findings: Array<{
       code: string;
-      severity: 'warning';
+      severity: 'warning' | 'error';
       message: string;
     }> = [];
 
@@ -355,8 +363,37 @@ export class DeploymentTargetsService {
       });
     }
 
+    let mode: 'provider_live' | 'local_metadata' = 'local_metadata';
+    if (target.providerProjectId?.trim()) {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          this.tokenResolutionInputFor(target),
+        );
+        const status = await this.clientRegistry
+          .getClient(target.provider)
+          .getTargetStatus({ token, targetId: target.providerProjectId });
+        mode = 'provider_live';
+        if (!status.exists) {
+          findings.push({
+            code: 'provider_resource_missing',
+            severity: 'error',
+            message: `The ${target.provider} resource for this target no longer exists — it may have been deleted outside ALPHACI.`,
+          });
+        }
+      } catch {
+        mode = 'local_metadata';
+        findings.push({
+          code: 'provider_live_check_failed',
+          severity: 'warning',
+          message: `Could not reach ${target.provider} to verify live status — showing locally tracked metadata only.`,
+        });
+      }
+    }
+
     const response = {
-      mode: 'local_metadata' as const,
+      mode,
       status: findings.length > 0 ? 'missing' : target.status,
       findings,
       target,
@@ -371,6 +408,7 @@ export class DeploymentTargetsService {
         targetId: target.id,
         provider: target.provider,
         status: response.status,
+        mode,
         findingCount: findings.length,
       },
     });
@@ -381,13 +419,55 @@ export class DeploymentTargetsService {
     projectId: string,
     targetId: string,
     userId: string,
-  ): Promise<{ detached: true }> {
+    options?: DetachDeploymentTargetDto,
+  ): Promise<{
+    detached: true;
+    providerResourceDeleted: boolean;
+    providerDeleteError?: string;
+  }> {
     if (!this.projectTargetManagementEnabled()) {
       throw new BadRequestException('Project target management is disabled');
     }
 
-    await this.assertProjectMutationAccess(projectId, userId);
-    await this.getProjectOrThrow(projectId, userId);
+    const requiresProviderDelete = options?.deleteProviderResource === true;
+    await this.assertProjectMutationAccess(
+      projectId,
+      userId,
+      requiresProviderDelete
+        ? ['owner', 'admin']
+        : ['owner', 'admin', 'developer'],
+    );
+    // Load the target row before deleting anything locally — we need
+    // providerProjectId/provider/ownershipMode/providerConnectionId to
+    // attempt the live provider delete below, and the row disappears once
+    // deleteDeploymentTargetForUser runs.
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+
+    let providerResourceDeleted = false;
+    let providerDeleteError: string | undefined;
+    if (requiresProviderDelete && target.providerProjectId?.trim()) {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          this.tokenResolutionInputFor(target),
+        );
+        const result = await this.clientRegistry
+          .getClient(target.provider)
+          .deleteTarget({ token, targetId: target.providerProjectId });
+        providerResourceDeleted = result.deleted;
+      } catch (error) {
+        // A failed provider call must never block the local detach — the
+        // user should never be stuck unable to detach because a third-party
+        // API had a bad moment.
+        providerDeleteError = this.truncateErrorMessage(error);
+      }
+    }
+
     const deleted =
       await this.deploymentTargetsRepository.deleteDeploymentTargetForUser(
         projectId,
@@ -398,15 +478,30 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Deployment target not found');
     }
 
+    const body = providerResourceDeleted
+      ? `${target.providerProjectName} and its live ${target.provider} resource were both removed.`
+      : providerDeleteError
+        ? `${target.providerProjectName} was detached from ALPHACI; local tracking removed, but the live resource could not be deleted automatically.`
+        : 'Deployment target metadata was removed from ALPHACI.';
+
     await this.recordTargetEvent({
       userId,
       projectId,
       eventCode: 'deployment_target_detached',
       title: 'Deployment target detached',
-      body: 'Deployment target metadata was removed from ALPHACI.',
-      metadata: { targetId },
+      body,
+      metadata: {
+        targetId,
+        deleteProviderResourceRequested: requiresProviderDelete,
+        providerResourceDeleted,
+        ...(providerDeleteError ? { providerDeleteError } : {}),
+      },
     });
-    return { detached: true };
+    return {
+      detached: true,
+      providerResourceDeleted,
+      ...(providerDeleteError ? { providerDeleteError } : {}),
+    };
   }
 
   async getDeploymentTargetActions(
@@ -428,9 +523,16 @@ export class DeploymentTargetsService {
       targetId: target.id,
       provider: target.provider,
       actions: {
+        // Capability descriptor, not an outcome: mirrors what
+        // syncDeploymentTarget will *attempt* — a live provider check when a
+        // providerProjectId is tracked (outcome still depends on live
+        // reachability at call time), or a local-metadata-only check when
+        // there's nothing to look up against.
         sync: {
           enabled: true,
-          mode: 'local_metadata' as const,
+          mode: target.providerProjectId?.trim()
+            ? ('provider_live' as const)
+            : ('local_metadata' as const),
         },
         detach: {
           enabled: true,
@@ -466,12 +568,32 @@ export class DeploymentTargetsService {
   private async assertProjectMutationAccess(
     projectId: string,
     userId: string,
+    roles: WorkspaceRole[] = ['owner', 'admin', 'developer'],
   ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'owner',
-      'admin',
-      'developer',
-    ]);
+    await this.workspaceAccessService?.assertProjectRole(
+      projectId,
+      userId,
+      roles,
+    );
+  }
+
+  private truncateErrorMessage(error: unknown, maxLength = 300): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.length > maxLength
+      ? `${message.slice(0, maxLength)}...`
+      : message;
+  }
+
+  private tokenResolutionInputFor(target: DeploymentTargetSummary): {
+    ownershipMode: string;
+    providerConnectionId?: string;
+  } {
+    return {
+      ownershipMode: target.ownershipMode,
+      ...(target.providerConnectionId
+        ? { providerConnectionId: target.providerConnectionId }
+        : {}),
+    };
   }
 
   private async assertWithinQuota(
@@ -555,13 +677,24 @@ export class DeploymentTargetsService {
       message: input.title,
       metadata: input.metadata,
     });
-    await this.notificationEventsService?.record({
-      userId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      title: input.title,
-      body: input.body,
-    });
+    try {
+      await this.notificationEventsService?.record({
+        userId: input.userId,
+        projectId: input.projectId,
+        eventCode: input.eventCode,
+        title: input.title,
+        body: input.body,
+      });
+    } catch (error) {
+      // A notification failure must never surface as a failure of the
+      // mutation that already committed (e.g. detach already deleted the
+      // row) — mirrors AuditEventsService.recordProjectEvent's
+      // self-protecting try/catch, which notificationEventsService.record()
+      // itself does not have.
+      this.logger.warn(
+        `Notification event '${input.eventCode}' was not recorded: ${String(error)}`,
+      );
+    }
   }
 
   private async getOwnedTargetOrThrow(

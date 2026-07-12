@@ -86,7 +86,8 @@ export class ProjectCiRunsService {
     return {
       enabled: false,
       runId,
-      reason: 'Live GitHub run sync is not enabled',
+      reason:
+        'Manual rerun requires a live GitHub Actions integration, which is not implemented yet.',
     };
   }
 
@@ -138,7 +139,8 @@ export class ProjectCiRunsService {
   }
 
   private liveGithubEnabled(): boolean {
-    return false;
+    const config = this.configService?.getOrThrow<AppConfig>('app');
+    return config?.ciRunTracking.liveGithubEnabled ?? true;
   }
 
   private githubActionsUrl(repoFullName: string): string {

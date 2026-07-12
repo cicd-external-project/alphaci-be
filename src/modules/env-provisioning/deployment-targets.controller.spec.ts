@@ -101,6 +101,23 @@ describe('DeploymentTargetsController', () => {
       'project-1',
       'target-1',
       'user-1',
+      undefined,
+    );
+  });
+
+  it('passes the detach request body through to the service', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+    const body = { deleteProviderResource: true };
+
+    await expect(
+      controller.detach(request, 'project-1', 'target-1', body),
+    ).resolves.toEqual({ detached: true });
+    expect(service.detachDeploymentTarget).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      body,
     );
   });
 });

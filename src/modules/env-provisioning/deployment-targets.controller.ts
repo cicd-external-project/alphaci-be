@@ -14,6 +14,7 @@ import type { Request } from 'express';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { DeploymentTargetsService } from './deployment-targets.service';
 import type { UpdateDeploymentTargetMetadataInput } from './deployment-targets.repository';
 import { EnvFeatureGuard } from './env-feature.guard';
@@ -87,11 +88,13 @@ export class DeploymentTargetsController {
     @Req() req: Request,
     @Param('projectId') projectId: string,
     @Param('targetId') targetId: string,
+    @Body() body?: DetachDeploymentTargetDto,
   ) {
     return this.service.detachDeploymentTarget(
       projectId,
       targetId,
       req.session.user!.id,
+      body,
     );
   }
 }
