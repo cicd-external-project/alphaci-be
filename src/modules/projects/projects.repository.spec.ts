@@ -173,12 +173,12 @@ describe('ProjectsRepository', () => {
     expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
   });
 
-  it('finds a project by id scoped to user', async () => {
+  it('finds a project by id scoped to user, unrestricted by role when allowedRoles is omitted', async () => {
     const result = await repo.findByIdAndUser('project-1', 'user-1');
 
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining('WHERE id = $1'),
-      ['project-1', 'user-1'],
+      ['project-1', 'user-1', null],
     );
     expect(result).toEqual(fakeRow);
   });
@@ -192,6 +192,49 @@ describe('ProjectsRepository', () => {
     ];
     expect(query).toContain('orgs.workspace_members');
     expect(query).toContain('member.workspace_id');
+  });
+
+  it('scopes findByIdAndUser to an allowedRoles list when provided', async () => {
+    await repo.findByIdAndUser('project-1', 'user-1', ['owner', 'admin']);
+
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['owner', 'admin'],
+    ]);
+  });
+
+  it('deletes a project row with the default permissive role list', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
+
+    const result = await repo.deleteByIdAndUser('project-1', 'user-1');
+
+    expect(result).toBe(true);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['owner', 'admin', 'developer'],
+    ]);
+  });
+
+  it('deletes a project row scoped to a tightened allowedRoles list', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
+
+    await repo.deleteByIdAndUser('project-1', 'user-1', ['owner', 'admin']);
+
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['owner', 'admin'],
+    ]);
+  });
+
+  it('returns false when deleteByIdAndUser deletes no row', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 0 });
+
+    const result = await repo.deleteByIdAndUser('project-1', 'user-1');
+
+    expect(result).toBe(false);
   });
 
   it('marks every created project as non-example', async () => {
@@ -211,5 +254,4 @@ describe('ProjectsRepository', () => {
     expect(query).toContain('is_example');
     expect(values[values.length - 1]).toBe(false);
   });
-
 });

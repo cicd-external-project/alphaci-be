@@ -127,7 +127,9 @@ const makeProjectsService = () =>
       enabled: true,
       items: [],
     }),
-    disconnectProject: jest.fn().mockResolvedValue(undefined),
+    disconnectProject: jest
+      .fn()
+      .mockResolvedValue({ ok: true, githubRepoDeleted: false }),
     syncProjects: jest.fn().mockResolvedValue({ checked: 1 }),
   }) as unknown as ProjectsService;
 
@@ -723,13 +725,33 @@ describe('ProjectsController', () => {
     );
   });
 
-  it('disconnects project tracking and returns an ok contract', async () => {
+  it('disconnects project tracking and returns an ok contract (default, no body)', async () => {
     await expect(
       controller.disconnectProject(makeRequest(), 'project-1'),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
     expect(service.disconnectProject).toHaveBeenCalledWith(
       'project-1',
       'user-1',
+      undefined,
+      null,
+    );
+  });
+
+  it('passes the deleteGithubRepo opt-in body and session GitHub token through', async () => {
+    const body = {
+      deleteGithubRepo: true,
+      confirmRepoName: 'testuser/orders-api',
+    };
+    await controller.disconnectProject(
+      makeRequest(fakeUser, 'gh-token'),
+      'project-1',
+      body,
+    );
+    expect(service.disconnectProject).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      body,
+      'gh-token',
     );
   });
 

@@ -11,12 +11,14 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { SubscriptionGuard } from '../../common/guards/subscription.guard';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { SetupProjectDto } from './dto/setup-project.dto';
+import { DisconnectProjectDto } from './dto/disconnect-project.dto';
 import { ProjectCiRunsService } from './project-ci-runs.service';
 import { ProjectDeploymentsService } from './project-deployments.service';
 import { ProjectDriftRepairService } from './project-drift-repair.service';
@@ -354,13 +356,30 @@ export class ProjectsController {
 
   /**
    * DELETE /api/v1/projects/:id
-   * Removes a project from ALPHACI tracking. The actual GitHub repository,
-   * workflow YAML files, and GitHub Secrets are NOT touched — this only
-   * removes the ALPHACI database record and cascades to ci.project_ci_tokens.
+   * Removes a project from ALPHACI tracking. By default the GitHub
+   * repository, workflow YAML files, and GitHub Secrets are NOT touched —
+   * this only removes the ALPHACI database record and cascades to
+   * ci.project_ci_tokens.
+   *
+   * Opt-in: pass `{ deleteGithubRepo: true, confirmRepoName: <repo_full_name> }`
+   * to also delete the GitHub repository. confirmRepoName must exactly match
+   * the project's repo_full_name (e.g. "my-org/my-repo") — this is
+   * re-validated server-side and requires the owner/admin workspace role.
+   * A GitHub-side failure (including a missing delete_repo OAuth scope)
+   * never blocks the local disconnect; see the response's
+   * githubRepoDeleted / githubRepoDeleteError fields.
+   *
+   * Throttled tighter than the app default (60/60s) and auth (10/60s):
+   * this is a user-triggered, potentially irreversible deletion.
    */
   @Delete(':id')
   @UseGuards(SessionAuthGuard)
-  async disconnectProject(@Req() req: Request, @Param('id') id: string) {
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async disconnectProject(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body?: DisconnectProjectDto,
+  ) {
     const userId = req.session.user?.id ?? req.session.userId;
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -370,8 +389,13 @@ export class ProjectsController {
       throw new NotFoundException('Project ID is required');
     }
 
-    await this.projectsService.disconnectProject(id, userId);
-    return { ok: true };
+    const accessToken = req.session.githubAccessToken ?? null;
+    return this.projectsService.disconnectProject(
+      id,
+      userId,
+      body,
+      accessToken,
+    );
   }
 
   /**

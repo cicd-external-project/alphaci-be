@@ -3,7 +3,7 @@ import { createHmac, generateKeyPairSync } from 'node:crypto';
 import type { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config.js';
-import { GithubService } from './github.service.js';
+import { GithubRepoDeleteError, GithubService } from './github.service.js';
 import type { GithubInstallationsRepository } from './github-installations.repository.js';
 
 const makeRepo = (overrides = {}) => ({
@@ -643,6 +643,84 @@ describe('GithubService', () => {
       ).rejects.toThrow(
         'GitHub repo existence check failed (503): unavailable',
       );
+    });
+  });
+
+  describe('deleteRepoForUser', () => {
+    it('resolves on a 204 success response', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 204,
+        text: async () => '',
+      } as unknown as Response);
+
+      await expect(
+        service.deleteRepoForUser('gh-token', 'tone', 'orders-api'),
+      ).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/tone/orders-api',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+
+    it('throws a not_found GithubRepoDeleteError on 404', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 404,
+        text: async () => 'Not Found',
+      } as unknown as Response);
+
+      const error = await service
+        .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(GithubRepoDeleteError);
+      expect((error as GithubRepoDeleteError).code).toBe('not_found');
+    });
+
+    it.each([403, 401])(
+      'throws a missing_scope GithubRepoDeleteError on %s',
+      async (status) => {
+        fetchMock.mockResolvedValueOnce({
+          status,
+          text: async () => 'Resource not accessible by integration',
+        } as unknown as Response);
+
+        const error = await service
+          .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(GithubRepoDeleteError);
+        expect((error as GithubRepoDeleteError).code).toBe('missing_scope');
+        expect((error as GithubRepoDeleteError).message).toContain(
+          'reconnect your GitHub account',
+        );
+      },
+    );
+
+    it('throws an other GithubRepoDeleteError on unexpected statuses', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 503,
+        text: async () => 'unavailable',
+      } as unknown as Response);
+
+      const error = await service
+        .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(GithubRepoDeleteError);
+      expect((error as GithubRepoDeleteError).code).toBe('other');
+    });
+
+    it('does not swallow errors the way deleteRepo() does (never resolves false)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 403,
+        text: async () => '',
+      } as unknown as Response);
+
+      // deleteRepo() would resolve to `false` here; deleteRepoForUser() must
+      // reject so the caller can surface the failure reason to the user.
+      await expect(
+        service.deleteRepoForUser('gh-token', 'tone', 'orders-api'),
+      ).rejects.toThrow(GithubRepoDeleteError);
     });
   });
 
