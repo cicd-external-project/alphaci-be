@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
+import { fetchWithRetry } from './fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -10,6 +11,8 @@ import type {
   ProviderAccountSummary,
   ProviderDeployEvent,
   ProviderDeploymentTarget,
+  ProviderLogEntry,
+  ProviderLogsInput,
   ProviderProvisionResult,
   ProviderTargetStatus,
   ProviderTargetStatusInput,
@@ -217,7 +220,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     input: ProviderTargetStatusInput,
   ): Promise<ProviderTargetStatus> {
     const response = await fetch(
-      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`),
+      this.withInputScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`, input),
       { headers: this.headers(input.token) },
     );
     if (response.status === 404) {
@@ -257,8 +260,9 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     input: ProviderTargetStatusInput,
   ): Promise<ProviderDeployEvent[]> {
     const response = await fetch(
-      this.withScope(
+      this.withInputScope(
         `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=20`,
+        input,
       ),
       { headers: this.headers(input.token) },
     );
@@ -301,6 +305,121 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
         commitMessage: deployment.meta?.githubCommitMessage ?? null,
         trigger: deployment.source ?? null,
       }));
+  }
+
+  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+    const deploymentsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=1`,
+      input,
+    );
+    const depResponse = await fetchWithRetry(
+      deploymentsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(depResponse, 'Vercel deployments could not be loaded');
+    const depData = (await depResponse.json()) as {
+      deployments?: Array<{ uid?: string }>;
+    };
+    const latestDeploymentId = depData.deployments?.[0]?.uid;
+    if (!latestDeploymentId) {
+      return [];
+    }
+
+    if (input.type === 'build') {
+      return this.getBuildLogs(input, latestDeploymentId);
+    }
+
+    const logsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v1/projects/${encodeURIComponent(
+        input.targetId,
+      )}/deployments/${encodeURIComponent(latestDeploymentId)}/runtime-logs?limit=100`,
+      input,
+    );
+    const logsResponse = await fetchWithRetry(
+      logsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(logsResponse, 'Vercel runtime logs could not be loaded');
+    interface VercelRuntimeLogEntry {
+      timestamp: number;
+      text?: string;
+      message?: string;
+      type?: string;
+      level?: string;
+    }
+    const logsData = (await logsResponse.json()) as
+      | VercelRuntimeLogEntry[]
+      | { logs?: VercelRuntimeLogEntry[] };
+    const logsList = Array.isArray(logsData)
+      ? logsData
+      : (logsData.logs ?? []);
+
+    return logsList.map((l) => ({
+      timestamp: l.timestamp
+        ? new Date(Number(l.timestamp)).toISOString()
+        : new Date().toISOString(),
+      message: l.text || l.message || '',
+      level:
+        l.type === 'err' || l.level === 'error'
+          ? 'error'
+          : l.type === 'warning' || l.level === 'warn'
+            ? 'warn'
+            : 'info',
+    }));
+  }
+
+  private async getBuildLogs(
+    input: ProviderLogsInput,
+    deploymentId: string,
+  ): Promise<ProviderLogEntry[]> {
+    const eventsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v2/deployments/${encodeURIComponent(deploymentId)}/events?limit=100`,
+      input,
+    );
+    const response = await fetchWithRetry(
+      eventsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(response, 'Vercel build logs could not be loaded');
+    interface VercelBuildEvent {
+      created?: number;
+      type?: string;
+      payload?: { text?: string };
+    }
+    const events = (await response.json()) as VercelBuildEvent[];
+
+    return events
+      .filter((event) => typeof event.payload?.text === 'string')
+      .map((event) => ({
+        timestamp: event.created
+          ? new Date(event.created).toISOString()
+          : new Date().toISOString(),
+        message: event.payload?.text ?? '',
+        level: event.type === 'stderr' ? 'error' : 'info',
+      }));
+  }
+
+  private withInputScope(
+    url: string,
+    input: ProviderTargetStatusInput,
+  ): string {
+    const teamId = input.vercelTeamId?.trim();
+    const slug = input.vercelTeamSlug?.trim();
+    if (!teamId && !slug) {
+      return this.withScope(url);
+    }
+
+    const scopedUrl = new URL(url);
+    if (teamId) {
+      scopedUrl.searchParams.set('teamId', teamId);
+    } else if (slug) {
+      scopedUrl.searchParams.set('slug', slug);
+    }
+
+    return scopedUrl.toString();
   }
 
   private withScope(url: string): string {

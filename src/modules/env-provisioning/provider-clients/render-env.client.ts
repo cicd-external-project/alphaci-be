@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
+import { fetchWithRetry } from './fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
@@ -10,6 +11,8 @@ import type {
   ProviderAccountSummary,
   ProviderDeployEvent,
   ProviderDeploymentTarget,
+  ProviderLogEntry,
+  ProviderLogsInput,
   ProviderProvisionResult,
   ProviderTargetStatus,
   ProviderTargetStatusInput,
@@ -326,6 +329,50 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
         commitMessage: deploy.commit?.message ?? null,
         trigger: deploy.trigger ?? null,
       }));
+  }
+
+  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+    // Render's log API is keyed by workspace owner, not just the service.
+    // Throwing (rather than returning []) matters here: callers must be able
+    // to tell "this target isn't linked yet" apart from "Render genuinely
+    // has zero log lines right now" — collapsing them into the same empty
+    // result would silently misreport an unlinked target as live-but-quiet.
+    if (!input.renderOwnerId?.trim()) {
+      throw new Error(
+        'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+      );
+    }
+
+    const params = new URLSearchParams({
+      ownerId: input.renderOwnerId,
+      resource: input.targetId,
+      limit: '100',
+    });
+    if (input.type) params.set('type', input.type);
+    if (input.startTime) params.set('startTime', input.startTime);
+    if (input.endTime) params.set('endTime', input.endTime);
+
+    const response = await fetchWithRetry(
+      `${RENDER_API_URL}/logs?${params.toString()}`,
+      { headers: this.headers(input.token) },
+      'Render',
+    );
+    await this.assertOk(response, 'Render logs could not be loaded');
+    const data = (await response.json()) as {
+      logs?: Array<{ timestamp?: string; message?: string; level?: string }>;
+    };
+
+    return (data.logs ?? []).map((l) => ({
+      timestamp: l.timestamp ?? new Date().toISOString(),
+      message: l.message ?? '',
+      level:
+        l.level === 'error' ||
+        l.level === 'warn' ||
+        l.level === 'info' ||
+        l.level === 'system'
+          ? l.level
+          : 'info',
+    }));
   }
 
   private async getDefaultOwnerId(token: string): Promise<string> {

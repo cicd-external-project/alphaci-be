@@ -373,9 +373,11 @@ export class DeploymentTargetsService {
           userId,
           this.tokenResolutionInputFor(target),
         );
-        const status = await this.clientRegistry
-          .getClient(target.provider)
-          .getTargetStatus({ token, targetId: target.providerProjectId });
+        const status = await this.clientRegistry.getClient(target.provider).getTargetStatus({
+          token,
+          targetId: target.providerProjectId,
+          ...this.vercelScopeFor(target),
+        });
         mode = 'provider_live';
         if (!status.exists) {
           findings.push({
@@ -1023,6 +1025,7 @@ export class DeploymentTargetsService {
     projectId: string,
     targetId: string,
     userId: string,
+    filters?: { type?: string; startTime?: string; endTime?: string },
   ): Promise<{
     logs: DeploymentTargetLogEntry[];
     source: 'live' | 'simulated';
@@ -1037,216 +1040,68 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Deployment target not found');
     }
 
-    // Tracks why we fell through to simulated logs, so the caller never has
-    // to guess whether what it's showing is real. Only ever read if every
-    // live attempt below fails.
-    let reason = 'Live log fetching is not available for this target.';
-
-    if (target.provider === 'render') {
-      try {
-        const { token } = await this.resolveProviderToken(
-          target.provider,
-          userId,
-          {
-            ownershipMode: target.ownershipMode,
-            ...(target.providerConnectionId
-              ? { providerConnectionId: target.providerConnectionId }
-              : {}),
-          },
-        );
-        const ownerId =
-          target.providerMetadata?.['renderOwnerId'] ??
-          target.providerMetadata?.['ownerId'];
-        if (token && typeof ownerId === 'string' && ownerId.trim()) {
-          const response = await fetch(
-            `https://api.render.com/v1/logs?ownerId=${encodeURIComponent(
-              ownerId,
-            )}&resource=${encodeURIComponent(
-              target.providerProjectId,
-            )}&limit=100`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            },
-          );
-          if (response.ok) {
-            const data = (await response.json()) as {
-              logs?: Array<{
-                timestamp?: string;
-                message?: string;
-                level?: string;
-              }>;
-            };
-            return {
-              source: 'live',
-              logs: (data.logs || []).map((l) => ({
-                timestamp: l.timestamp ?? new Date().toISOString(),
-                message: l.message ?? '',
-                level:
-                  l.level === 'error' ||
-                  l.level === 'warn' ||
-                  l.level === 'info' ||
-                  l.level === 'system'
-                    ? l.level
-                    : 'info',
-              })),
-            };
-          } else {
-            reason = `Render rejected the logs request (${String(response.status)}).`;
-            this.logger.warn(
-              `Render API logs fetch failed: ${response.status}`,
-            );
-          }
-        } else {
-          reason =
-            'This Render target has no linked owner ID yet — run Sync to link it, then reopen logs.';
-        }
-      } catch (err) {
-        reason = `Could not reach Render: ${(err as Error).message}`;
-        this.logger.warn(
-          `Failed to retrieve Render logs: ${(err as Error).message}`,
-        );
-      }
-    } else if (target.provider === 'vercel') {
-      try {
-        const { token } = await this.resolveProviderToken(
-          target.provider,
-          userId,
-          {
-            ownershipMode: target.ownershipMode,
-            ...(target.providerConnectionId
-              ? { providerConnectionId: target.providerConnectionId }
-              : {}),
-          },
-        );
-        if (token) {
-          const deploymentsUrl = this.withVercelScope(
-            `https://api.vercel.com/v6/deployments?projectId=${encodeURIComponent(
-              target.providerProjectId,
-            )}&limit=1`,
-            target,
-          );
-          const depResponse = await fetch(deploymentsUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (depResponse.ok) {
-            const depData = (await depResponse.json()) as {
-              deployments?: Array<{ uid: string }>;
-            };
-            const latestDep = depData.deployments?.[0];
-            if (latestDep?.uid) {
-              const logsUrl = this.withVercelScope(
-                `https://api.vercel.com/v1/projects/${encodeURIComponent(
-                  target.providerProjectId,
-                )}/deployments/${encodeURIComponent(latestDep.uid)}/runtime-logs?limit=100`,
-                target,
-              );
-              const logsResponse = await fetch(logsUrl, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (logsResponse.ok) {
-                interface VercelLogEntry {
-                  timestamp: number;
-                  text?: string;
-                  message?: string;
-                  type?: string;
-                  level?: string;
-                }
-                const logsData = (await logsResponse.json()) as
-                  | VercelLogEntry[]
-                  | { logs?: VercelLogEntry[] };
-                const logsList = Array.isArray(logsData)
-                  ? logsData
-                  : (logsData as { logs?: VercelLogEntry[] }).logs || [];
-                return {
-                  source: 'live',
-                  logs: logsList.map((l) => ({
-                    timestamp: l.timestamp
-                      ? new Date(Number(l.timestamp)).toISOString()
-                      : new Date().toISOString(),
-                    message: l.text || l.message || '',
-                    level:
-                      l.type === 'err' || l.level === 'error'
-                        ? 'error'
-                        : l.type === 'warning' || l.level === 'warn'
-                          ? 'warn'
-                          : 'info',
-                  })),
-                };
-              } else {
-                reason = `Vercel rejected the logs request (${String(logsResponse.status)}).`;
-                this.logger.warn(
-                  `Vercel API runtime-logs fetch failed: ${logsResponse.status}`,
-                );
-              }
-            } else {
-              reason = 'Vercel has no deployments yet for this target.';
-            }
-          } else {
-            reason = `Vercel rejected the deployments request (${String(depResponse.status)}).`;
-            this.logger.warn(
-              `Vercel API deployments fetch failed: ${depResponse.status}`,
-            );
-          }
-        } else {
-          reason = 'No Vercel token is available for this target.';
-        }
-      } catch (err) {
-        reason = `Could not reach Vercel: ${(err as Error).message}`;
-        this.logger.warn(
-          `Failed to retrieve Vercel logs: ${(err as Error).message}`,
-        );
-      }
+    const client = this.clientRegistry.getClient(target.provider);
+    if (!client.getLogs) {
+      return {
+        source: 'simulated',
+        reason: `Live log fetching is not supported for ${target.provider}.`,
+        logs: this.getMockLogs(target),
+      };
     }
 
-    return {
-      source: 'simulated',
-      reason,
-      logs: this.getMockLogs(target),
-    };
+    try {
+      const { token } = await this.resolveProviderToken(
+        target.provider,
+        userId,
+        {
+          ownershipMode: target.ownershipMode,
+          ...(target.providerConnectionId
+            ? { providerConnectionId: target.providerConnectionId }
+            : {}),
+        },
+      );
+      const ownerId =
+        target.providerMetadata?.['renderOwnerId'] ??
+        target.providerMetadata?.['ownerId'];
+      const logs = await client.getLogs({
+        token,
+        targetId: target.providerProjectId,
+        ...filters,
+        ...(typeof ownerId === 'string' && ownerId.trim()
+          ? { renderOwnerId: ownerId }
+          : {}),
+        ...this.vercelScopeFor(target),
+      });
+      // An empty array here is a legitimate live result (a quiet deployment
+      // with no recent log lines) — getLogs() throws instead of returning []
+      // for cases that aren't actually "live", like a missing Render owner
+      // ID, so reaching this point at all means the fetch succeeded.
+      return { source: 'live', logs };
+    } catch (err) {
+      this.logger.warn(
+        `Failed to retrieve ${target.provider} logs: ${(err as Error).message}`,
+      );
+      return {
+        source: 'simulated',
+        reason: (err as Error).message,
+        logs: this.getMockLogs(target),
+      };
+    }
   }
 
-  private withVercelScope(
-    url: string,
+  private vercelScopeFor(
     target: DeploymentTargetSummary,
-  ): string {
-    const teamId =
-      typeof target.providerMetadata?.['vercelTeamId'] === 'string'
-        ? target.providerMetadata['vercelTeamId'].trim()
-        : '';
-    const slug =
-      typeof target.providerMetadata?.['vercelTeamSlug'] === 'string'
-        ? target.providerMetadata['vercelTeamSlug'].trim()
-        : '';
-    if (teamId || slug) {
-      const scopedUrl = new URL(url);
-      if (teamId) {
-        scopedUrl.searchParams.set('teamId', teamId);
-      } else if (slug) {
-        scopedUrl.searchParams.set('slug', slug);
-      }
-      return scopedUrl.toString();
-    }
-
-    const config = this.configService.getOrThrow<AppConfig>('app');
-    const defaultTeamId =
-      config.envProvisioning.flowciManaged.vercelTeamId?.trim() ?? '';
-    const defaultSlug =
-      config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
-    if (!defaultTeamId && !defaultSlug) {
-      return url;
-    }
-
-    const scopedUrl = new URL(url);
-    if (defaultTeamId) {
-      scopedUrl.searchParams.set('teamId', defaultTeamId);
-    } else {
-      scopedUrl.searchParams.set('slug', defaultSlug);
-    }
-
-    return scopedUrl.toString();
+  ): { vercelTeamId?: string; vercelTeamSlug?: string } {
+    const teamId = target.providerMetadata?.['vercelTeamId'];
+    const slug = target.providerMetadata?.['vercelTeamSlug'];
+    return {
+      ...(typeof teamId === 'string' && teamId.trim()
+        ? { vercelTeamId: teamId.trim() }
+        : {}),
+      ...(typeof slug === 'string' && slug.trim()
+        ? { vercelTeamSlug: slug.trim() }
+        : {}),
+    };
   }
 
   private getMockLogs(

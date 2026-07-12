@@ -92,38 +92,8 @@ export class ProjectDeploymentsService {
 
     const items: ProjectDeploymentHistoryItem[] = [];
     for (const target of targets) {
-      if (!target.providerProjectId?.trim()) continue;
-      const client = this.clientRegistry.getClient(target.provider);
-      if (!client.getDeployHistory) continue;
-
-      try {
-        const token = await this.resolveProviderToken(target, userId);
-        if (!token) continue;
-        const events = await client.getDeployHistory({
-          token,
-          targetId: target.providerProjectId,
-        });
-        for (const event of events) {
-          items.push({
-            id: event.id,
-            targetId: target.id,
-            targetName: target.providerProjectName,
-            provider: target.provider,
-            environment: target.renderEnvironmentName ?? null,
-            branch: target.branchName,
-            commitSha: event.commitSha,
-            status: this.provider.normalizeStatus(event.status),
-            createdAt: event.createdAt,
-            readyAt: event.readyAt,
-            providerUrl: this.provider.providerUrl(target),
-            consoleUrl: this.provider.consoleUrl(target),
-          });
-        }
-      } catch {
-        // This target's live history is unavailable — fall through and let
-        // other targets still contribute; only an empty overall result
-        // triggers the local-mock fallback.
-      }
+      const targetItems = await this.fetchTargetDeployments(target, userId);
+      items.push(...targetItems);
     }
 
     return items.length > 0
@@ -131,6 +101,63 @@ export class ProjectDeploymentsService {
           (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
         )
       : null;
+  }
+
+  private async fetchTargetDeployments(
+    target: DeploymentTargetSummary,
+    userId: string,
+  ): Promise<ProjectDeploymentHistoryItem[]> {
+    if (!this.clientRegistry || !target.providerProjectId?.trim()) {
+      return [];
+    }
+    const client = this.clientRegistry.getClient(target.provider);
+    if (!client.getDeployHistory) {
+      return [];
+    }
+
+    try {
+      const token = await this.resolveProviderToken(target, userId);
+      if (!token) return [];
+      const events = await client.getDeployHistory({
+        token,
+        targetId: target.providerProjectId,
+        ...this.vercelScopeFor(target),
+      });
+      return events.map((event) => ({
+        id: event.id,
+        targetId: target.id,
+        targetName: target.providerProjectName,
+        provider: target.provider,
+        environment: target.renderEnvironmentName ?? null,
+        branch: target.branchName,
+        commitSha: event.commitSha,
+        status: this.provider.normalizeStatus(event.status),
+        createdAt: event.createdAt,
+        readyAt: event.readyAt,
+        providerUrl: this.provider.providerUrl(target),
+        consoleUrl: this.provider.consoleUrl(target),
+      }));
+    } catch {
+      // This target's live history is unavailable — fall through and let
+      // other targets still contribute; only an empty overall result
+      // triggers the local-mock fallback.
+      return [];
+    }
+  }
+
+  private vercelScopeFor(
+    target: DeploymentTargetSummary,
+  ): { vercelTeamId?: string; vercelTeamSlug?: string } {
+    const teamId = target.providerMetadata['vercelTeamId'];
+    const slug = target.providerMetadata['vercelTeamSlug'];
+    return {
+      ...(typeof teamId === 'string' && teamId.trim()
+        ? { vercelTeamId: teamId.trim() }
+        : {}),
+      ...(typeof slug === 'string' && slug.trim()
+        ? { vercelTeamSlug: slug.trim() }
+        : {}),
+    };
   }
 
   private async resolveProviderToken(
