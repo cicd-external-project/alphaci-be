@@ -574,6 +574,82 @@ describe('VercelEnvClient', () => {
     ).resolves.toEqual({ exists: false });
   });
 
+  it('maps Vercel deployments into provider deploy events', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            {
+              uid: 'dpl_2',
+              readyState: 'READY',
+              source: 'git',
+              createdAt: 1752313500000,
+              ready: 1752313620000,
+              meta: {
+                githubCommitSha: 'ea73844',
+                githubCommitMessage: 'feat: add logs endpoint',
+              },
+            },
+            {
+              uid: 'dpl_1',
+              state: 'ERROR',
+              createdAt: 1752313000000,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual([
+      {
+        id: 'dpl_2',
+        status: 'READY',
+        createdAt: new Date(1752313500000).toISOString(),
+        readyAt: new Date(1752313620000).toISOString(),
+        commitSha: 'ea73844',
+        commitMessage: 'feat: add logs endpoint',
+        trigger: 'git',
+      },
+      {
+        id: 'dpl_1',
+        status: 'ERROR',
+        createdAt: new Date(1752313000000).toISOString(),
+        readyAt: null,
+        commitSha: null,
+        commitMessage: null,
+        trigger: null,
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v6/deployments?projectId=prj_1&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel',
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('returns an empty deploy history list on a 404', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it('deletes the Vercel project', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,

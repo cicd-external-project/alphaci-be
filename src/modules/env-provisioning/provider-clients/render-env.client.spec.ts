@@ -645,6 +645,81 @@ describe('RenderEnvClient', () => {
     });
   });
 
+  describe('getDeployHistory', () => {
+    it('maps Render deploy events into provider deploy events', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce(
+        jsonResponse([
+          {
+            deploy: {
+              id: 'dep-2',
+              status: 'live',
+              trigger: 'auto_deploy',
+              createdAt: '2026-07-12T11:45:00.000Z',
+              finishedAt: '2026-07-12T11:48:00.000Z',
+              commit: { id: 'ea73844', message: 'feat: add logs endpoint' },
+            },
+          },
+          {
+            deploy: {
+              id: 'dep-1',
+              status: 'build_failed',
+              createdAt: '2026-07-12T11:30:00.000Z',
+            },
+          },
+        ]),
+      );
+
+      await expect(
+        new RenderEnvClient().getDeployHistory({
+          token: 'rnd',
+          targetId: 'srv-1',
+        }),
+      ).resolves.toEqual([
+        {
+          id: 'dep-2',
+          status: 'live',
+          createdAt: '2026-07-12T11:45:00.000Z',
+          readyAt: '2026-07-12T11:48:00.000Z',
+          commitSha: 'ea73844',
+          commitMessage: 'feat: add logs endpoint',
+          trigger: 'auto_deploy',
+        },
+        {
+          id: 'dep-1',
+          status: 'build_failed',
+          createdAt: '2026-07-12T11:30:00.000Z',
+          readyAt: null,
+          commitSha: null,
+          commitMessage: null,
+          trigger: null,
+        },
+      ]);
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.render.com/v1/services/srv-1/deploys?limit=20',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer rnd',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('returns an empty list on a 404', async () => {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(
+        new RenderEnvClient().getDeployHistory({
+          token: 'rnd',
+          targetId: 'srv-missing',
+        }),
+      ).resolves.toEqual([]);
+    });
+  });
+
   describe('deleteTarget', () => {
     it('deletes the Render service', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({

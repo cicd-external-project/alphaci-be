@@ -1684,8 +1684,11 @@ export class ProjectsService {
               orphanedIds.push(row.id);
             }
           } catch (err) {
-            // If GitHub API errors (e.g. 5xx), skip — do not mark as orphaned
-            // to avoid false-positives from transient failures.
+            // repoExists throws on anything inconclusive — 401/403 (bad or
+            // revoked token, rate limit) as well as 5xx/network errors. None
+            // of those confirm the repo is gone, so skip rather than mark
+            // orphaned; a batch full of these usually means the shared
+            // session token is bad, not that every repo vanished at once.
             this.logger.warn(
               `Sync: GitHub check failed for ${row.repo_full_name}: ${String(err)}`,
             );

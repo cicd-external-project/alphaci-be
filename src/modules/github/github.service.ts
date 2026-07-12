@@ -746,8 +746,11 @@ export class GithubService {
 
   /**
    * Returns true if the repository exists and the token has access to it.
-   * Returns false on 404 (deleted or never existed) or 403/401 (no access).
-   * Throws on unexpected non-2xx/4xx statuses (5xx, network errors).
+   * Returns false only on 404 (deleted or never existed).
+   * Throws on 401/403 and other unexpected statuses (5xx, network errors) —
+   * those don't confirm the repo is gone, they mean the check itself is
+   * unreliable (bad/revoked token, secondary rate limit, transient outage).
+   * Callers must not treat a thrown error as "not found".
    */
   async repoExists(
     accessToken: string,
@@ -766,12 +769,14 @@ export class GithubService {
     );
 
     if (response.status === 200) return true;
-    if (
-      response.status === 404 ||
-      response.status === 403 ||
-      response.status === 401
-    )
-      return false;
+    // 404 alone confirms GitHub does not have this repo. 401/403 are
+    // ambiguous — they can mean the token was revoked, the repo's visibility
+    // changed, or GitHub's secondary rate limit kicked in — none of which
+    // mean the repo is actually gone. Treating them as "not found" would
+    // mass-orphan every project checked with the same bad token in one sync
+    // pass, so they fall through to the throw below instead, which callers
+    // (syncProjects) already treat as a skippable, non-conclusive check.
+    if (response.status === 404) return false;
 
     const body = await response.text();
     throw new BadGatewayException(

@@ -343,11 +343,7 @@ export class DeploymentTargetsService {
     }
 
     await this.assertProjectMutationAccess(projectId, userId);
-    const target = await this.getOwnedTargetOrThrow(
-      projectId,
-      targetId,
-      userId,
-    );
+    let target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
     const findings: Array<{
       code: string;
       severity: 'warning' | 'error';
@@ -387,6 +383,20 @@ export class DeploymentTargetsService {
             severity: 'error',
             message: `The ${target.provider} resource for this target no longer exists — it may have been deleted outside ALPHACI.`,
           });
+        }
+        // Backfill provider-specific fields (e.g. Render's ownerId) the live
+        // check discovered but this target was never given — most commonly
+        // targets registered via "use existing target" rather than created
+        // by ALPHACI. This is what lets real log fetching self-heal on the
+        // next sync instead of requiring a one-off registration-time fix.
+        const discovered = Object.entries(status.metadata ?? {}).filter(
+          ([key, value]) => Boolean(value) && !target.providerMetadata?.[key],
+        );
+        if (discovered.length > 0) {
+          target = await this.deploymentTargetsRepository.updateProviderMetadata(
+            target.id,
+            { ...target.providerMetadata, ...Object.fromEntries(discovered) },
+          );
         }
       } catch {
         mode = 'local_metadata';
@@ -1013,7 +1023,11 @@ export class DeploymentTargetsService {
     projectId: string,
     targetId: string,
     userId: string,
-  ): Promise<{ logs: DeploymentTargetLogEntry[] }> {
+  ): Promise<{
+    logs: DeploymentTargetLogEntry[];
+    source: 'live' | 'simulated';
+    reason?: string;
+  }> {
     const target =
       await this.deploymentTargetsRepository.findDeploymentTargetForUser(
         targetId,
@@ -1022,6 +1036,11 @@ export class DeploymentTargetsService {
     if (!target || target.projectId !== projectId) {
       throw new NotFoundException('Deployment target not found');
     }
+
+    // Tracks why we fell through to simulated logs, so the caller never has
+    // to guess whether what it's showing is real. Only ever read if every
+    // live attempt below fails.
+    let reason = 'Live log fetching is not available for this target.';
 
     if (target.provider === 'render') {
       try {
@@ -1061,6 +1080,7 @@ export class DeploymentTargetsService {
               }>;
             };
             return {
+              source: 'live',
               logs: (data.logs || []).map((l) => ({
                 timestamp: l.timestamp ?? new Date().toISOString(),
                 message: l.message ?? '',
@@ -1074,12 +1094,17 @@ export class DeploymentTargetsService {
               })),
             };
           } else {
+            reason = `Render rejected the logs request (${String(response.status)}).`;
             this.logger.warn(
               `Render API logs fetch failed: ${response.status}`,
             );
           }
+        } else {
+          reason =
+            'This Render target has no linked owner ID yet — run Sync to link it, then reopen logs.';
         }
       } catch (err) {
+        reason = `Could not reach Render: ${(err as Error).message}`;
         this.logger.warn(
           `Failed to retrieve Render logs: ${(err as Error).message}`,
         );
@@ -1136,6 +1161,7 @@ export class DeploymentTargetsService {
                   ? logsData
                   : (logsData as { logs?: VercelLogEntry[] }).logs || [];
                 return {
+                  source: 'live',
                   logs: logsList.map((l) => ({
                     timestamp: l.timestamp
                       ? new Date(Number(l.timestamp)).toISOString()
@@ -1150,18 +1176,25 @@ export class DeploymentTargetsService {
                   })),
                 };
               } else {
+                reason = `Vercel rejected the logs request (${String(logsResponse.status)}).`;
                 this.logger.warn(
                   `Vercel API runtime-logs fetch failed: ${logsResponse.status}`,
                 );
               }
+            } else {
+              reason = 'Vercel has no deployments yet for this target.';
             }
           } else {
+            reason = `Vercel rejected the deployments request (${String(depResponse.status)}).`;
             this.logger.warn(
               `Vercel API deployments fetch failed: ${depResponse.status}`,
             );
           }
+        } else {
+          reason = 'No Vercel token is available for this target.';
         }
       } catch (err) {
+        reason = `Could not reach Vercel: ${(err as Error).message}`;
         this.logger.warn(
           `Failed to retrieve Vercel logs: ${(err as Error).message}`,
         );
@@ -1169,6 +1202,8 @@ export class DeploymentTargetsService {
     }
 
     return {
+      source: 'simulated',
+      reason,
       logs: this.getMockLogs(target),
     };
   }

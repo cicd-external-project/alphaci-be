@@ -3,13 +3,17 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config';
 import { DeploymentTargetsRepository } from '../env-provisioning/deployment-targets.repository';
+import type { DeploymentTargetSummary } from '../env-provisioning/env-provisioning.types';
+import { EnvTokenEncryptionService } from '../env-provisioning/encryption.service';
+import { ProviderClientRegistry } from '../env-provisioning/provider-clients/provider-client.registry';
+import { ProviderConnectionsRepository } from '../env-provisioning/provider-connections.repository';
 import { LocalDeploymentHistoryProvider } from './local-deployment-history.provider';
 import type { ProjectDeploymentHistoryItem } from './project-deployments.types';
 import { ProjectsRepository } from './projects.repository';
 
 export interface ProjectDeploymentsResponse {
   enabled: boolean;
-  mode: 'local_mock';
+  mode: 'local_mock' | 'live';
   liveProvidersEnabled: boolean;
   deployments: ProjectDeploymentHistoryItem[];
 }
@@ -22,6 +26,12 @@ export class ProjectDeploymentsService {
     private readonly provider: LocalDeploymentHistoryProvider = new LocalDeploymentHistoryProvider(),
     @Optional()
     private readonly configService?: ConfigService,
+    @Optional()
+    private readonly clientRegistry?: ProviderClientRegistry,
+    @Optional()
+    private readonly providerConnectionsRepository?: ProviderConnectionsRepository,
+    @Optional()
+    private readonly encryptionService?: EnvTokenEncryptionService,
   ) {}
 
   async listDeployments(
@@ -48,12 +58,111 @@ export class ProjectDeploymentsService {
     const targets =
       await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
 
+    const liveDeployments = await this.fetchLiveDeployments(targets, userId);
+    if (liveDeployments) {
+      return {
+        enabled: true,
+        mode: 'live',
+        liveProvidersEnabled: this.liveProvidersEnabled(),
+        deployments: liveDeployments,
+      };
+    }
+
     return {
       enabled: true,
       mode: 'local_mock',
       liveProvidersEnabled: this.liveProvidersEnabled(),
       deployments: await this.provider.listDeployments(targets),
     };
+  }
+
+  /**
+   * Best-effort: fetches real deploy history from each target's provider.
+   * Returns null (falling back to the local mock feed) unless at least one
+   * target actually produced live events — a target with no resolvable
+   * token or no deploy history support is skipped, not treated as failure.
+   */
+  private async fetchLiveDeployments(
+    targets: DeploymentTargetSummary[],
+    userId: string,
+  ): Promise<ProjectDeploymentHistoryItem[] | null> {
+    if (!this.clientRegistry || targets.length === 0) {
+      return null;
+    }
+
+    const items: ProjectDeploymentHistoryItem[] = [];
+    for (const target of targets) {
+      if (!target.providerProjectId?.trim()) continue;
+      const client = this.clientRegistry.getClient(target.provider);
+      if (!client.getDeployHistory) continue;
+
+      try {
+        const token = await this.resolveProviderToken(target, userId);
+        if (!token) continue;
+        const events = await client.getDeployHistory({
+          token,
+          targetId: target.providerProjectId,
+        });
+        for (const event of events) {
+          items.push({
+            id: event.id,
+            targetId: target.id,
+            targetName: target.providerProjectName,
+            provider: target.provider,
+            environment: target.renderEnvironmentName ?? null,
+            branch: target.branchName,
+            commitSha: event.commitSha,
+            status: this.provider.normalizeStatus(event.status),
+            createdAt: event.createdAt,
+            readyAt: event.readyAt,
+            providerUrl: this.provider.providerUrl(target),
+            consoleUrl: this.provider.consoleUrl(target),
+          });
+        }
+      } catch {
+        // This target's live history is unavailable — fall through and let
+        // other targets still contribute; only an empty overall result
+        // triggers the local-mock fallback.
+      }
+    }
+
+    return items.length > 0
+      ? items.sort(
+          (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+        )
+      : null;
+  }
+
+  private async resolveProviderToken(
+    target: DeploymentTargetSummary,
+    userId: string,
+  ): Promise<string | null> {
+    if (target.ownershipMode === 'flowci_managed') {
+      const config = this.configService?.getOrThrow<AppConfig>('app');
+      const token =
+        target.provider === 'render'
+          ? config?.envProvisioning.flowciManaged.renderToken
+          : config?.envProvisioning.flowciManaged.vercelToken;
+      return token ?? null;
+    }
+
+    if (
+      !target.providerConnectionId ||
+      !this.providerConnectionsRepository ||
+      !this.encryptionService
+    ) {
+      return null;
+    }
+    const connection =
+      await this.providerConnectionsRepository.findActiveProviderConnection(
+        target.providerConnectionId,
+        userId,
+      );
+    if (!connection || connection.provider !== target.provider) {
+      return null;
+    }
+
+    return this.encryptionService.decrypt(connection.encryptedToken);
   }
 
   private enabled(): boolean {

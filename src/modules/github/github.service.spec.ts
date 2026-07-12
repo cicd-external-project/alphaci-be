@@ -619,8 +619,6 @@ describe('GithubService', () => {
     it.each([
       [200, true],
       [404, false],
-      [403, false],
-      [401, false],
     ])('maps GitHub status %s to %s', async (status, expected) => {
       fetchMock.mockResolvedValueOnce({
         status,
@@ -632,18 +630,21 @@ describe('GithubService', () => {
       ).resolves.toBe(expected);
     });
 
-    it('throws for unexpected GitHub repo lookup responses', async () => {
-      fetchMock.mockResolvedValueOnce({
-        status: 503,
-        text: async () => 'unavailable',
-      } as unknown as Response);
+    it.each([401, 403, 503])(
+      'throws on status %s instead of reporting not-found — a rejected token or rate limit is not proof the repo is gone',
+      async (status) => {
+        fetchMock.mockResolvedValueOnce({
+          status,
+          text: async () => 'denied',
+        } as unknown as Response);
 
-      await expect(
-        service.repoExists('gh-token', 'tone/orders-api'),
-      ).rejects.toThrow(
-        'GitHub repo existence check failed (503): unavailable',
-      );
-    });
+        await expect(
+          service.repoExists('gh-token', 'tone/orders-api'),
+        ).rejects.toThrow(
+          `GitHub repo existence check failed (${String(status)}): denied`,
+        );
+      },
+    );
   });
 
   describe('deleteRepoForUser', () => {

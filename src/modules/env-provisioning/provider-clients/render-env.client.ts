@@ -8,6 +8,7 @@ import type {
   DeleteProviderTargetInput,
   DeleteProviderTargetResult,
   ProviderAccountSummary,
+  ProviderDeployEvent,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
   ProviderTargetStatus,
@@ -241,10 +242,12 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       id?: string;
       name?: string;
       suspended?: string;
+      ownerId?: string;
       service?: {
         id?: string;
         name?: string;
         suspended?: string;
+        ownerId?: string;
         serviceDetails?: { url?: string };
         details?: { url?: string };
         url?: string;
@@ -262,11 +265,13 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
       payload.url ??
       null;
     const state = payload.service?.suspended ?? payload.suspended;
+    const ownerId = payload.service?.ownerId ?? payload.ownerId;
 
     return {
       exists: true,
       ...(state !== undefined ? { state } : {}),
       url: serviceUrl,
+      ...(ownerId ? { metadata: { renderOwnerId: ownerId } } : {}),
     };
   }
 
@@ -283,6 +288,44 @@ export class RenderEnvClient implements RuntimeEnvProviderClient {
     await this.assertOk(response, 'Render service could not be deleted');
 
     return { deleted: true };
+  }
+
+  async getDeployHistory(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]> {
+    const response = await fetch(
+      `${RENDER_API_URL}/services/${input.targetId}/deploys?limit=20`,
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return [];
+    }
+    await this.assertOk(response, 'Render deploy history could not be loaded');
+    const payload = (await response.json()) as Array<{
+      deploy?: {
+        id?: string;
+        status?: string;
+        trigger?: string;
+        createdAt?: string;
+        finishedAt?: string;
+        commit?: { id?: string; message?: string };
+      };
+    }>;
+
+    return payload
+      .map((item) => item.deploy)
+      .filter((deploy): deploy is NonNullable<typeof deploy> =>
+        Boolean(deploy?.id),
+      )
+      .map((deploy) => ({
+        id: deploy.id as string,
+        status: deploy.status ?? 'unknown',
+        createdAt: deploy.createdAt ?? new Date().toISOString(),
+        readyAt: deploy.finishedAt ?? null,
+        commitSha: deploy.commit?.id ?? null,
+        commitMessage: deploy.commit?.message ?? null,
+        trigger: deploy.trigger ?? null,
+      }));
   }
 
   private async getDefaultOwnerId(token: string): Promise<string> {

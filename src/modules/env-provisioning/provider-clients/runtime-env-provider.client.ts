@@ -71,6 +71,10 @@ export interface ProviderTargetStatus {
   exists: boolean;
   state?: string;
   url?: string | null;
+  // Provider-specific fields discovered during the live status check (e.g.
+  // Render's ownerId) that are worth persisting into providerMetadata so
+  // later operations (like log fetching) don't need a separate lookup.
+  metadata?: Record<string, unknown>;
 }
 
 export interface DeleteProviderTargetInput {
@@ -80,6 +84,16 @@ export interface DeleteProviderTargetInput {
 
 export interface DeleteProviderTargetResult {
   deleted: boolean;
+}
+
+export interface ProviderDeployEvent {
+  id: string;
+  status: string;
+  createdAt: string;
+  readyAt: string | null;
+  commitSha: string | null;
+  commitMessage: string | null;
+  trigger: string | null;
 }
 
 export interface RuntimeEnvProviderClient {
@@ -105,4 +119,9 @@ export interface RuntimeEnvProviderClient {
   deleteTarget(
     input: DeleteProviderTargetInput,
   ): Promise<DeleteProviderTargetResult>;
+  // Optional: not every client can list deploy/event history. Callers must
+  // check for its presence before calling.
+  getDeployHistory?(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]>;
 }
