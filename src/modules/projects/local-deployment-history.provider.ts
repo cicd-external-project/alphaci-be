@@ -74,7 +74,7 @@ export class LocalDeploymentHistoryProvider {
     return 'unknown';
   }
 
-  private providerUrl(target: DeploymentTargetSummary): string {
+  providerUrl(target: DeploymentTargetSummary): string {
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'
@@ -88,7 +88,7 @@ export class LocalDeploymentHistoryProvider {
     return `https://dashboard.render.com/web/${target.providerProjectId}`;
   }
 
-  private consoleUrl(target: DeploymentTargetSummary): string {
+  consoleUrl(target: DeploymentTargetSummary): string {
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'

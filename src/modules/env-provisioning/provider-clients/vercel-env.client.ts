@@ -8,6 +8,7 @@ import type {
   DeleteProviderTargetInput,
   DeleteProviderTargetResult,
   ProviderAccountSummary,
+  ProviderDeployEvent,
   ProviderDeploymentTarget,
   ProviderProvisionResult,
   ProviderTargetStatus,
@@ -250,6 +251,56 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     await this.assertOk(response, 'Vercel project could not be deleted');
 
     return { deleted: true };
+  }
+
+  async getDeployHistory(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]> {
+    const response = await fetch(
+      this.withScope(
+        `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=20`,
+      ),
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return [];
+    }
+    await this.assertOk(
+      response,
+      'Vercel deploy history could not be loaded',
+    );
+    const payload = (await response.json()) as {
+      deployments?: Array<{
+        uid?: string;
+        state?: string;
+        readyState?: string;
+        source?: string;
+        createdAt?: number;
+        ready?: number;
+        meta?: {
+          githubCommitSha?: string;
+          githubCommitMessage?: string;
+        };
+      }>;
+    };
+
+    return (payload.deployments ?? [])
+      .filter((deployment): deployment is typeof deployment & { uid: string } =>
+        Boolean(deployment.uid),
+      )
+      .map((deployment) => ({
+        id: deployment.uid,
+        status: deployment.readyState ?? deployment.state ?? 'unknown',
+        createdAt: deployment.createdAt
+          ? new Date(deployment.createdAt).toISOString()
+          : new Date().toISOString(),
+        readyAt: deployment.ready
+          ? new Date(deployment.ready).toISOString()
+          : null,
+        commitSha: deployment.meta?.githubCommitSha ?? null,
+        commitMessage: deployment.meta?.githubCommitMessage ?? null,
+        trigger: deployment.source ?? null,
+      }));
   }
 
   private withScope(url: string): string {
