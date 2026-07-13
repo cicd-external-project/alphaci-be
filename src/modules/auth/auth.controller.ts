@@ -106,6 +106,9 @@ export class AuthController {
       // null for ordinary users; 'admin' | 'super_admin' for platform admins.
       // The frontend uses this to gate the /admin surface.
       platformRole: await this.platformAdminsRepository.findRole(user.id),
+      // Global hierarchy role ('admin' | 'lead' | 'member'). The frontend uses
+      // this to gate create actions (systems/repositories) — only admin/lead.
+      appRole: await this.platformAdminsRepository.findAppRole(user.id),
       subscription: await Promise.resolve(
         this.subscriptionService.getForUser(user),
       ),

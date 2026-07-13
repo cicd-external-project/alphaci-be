@@ -8,11 +8,20 @@ import {
   type AppRole,
   PlatformAdminsRepository,
 } from '../admin/platform-admins.repository';
-import { AssignmentsRepository, type AssignmentRecord } from './assignments/assignments.repository';
+import {
+  AssignmentsRepository,
+  type AssignmentRecord,
+} from './assignments/assignments.repository';
 import { DeliveryProjectsRepository } from './delivery-projects/delivery-projects.repository';
-import { type ActiveMembership, GroupsRepository } from './groups/groups.repository';
+import {
+  type ActiveMembership,
+  GroupsRepository,
+} from './groups/groups.repository';
 import type { GroupRole } from './hierarchy.types';
-import { RepositoriesRepository, type RepositoryRecord } from './repositories/repositories.repository';
+import {
+  RepositoriesRepository,
+  type RepositoryRecord,
+} from './repositories/repositories.repository';
 import { SystemsRepository } from './systems/systems.repository';
 
 // `admin` = top group-membership tier ("Lead", formerly `owner`) — an
@@ -55,12 +64,90 @@ export class HierarchyAccessService {
     if (role !== null) return true;
     // A global 'admin' app_role is also a full override in the single-role
     // model, even without a platform_admins row.
-    return (await this.platformAdminsRepository.findAppRole(userId)) === 'admin';
+    return (
+      (await this.platformAdminsRepository.findAppRole(userId)) === 'admin'
+    );
   }
 
   /** The user's global hierarchy role (admin | lead | member). */
   async getAppRole(userId: string): Promise<AppRole> {
     return this.platformAdminsRepository.findAppRole(userId);
+  }
+
+  // ─── Global create capability (single-role model) ─────────────────────
+  //
+  // Product decision (2026-07-14): the capability to CREATE systems, delivery
+  // projects, and repositories is governed by the GLOBAL app_role assigned in
+  // the Admin Console — NOT the per-group membership tier. Only 'admin' and
+  // 'lead' may create; 'member' is read-/assigned-only. A user still has to be
+  // an active member of the group (so non-members keep getting a 404 that
+  // hides the group's existence), but their group role tier is irrelevant to
+  // this capability — a group 'viewer' who is a global 'lead' can create, and
+  // a group 'admin' who is a global 'member' cannot. Platform admins (and
+  // global 'admin', via isPlatformAdmin) override the membership requirement.
+
+  /**
+   * Throws unless the user is a global creator (app_role 'admin'/'lead', or a
+   * platform admin). Assumes the caller has already established the user's
+   * relationship to the target group (membership or platform-admin override).
+   */
+  private async assertGlobalCreatorRole(userId: string): Promise<void> {
+    // isPlatformAdmin already covers platform_admins rows AND global app_role
+    // 'admin', so the only remaining role to allow explicitly is 'lead'.
+    if (await this.isPlatformAdmin(userId)) return;
+    if ((await this.getAppRole(userId)) !== 'lead') {
+      throw new ForbiddenException(
+        'Only a Lead or Admin can create systems, delivery projects, or repositories',
+      );
+    }
+  }
+
+  /** Create directly under a group (systems). 404 group → 403 role. */
+  async assertCanCreateInGroup(groupId: string, userId: string): Promise<void> {
+    if (await this.isPlatformAdmin(userId)) {
+      const group = await this.groupsRepository.findGroupById(groupId);
+      if (!group) {
+        throw new NotFoundException('Group not found');
+      }
+      return;
+    }
+    await this.assertGroupMembership(groupId, userId);
+    await this.assertGlobalCreatorRole(userId);
+  }
+
+  /** Create under a system (delivery projects). 404 system → 403 role. */
+  async assertCanCreateUnderSystem(
+    systemId: string,
+    userId: string,
+  ): Promise<{ groupId: string }> {
+    const groupId = await this.systemsRepository.findGroupIdForSystem(systemId);
+    if (!groupId) {
+      throw new NotFoundException('System not found');
+    }
+    if (!(await this.isPlatformAdmin(userId))) {
+      await this.assertGroupMembership(groupId, userId);
+      await this.assertGlobalCreatorRole(userId);
+    }
+    return { groupId };
+  }
+
+  /** Create under a delivery project (repositories). 404 dp → 403 role. */
+  async assertCanCreateUnderDeliveryProject(
+    deliveryProjectId: string,
+    userId: string,
+  ): Promise<{ groupId: string }> {
+    const groupId =
+      await this.deliveryProjectsRepository.findGroupIdForDeliveryProject(
+        deliveryProjectId,
+      );
+    if (!groupId) {
+      throw new NotFoundException('Delivery project not found');
+    }
+    if (!(await this.isPlatformAdmin(userId))) {
+      await this.assertGroupMembership(groupId, userId);
+      await this.assertGlobalCreatorRole(userId);
+    }
+    return { groupId };
   }
 
   /** Any active member — used for read endpoints scoped to "active member". */
@@ -98,7 +185,10 @@ export class HierarchyAccessService {
     groupId: string,
     userId: string,
     allowedRoles: GroupRole[] = ['admin', 'delegated_lead'],
-  ): Promise<{ viaPlatformAdmin: boolean; membership: ActiveMembership | null }> {
+  ): Promise<{
+    viaPlatformAdmin: boolean;
+    membership: ActiveMembership | null;
+  }> {
     if (await this.isPlatformAdmin(userId)) {
       // Platform admin overrides scope but the group must still exist.
       const group = await this.groupsRepository.findGroupById(groupId);
@@ -107,7 +197,11 @@ export class HierarchyAccessService {
       }
       return { viaPlatformAdmin: true, membership: null };
     }
-    const membership = await this.assertGroupRole(groupId, userId, allowedRoles);
+    const membership = await this.assertGroupRole(
+      groupId,
+      userId,
+      allowedRoles,
+    );
     return { viaPlatformAdmin: false, membership };
   }
 
