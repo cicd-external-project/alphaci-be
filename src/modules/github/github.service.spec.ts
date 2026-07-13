@@ -105,6 +105,13 @@ const appConfig: AppConfig = {
   workspaces: { enabled: false },
   auditEvents: { enabled: false },
   notifications: { enabled: false },
+  hierarchy: {
+    enabled: false,
+    githubSyncMode: 'stub',
+    encryptionKeyEnvVar: 'ENV_PROVISIONING_ENCRYPTION_KEY',
+    maxSyncRetries: 5,
+    syncPollIntervalMs: 5000,
+  },
 };
 
 const makeConfigService = (config: AppConfig = appConfig) =>

@@ -1483,7 +1483,7 @@ export class ProjectsService {
     // depends on workspaceAccessService being wired in (it's `@Optional()`
     // and no-ops via `?.` when absent), so it must not be the only gate for
     // a destructive, external-side-effecting action.
-    const destructiveRoles: WorkspaceRole[] = ['owner', 'admin'];
+    const destructiveRoles: WorkspaceRole[] = ['admin', 'delegated_lead'];
 
     try {
       await this.assertProjectMutationAccess(
@@ -3513,9 +3513,9 @@ export class ProjectsService {
 
   /**
    * Role gate for project-mutating actions. Defaults to the existing
-   * permissive set (owner/admin/developer) when no override is given, so
+   * permissive set (lead/delegated_lead/member) when no override is given, so
    * plain callers are unaffected; pass a narrower `roles` list (e.g.
-   * ['owner', 'admin']) for actions with real external side effects, such as
+   * ['admin', 'delegated_lead']) for actions with real external side effects, such as
    * deleting the linked GitHub repository. Mirrors
    * DeploymentTargetsService.assertProjectMutationAccess. No-ops when
    * workspaceAccessService isn't wired in (e.g. some test doubles), matching
@@ -3524,7 +3524,7 @@ export class ProjectsService {
   private async assertProjectMutationAccess(
     projectId: string,
     userId: string,
-    roles: WorkspaceRole[] = ['owner', 'admin', 'developer'],
+    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
   ): Promise<void> {
     await this.workspaceAccessService?.assertProjectRole(
       projectId,

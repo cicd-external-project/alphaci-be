@@ -11,10 +11,12 @@ import {
   type WorkspaceRole,
 } from './workspaces.repository';
 
+// `admin` = top workspace-membership tier ("Lead", formerly `owner`) — NOT
+// the unrelated identity.platform_admins tier. See WorkspaceRole doc comment.
 const ROLE_RANK: Record<WorkspaceRole, number> = {
-  owner: 4,
-  admin: 3,
-  developer: 2,
+  admin: 4,
+  delegated_lead: 3,
+  member: 2,
   viewer: 1,
 };
 
@@ -59,7 +61,7 @@ export class WorkspaceAccessService {
     targetMembership: WorkspaceMembership,
     nextRole: WorkspaceRole,
   ): Promise<void> {
-    if (targetMembership.role !== 'owner' || nextRole === 'owner') {
+    if (targetMembership.role !== 'admin' || nextRole === 'admin') {
       return;
     }
     const ownerCount = await this.repository.countOwners(workspaceId);
@@ -72,7 +74,7 @@ export class WorkspaceAccessService {
     workspaceId: string,
     targetMembership: WorkspaceMembership,
   ): Promise<void> {
-    if (targetMembership.role !== 'owner') {
+    if (targetMembership.role !== 'admin') {
       return;
     }
     const ownerCount = await this.repository.countOwners(workspaceId);

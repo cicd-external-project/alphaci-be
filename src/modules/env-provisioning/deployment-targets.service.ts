@@ -452,8 +452,8 @@ export class DeploymentTargetsService {
       projectId,
       userId,
       requiresProviderDelete
-        ? ['owner', 'admin']
-        : ['owner', 'admin', 'developer'],
+        ? ['admin', 'delegated_lead']
+        : ['admin', 'delegated_lead', 'member'],
     );
     // Load the target row before deleting anything locally — we need
     // providerProjectId/provider/ownershipMode/providerConnectionId to
@@ -586,7 +586,7 @@ export class DeploymentTargetsService {
   private async assertProjectMutationAccess(
     projectId: string,
     userId: string,
-    roles: WorkspaceRole[] = ['owner', 'admin', 'developer'],
+    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
   ): Promise<void> {
     await this.workspaceAccessService?.assertProjectRole(
       projectId,

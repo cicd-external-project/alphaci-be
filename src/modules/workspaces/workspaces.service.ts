@@ -40,9 +40,9 @@ export class WorkspacesService {
     userId: string,
   ): Promise<WorkspaceMemberSummary[]> {
     await this.workspaceAccessService.assertWorkspaceRole(workspaceId, userId, [
-      'owner',
       'admin',
-      'developer',
+      'delegated_lead',
+      'member',
       'viewer',
     ]);
     return this.repository.listMembers(workspaceId);
@@ -54,8 +54,8 @@ export class WorkspacesService {
     input: AddWorkspaceMemberInput,
   ): Promise<WorkspaceMemberSummary> {
     await this.workspaceAccessService.assertWorkspaceRole(workspaceId, userId, [
-      'owner',
       'admin',
+      'delegated_lead',
     ]);
     const member = await this.repository.addMemberByLoginOrEmail(
       workspaceId,
@@ -75,8 +75,8 @@ export class WorkspacesService {
     role: WorkspaceRole,
   ): Promise<WorkspaceMemberSummary> {
     await this.workspaceAccessService.assertWorkspaceRole(workspaceId, userId, [
-      'owner',
       'admin',
+      'delegated_lead',
     ]);
     const targetMembership = await this.repository.findMemberById(
       workspaceId,
@@ -107,8 +107,8 @@ export class WorkspacesService {
     memberId: string,
   ): Promise<{ id: string; removed: true }> {
     await this.workspaceAccessService.assertWorkspaceRole(workspaceId, userId, [
-      'owner',
       'admin',
+      'delegated_lead',
     ]);
     const targetMembership = await this.repository.findMemberById(
       workspaceId,

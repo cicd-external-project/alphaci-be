@@ -148,6 +148,21 @@ export interface AppConfig {
     cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
+  hierarchy: {
+    enabled: boolean;
+    /**
+     * 'stub' (default everywhere) runs the full assignment state machine and
+     * outbox lifecycle against a no-op GitHub client that always reports
+     * success. 'live' switches GithubSyncService's injected
+     * GithubTeamAccessProvider to real GitHub Team API calls. See
+     * docs/HIERARCHY_IMPLEMENTATION_PLAN.md §1.7 — no environment should be
+     * flipped to 'live' without an explicit operator decision.
+     */
+    githubSyncMode: 'stub' | 'live';
+    encryptionKeyEnvVar: string;
+    maxSyncRetries: number;
+    syncPollIntervalMs: number;
+  };
 }
 
 export const appConfig = registerAs('app', (): AppConfig => {
@@ -398,5 +413,20 @@ export const appConfig = registerAs('app', (): AppConfig => {
     archivedAccountRetentionDays: Number(
       env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] ?? 30,
     ),
+    hierarchy: {
+      enabled: env['HIERARCHY_ENABLED'] !== 'false',
+      // Defaults to 'stub' regardless of what an unrecognized value is set
+      // to — an environment must explicitly set 'live' to enable real
+      // GitHub Team API calls (plan §1.7 hard requirement: default stub
+      // everywhere).
+      githubSyncMode:
+        env['HIERARCHY_GITHUB_SYNC_MODE'] === 'live' ? 'live' : 'stub',
+      encryptionKeyEnvVar:
+        env['HIERARCHY_ENCRYPTION_KEY_ENV_VAR'] ?? 'ENV_PROVISIONING_ENCRYPTION_KEY',
+      maxSyncRetries: Number(env['HIERARCHY_MAX_SYNC_RETRIES'] ?? 5),
+      syncPollIntervalMs: Number(
+        env['HIERARCHY_SYNC_POLL_INTERVAL_MS'] ?? 5000,
+      ),
+    },
   };
 });

@@ -67,7 +67,7 @@ describe('DeploymentTargetsService', () => {
     workspaceAccessService.assertProjectRole.mockResolvedValue({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'developer',
+      role: 'member',
     });
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
@@ -148,7 +148,7 @@ describe('DeploymentTargetsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
   });
 
@@ -356,7 +356,7 @@ describe('DeploymentTargetsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -444,7 +444,7 @@ describe('DeploymentTargetsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -459,18 +459,18 @@ describe('DeploymentTargetsService', () => {
     );
   });
 
-  it('requires owner/admin (not developer) role when requesting the live provider resource be deleted', async () => {
+  it('requires admin/delegated_lead (not member) role when requesting the live provider resource be deleted', async () => {
     workspaceAccessService.assertProjectRole.mockImplementation(
       (_projectId: string, _userId: string, roles: string[]) => {
-        if (!roles.includes('developer')) {
+        if (!roles.includes('member')) {
           return Promise.reject(
-            new Error('Forbidden: requires owner or admin role'),
+            new Error('Forbidden: requires admin or delegated_lead role'),
           );
         }
         return Promise.resolve({
           workspaceId: 'workspace-1',
           userId: 'user-1',
-          role: 'developer',
+          role: 'member',
         });
       },
     );
@@ -483,19 +483,19 @@ describe('DeploymentTargetsService', () => {
       service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
         deleteProviderResource: true,
       }),
-    ).rejects.toThrow('Forbidden: requires owner or admin role');
+    ).rejects.toThrow('Forbidden: requires admin or delegated_lead role');
 
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin'],
+      ['admin', 'delegated_lead'],
     );
     expect(
       deploymentTargetsRepository.deleteDeploymentTargetForUser,
     ).not.toHaveBeenCalled();
   });
 
-  it('allows deleteProviderResource for admin/owner roles and deletes the live resource', async () => {
+  it('allows deleteProviderResource for admin/delegated_lead roles and deletes the live resource', async () => {
     const renderClient = {
       deleteTarget: jest.fn().mockResolvedValue({ deleted: true }),
     };
@@ -524,7 +524,7 @@ describe('DeploymentTargetsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin'],
+      ['admin', 'delegated_lead'],
     );
     expect(renderClient.deleteTarget).toHaveBeenCalledWith({
       token: 'render-token',
