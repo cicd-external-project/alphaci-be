@@ -169,6 +169,11 @@ export interface ProvisionedProject {
   projectTypeId?: string | null;
   workflowRecipeId?: string | null;
   projectOptions?: Record<string, unknown> | null;
+  /**
+   * Owning workspace (orgs.workspaces.id). For hierarchy-managed repositories
+   * this is the GROUP id — the FE Projects screen groups the list by it.
+   */
+  workspaceId?: string | null;
 }
 
 export interface SyncProjectsResponse {
@@ -3989,6 +3994,7 @@ export class ProjectsService {
       projectTypeId: row.project_type_id,
       workflowRecipeId: row.workflow_recipe_id,
       projectOptions: row.project_options,
+      workspaceId: row.workspace_id ?? null,
     };
   }
 
