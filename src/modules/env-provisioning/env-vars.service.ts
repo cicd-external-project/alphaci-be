@@ -244,9 +244,9 @@ export class EnvVarsService {
     userId: string,
   ): Promise<void> {
     await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'owner',
       'admin',
-      'developer',
+      'delegated_lead',
+      'member',
     ]);
   }
 

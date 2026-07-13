@@ -79,6 +79,10 @@ export class CapabilitiesController {
       notifications: {
         enabled: config.notifications.enabled,
       },
+      hierarchy: {
+        enabled: config.hierarchy.enabled,
+        githubSyncMode: config.hierarchy.githubSyncMode,
+      },
     };
   }
 }

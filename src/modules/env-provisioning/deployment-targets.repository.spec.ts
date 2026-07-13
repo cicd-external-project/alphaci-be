@@ -160,7 +160,7 @@ describe('DeploymentTargetsRepository', () => {
     const queryText = String(query.mock.calls[0]?.[0] ?? '');
     expect(queryText).toContain('orgs.workspace_members');
     expect(queryText).toContain(
-      "member.role IN ('owner', 'admin', 'developer')",
+      "member.role IN ('admin', 'delegated_lead', 'member')",
     );
   });
 
@@ -190,7 +190,7 @@ describe('DeploymentTargetsRepository', () => {
     const queryText = String(query.mock.calls[0]?.[0] ?? '');
     expect(queryText).toContain('orgs.workspace_members');
     expect(queryText).toContain(
-      "member.role IN ('owner', 'admin', 'developer')",
+      "member.role IN ('admin', 'delegated_lead', 'member')",
     );
   });
 
@@ -206,7 +206,7 @@ describe('DeploymentTargetsRepository', () => {
     const queryText = String(query.mock.calls[0]?.[0] ?? '');
     expect(queryText).toContain('orgs.workspace_members');
     expect(queryText).toContain(
-      "member.role IN ('owner', 'admin', 'developer')",
+      "member.role IN ('admin', 'delegated_lead', 'member')",
     );
   });
 

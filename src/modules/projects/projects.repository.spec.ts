@@ -195,12 +195,12 @@ describe('ProjectsRepository', () => {
   });
 
   it('scopes findByIdAndUser to an allowedRoles list when provided', async () => {
-    await repo.findByIdAndUser('project-1', 'user-1', ['owner', 'admin']);
+    await repo.findByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
 
     expect(db.query).toHaveBeenCalledWith(expect.any(String), [
       'project-1',
       'user-1',
-      ['owner', 'admin'],
+      ['admin', 'delegated_lead'],
     ]);
   });
 
@@ -213,19 +213,19 @@ describe('ProjectsRepository', () => {
     expect(db.query).toHaveBeenCalledWith(expect.any(String), [
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     ]);
   });
 
   it('deletes a project row scoped to a tightened allowedRoles list', async () => {
     (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
 
-    await repo.deleteByIdAndUser('project-1', 'user-1', ['owner', 'admin']);
+    await repo.deleteByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
 
     expect(db.query).toHaveBeenCalledWith(expect.any(String), [
       'project-1',
       'user-1',
-      ['owner', 'admin'],
+      ['admin', 'delegated_lead'],
     ]);
   });
 

@@ -121,7 +121,7 @@ const makeWorkspacesService = () =>
           id: 'workspace-1',
           name: 'Personal workspace',
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     }),
@@ -2240,7 +2240,7 @@ jobs:
       disconnectService.disconnectProject('project-1', 'user-1'),
     ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
     // Default path passes allowedRoles: undefined through, which falls back
-    // to deleteByIdAndUser's own default (owner/admin/developer) — the
+    // to deleteByIdAndUser's own default (admin/delegated_lead/member) — the
     // plain-disconnect permissive role set stays unchanged.
     expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
       'project-1',
@@ -2340,12 +2340,12 @@ jobs:
       expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({ eventCode: 'project_github_repo_deleted' }),
@@ -2406,7 +2406,7 @@ jobs:
       expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
       expect(projectsRepository.findByIdAndUser).not.toHaveBeenCalled();
@@ -2444,7 +2444,7 @@ jobs:
       expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
       expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
@@ -2496,7 +2496,7 @@ jobs:
       expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2523,7 +2523,7 @@ jobs:
       expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
     });
 
@@ -2553,7 +2553,7 @@ jobs:
       expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
         'project-1',
         'user-1',
-        ['owner', 'admin'],
+        ['admin', 'delegated_lead'],
       );
       expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
         expect.objectContaining({

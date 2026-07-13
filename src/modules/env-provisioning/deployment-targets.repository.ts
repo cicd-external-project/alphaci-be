@@ -218,7 +218,7 @@ export class DeploymentTargetsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $3
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
         RETURNING target.*;
@@ -267,7 +267,7 @@ export class DeploymentTargetsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $3
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
         RETURNING target.id;
@@ -295,7 +295,7 @@ export class DeploymentTargetsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = p.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
         LIMIT 1;

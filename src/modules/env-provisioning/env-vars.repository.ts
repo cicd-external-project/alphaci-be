@@ -79,7 +79,7 @@ export class EnvVarsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer', 'viewer')
+                AND member.role IN ('admin', 'delegated_lead', 'member', 'viewer')
             )
           )
           AND metadata.removed_at IS NULL
@@ -188,7 +188,7 @@ export class EnvVarsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
           AND metadata.removed_at IS NULL
@@ -222,7 +222,7 @@ export class EnvVarsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = project.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
         RETURNING metadata.*;

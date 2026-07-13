@@ -105,7 +105,7 @@ describe('EnvVarsService', () => {
             assertProjectRole: jest.fn().mockResolvedValue({
               workspaceId: 'workspace-1',
               userId: 'user-1',
-              role: 'developer',
+              role: 'member',
             }),
             ...overrides.workspaceAccessService,
           },
@@ -203,7 +203,7 @@ describe('EnvVarsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -336,7 +336,7 @@ describe('EnvVarsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({

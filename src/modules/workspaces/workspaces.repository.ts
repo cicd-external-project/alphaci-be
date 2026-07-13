@@ -2,7 +2,14 @@ import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 
-export type WorkspaceRole = 'owner' | 'admin' | 'developer' | 'viewer';
+/**
+ * `admin` here is the TOP workspace/group membership tier (product label
+ * "Lead", formerly stored as `owner`) — see ROLE_VALUE_RENAME_PLAN.md §2.1.
+ * This is UNRELATED to `identity.platform_admins.role` (`'admin' |
+ * 'super_admin'`), the separate platform-wide admin tier. Same literal
+ * string, two different systems — do not conflate them.
+ */
+export type WorkspaceRole = 'admin' | 'delegated_lead' | 'member' | 'viewer';
 
 export interface WorkspaceSummary {
   id: string;
@@ -79,7 +86,7 @@ export class WorkspacesRepository {
         VALUES ($1, 'Personal workspace', 'personal')
         ON CONFLICT (owner_user_id) WHERE kind = 'personal'
         DO UPDATE SET updated_at = orgs.workspaces.updated_at
-        RETURNING id, name, kind, 'owner'::text AS role;
+        RETURNING id, name, kind, 'admin'::text AS role;
       `,
       [userId],
     );
@@ -91,7 +98,7 @@ export class WorkspacesRepository {
     await this.databaseService.query(
       `
         INSERT INTO orgs.workspace_members (workspace_id, user_id, role)
-        VALUES ($1, $2, 'owner')
+        VALUES ($1, $2, 'admin')
         ON CONFLICT (workspace_id, user_id) DO NOTHING;
       `,
       [workspace.id, userId],
@@ -119,9 +126,9 @@ export class WorkspacesRepository {
         WHERE member.workspace_id = $1
         ORDER BY
           CASE member.role
-            WHEN 'owner' THEN 1
-            WHEN 'admin' THEN 2
-            WHEN 'developer' THEN 3
+            WHEN 'admin' THEN 1
+            WHEN 'delegated_lead' THEN 2
+            WHEN 'member' THEN 3
             ELSE 4
           END,
           lower(user_profile.login) ASC;
@@ -203,7 +210,7 @@ export class WorkspacesRepository {
         SELECT count(*)::int AS count
         FROM orgs.workspace_members
         WHERE workspace_id = $1
-          AND role = 'owner';
+          AND role = 'admin';
       `,
       [workspaceId],
     );

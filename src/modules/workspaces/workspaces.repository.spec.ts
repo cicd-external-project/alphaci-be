@@ -20,7 +20,7 @@ describe('WorkspacesRepository', () => {
           id: 'workspace-1',
           name: 'Personal workspace',
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     });
@@ -30,7 +30,7 @@ describe('WorkspacesRepository', () => {
         id: 'workspace-1',
         name: 'Personal workspace',
         kind: 'personal',
-        role: 'owner',
+        role: 'admin',
       },
     ]);
     expect(query).toHaveBeenCalledWith(
@@ -47,7 +47,7 @@ describe('WorkspacesRepository', () => {
             id: 'workspace-1',
             name: 'Personal workspace',
             kind: 'personal',
-            role: 'owner',
+            role: 'admin',
           },
         ],
       })
@@ -58,7 +58,7 @@ describe('WorkspacesRepository', () => {
         id: 'workspace-1',
         name: 'Personal workspace',
         kind: 'personal',
-        role: 'owner',
+        role: 'admin',
       },
     );
     expect(query).toHaveBeenNthCalledWith(
@@ -88,7 +88,7 @@ describe('WorkspacesRepository', () => {
           id: 'member-1',
           workspace_id: 'workspace-1',
           user_id: 'user-1',
-          role: 'owner',
+          role: 'admin',
           created_at: new Date('2026-06-15T00:00:00.000Z'),
           login: 'tone',
           display_name: 'Tone',
@@ -103,7 +103,7 @@ describe('WorkspacesRepository', () => {
         id: 'member-1',
         workspaceId: 'workspace-1',
         userId: 'user-1',
-        role: 'owner',
+        role: 'admin',
         login: 'tone',
         name: 'Tone',
         email: 'tone@example.test',
@@ -123,7 +123,7 @@ describe('WorkspacesRepository', () => {
         {
           workspace_id: 'workspace-1',
           user_id: 'user-1',
-          role: 'developer',
+          role: 'member',
         },
       ],
     });
@@ -133,7 +133,7 @@ describe('WorkspacesRepository', () => {
     ).resolves.toEqual({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'developer',
+      role: 'member',
     });
   });
 
@@ -169,7 +169,7 @@ describe('WorkspacesRepository', () => {
             id: 'member-2',
             workspace_id: 'workspace-1',
             user_id: 'user-2',
-            role: 'developer',
+            role: 'member',
             created_at: new Date('2026-06-15T00:00:00.000Z'),
             login: 'dev',
             display_name: 'Dev User',
@@ -180,11 +180,11 @@ describe('WorkspacesRepository', () => {
       });
 
     await expect(
-      repository.addMemberByLoginOrEmail('workspace-1', 'dev', 'developer'),
+      repository.addMemberByLoginOrEmail('workspace-1', 'dev', 'member'),
     ).resolves.toMatchObject({
       workspaceId: 'workspace-1',
       userId: 'user-2',
-      role: 'developer',
+      role: 'member',
       login: 'dev',
     });
     expect(query.mock.calls[0][0]).toContain('lower(login)');
@@ -208,7 +208,7 @@ describe('WorkspacesRepository', () => {
             id: 'member-2',
             workspace_id: 'workspace-1',
             user_id: 'user-2',
-            role: 'admin',
+            role: 'delegated_lead',
             created_at: '2026-06-15T00:00:00.000Z',
             login: 'dev',
             display_name: null,
@@ -219,10 +219,10 @@ describe('WorkspacesRepository', () => {
       });
 
     await expect(
-      repository.updateMemberRole('workspace-1', 'member-2', 'admin'),
+      repository.updateMemberRole('workspace-1', 'member-2', 'delegated_lead'),
     ).resolves.toMatchObject({
       id: 'member-2',
-      role: 'admin',
+      role: 'delegated_lead',
       name: 'dev',
     });
   });

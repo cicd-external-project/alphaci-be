@@ -311,10 +311,10 @@ export class ProjectsRepository {
    * Scoped to userId to prevent cross-user deletions.
    * Returns true if a row was deleted, false if not found or wrong user.
    *
-   * `allowedRoles` defaults to the original permissive set (owner/admin/
-   * developer) so every existing 2-arg call site is unaffected. This is the
+   * `allowedRoles` defaults to the original permissive set (lead/delegated_lead/
+   * member) so every existing 2-arg call site is unaffected. This is the
    * FINAL enforcement point for the delete itself — pass a tightened list
-   * (e.g. ['owner', 'admin']) for destructive variants (opt-in GitHub repo
+   * (e.g. ['admin', 'delegated_lead']) for destructive variants (opt-in GitHub repo
    * delete) so the restriction is enforced by the SQL statement that
    * actually performs the delete, independent of any optional app-layer
    * pre-check.
@@ -322,7 +322,7 @@ export class ProjectsRepository {
   async deleteByIdAndUser(
     id: string,
     userId: string,
-    allowedRoles: string[] = ['owner', 'admin', 'developer'],
+    allowedRoles: string[] = ['admin', 'delegated_lead', 'member'],
   ): Promise<boolean> {
     const result = await this.databaseService.query<{ id: string }>(
       `
@@ -366,7 +366,7 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
@@ -397,7 +397,7 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])

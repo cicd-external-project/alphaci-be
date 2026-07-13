@@ -58,6 +58,10 @@ const makeConfig = (
       notifications: {
         enabled,
       },
+      hierarchy: {
+        enabled,
+        githubSyncMode: 'stub',
+      },
     }),
   }) as unknown as ConfigService;
 
@@ -123,6 +127,10 @@ describe('CapabilitiesController', () => {
       },
       notifications: {
         enabled: true,
+      },
+      hierarchy: {
+        enabled: true,
+        githubSyncMode: 'stub',
       },
     });
   });
@@ -207,6 +215,10 @@ describe('CapabilitiesController', () => {
       notifications: {
         enabled: false,
       },
+      hierarchy: {
+        enabled: false,
+        githubSyncMode: 'stub',
+      },
     });
   });
 
@@ -231,6 +243,7 @@ describe('CapabilitiesController', () => {
         workspaces: { enabled: true },
         auditEvents: { enabled: true },
         notifications: { enabled: true },
+        hierarchy: { enabled: true, githubSyncMode: 'stub' },
       }),
     };
     const module = await Test.createTestingModule({
