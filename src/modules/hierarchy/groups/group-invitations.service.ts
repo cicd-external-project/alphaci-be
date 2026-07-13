@@ -26,14 +26,23 @@ export class GroupInvitationsService {
     actorUserId: string,
     input: { inviteeUserId: string; role: InvitableRole },
   ): Promise<GroupInvitationRecord> {
-    await this.accessService.assertGroupRole(groupId, actorUserId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    await this.accessService.assertGroupManagerOrPlatformAdmin(
+      groupId,
+      actorUserId,
+    );
 
     // Approved internal user directory gate (source plan §4 step 4; plan §6
     // open question #2 treats is_internal=true as that directory pending
     // user confirmation).
+    const invitee = await this.groupsRepository.findInternalUserById(
+      input.inviteeUserId,
+    );
+    if (!invitee) {
+      throw new NotFoundException(
+        'User not found in the approved internal directory',
+      );
+    }
+
     const existingMembership = await this.groupsRepository.findActiveMembership(
       groupId,
       input.inviteeUserId,
@@ -71,10 +80,7 @@ export class GroupInvitationsService {
     groupId: string,
     userId: string,
   ): Promise<GroupInvitationRecord[]> {
-    await this.accessService.assertGroupRole(groupId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId);
     return this.groupsRepository.listInvitations(groupId);
   }
 
@@ -145,10 +151,7 @@ export class GroupInvitationsService {
     userId: string,
     invitationId: string,
   ): Promise<GroupInvitationRecord> {
-    await this.accessService.assertGroupRole(groupId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId);
     const invitation =
       await this.groupsRepository.findInvitationById(invitationId);
     if (!invitation || invitation.groupId !== groupId) {

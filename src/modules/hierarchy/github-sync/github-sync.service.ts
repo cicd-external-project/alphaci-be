@@ -144,6 +144,7 @@ export class GithubSyncService {
         repoFullName: repository.repoFullName,
         githubLogin: user.login,
         expectedPermission: 'write',
+        expectedTeamSlug: team.githubTeamSlug,
         actingUserId,
       });
 
@@ -232,6 +233,7 @@ export class GithubSyncService {
         repoFullName: repository.repoFullName,
         githubLogin: user.login,
         expectedPermission: 'write',
+        expectedTeamSlug: teamSlug,
         actingUserId,
       });
 
