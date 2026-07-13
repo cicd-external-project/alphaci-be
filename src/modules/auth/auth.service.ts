@@ -523,16 +523,89 @@ export class AuthService {
       return { kind: 'archived', profile, accessToken, isInternal };
     }
 
+    // Seed the GLOBAL hierarchy role (identity.app_users.app_role) from the
+    // user's ownership of the enforced org (Alpha-Explora): an org OWNER becomes
+    // a system 'admin', everyone else defaults to 'member'. Only computed for
+    // brand-new users — a returning user's role is owned by the Admin Console,
+    // so we skip the extra GitHub call and pass null (the repo leaves app_role
+    // untouched on the UPDATE path).
+    const seedAppRole = existing
+      ? null
+      : await this.resolveSeedAppRoleFromOrgOwnership(accessToken);
+
     // Active or new — upsertGitHubUser handles both paths:
-    // - no existing row: INSERT (new user).
-    // - existing active row: UPDATE last_login_at + profile fields.
+    // - no existing row: INSERT (new user, seeded app_role applied).
+    // - existing active row: UPDATE last_login_at + profile fields (app_role kept).
     const user = await this.usersRepository.upsertGitHubUser({
       ...profile,
       isInternal,
+      seedAppRole,
     });
 
     const kind = existing ? 'active' : 'new';
     return { kind, user, accessToken };
+  }
+
+  /**
+   * Determines the first-login GLOBAL role from the user's membership role in
+   * the enforced org (Alpha-Explora), via GET /user/memberships/orgs/{org}.
+   * GitHub reports an ORG OWNER as role 'admin' and any other member as 'member'
+   * (this `role` is distinct from the `state` field the internal-org gate reads).
+   *
+   *   org owner (role 'admin')  → 'admin'  (full system access)
+   *   anything else / unverifiable → 'member'  (fail-safe default)
+   *
+   * Fail-safe on purpose: a missing read:org scope, an OAuth-App-restricted org,
+   * a non-owner, or any network/HTTP error all resolve to 'member' so we never
+   * grant admin without a positive confirmation of ownership.
+   */
+  private async resolveSeedAppRoleFromOrgOwnership(
+    accessToken: string,
+  ): Promise<'admin' | 'member'> {
+    const org = this.config.github.enforcedOrg?.trim();
+    if (!org) {
+      return 'member';
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.github.com/user/memberships/orgs/${encodeURIComponent(org)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
+        },
+      );
+
+      if (!response.ok) {
+        this.logger.log(
+          `Org ownership check for "${org}" returned ${String(response.status)}; seeding role 'member'.`,
+        );
+        return 'member';
+      }
+
+      const payload = (await response.json()) as {
+        state?: string;
+        role?: string;
+      };
+      // Only an ACTIVE owner is elevated. A 'pending' invite or a plain member
+      // is a 'member' at seed time; ownership granted later can be reflected via
+      // the Admin Console (the seed is first-login only, by design).
+      if (payload.state === 'active' && payload.role === 'admin') {
+        this.logger.log(
+          `New user is an owner of "${org}"; seeding global role 'admin'.`,
+        );
+        return 'admin';
+      }
+      return 'member';
+    } catch (err) {
+      this.logger.warn(
+        `Org ownership check for "${org}" failed: ${err instanceof Error ? err.message : String(err)}; seeding role 'member'.`,
+      );
+      return 'member';
+    }
   }
 
   /**

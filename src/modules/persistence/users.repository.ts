@@ -20,6 +20,14 @@ interface UpsertGitHubUserInput {
    *    internal status from being clobbered when they use the sold platform.
    */
   isInternal: boolean | null;
+  /**
+   * Global hierarchy role to SEED on first login ONLY. It is written into the
+   * INSERT VALUES for a brand-new row (Alpha-Explora org owners → 'admin',
+   * everyone else → 'member') but is deliberately absent from the ON CONFLICT
+   * DO UPDATE clause, so a returning user keeps whatever the Admin Console has
+   * since assigned. `null`/undefined falls back to the column default ('member').
+   */
+  seedAppRole?: 'admin' | 'lead' | 'member' | null;
 }
 
 interface UpsertGoogleUserInput {
@@ -81,9 +89,10 @@ export class UsersRepository {
         provider,
         is_dummy,
         is_internal,
+        app_role,
         last_login_at
       )
-      VALUES ($1, (SELECT safe_login FROM candidate), $3, $4, $5, 'github', false, COALESCE($6, false), NOW())
+      VALUES ($1, (SELECT safe_login FROM candidate), $3, $4, $5, 'github', false, COALESCE($6, false), COALESCE($7, 'member'), NOW())
       ON CONFLICT (github_user_id)
       DO UPDATE SET
         login = EXCLUDED.login,
@@ -95,6 +104,9 @@ export class UsersRepository {
         -- $6 null (unverifiable/sold platform) preserves the existing flag;
         -- a boolean (internal platform) authoritatively overwrites it.
         is_internal = COALESCE($6::boolean, app_users.is_internal),
+        -- app_role is INTENTIONALLY not updated here: the org-ownership seed
+        -- ($7) applies only to the INSERT above (first login), so a returning
+        -- user keeps whatever the Admin Console has since assigned.
         last_login_at = NOW(),
         updated_at = NOW()
       RETURNING id, login, display_name, email, avatar_url, onboarding_completed_at, is_internal;
@@ -107,6 +119,7 @@ export class UsersRepository {
       input.email ?? null,
       input.avatarUrl ?? null,
       input.isInternal,
+      input.seedAppRole ?? null,
     ]);
 
     const row = result.rows[0];
