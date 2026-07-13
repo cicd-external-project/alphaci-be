@@ -14,6 +14,7 @@ import {
   GroupsRepository,
   type GroupMemberRecord,
   type GroupRecord,
+  type InternalUserDirectoryEntry,
 } from './groups.repository';
 import type { UpdateGroupDto } from '../dto/update-group.dto';
 import type { UpdateMemberRoleDto } from '../dto/update-member-role.dto';
@@ -51,10 +52,20 @@ export class GroupsService {
   }
 
   async getMyGroups(userId: string): Promise<GroupRecord[]> {
+    if (await this.accessService.isPlatformAdmin(userId)) {
+      return this.groupsRepository.listAllGroups();
+    }
     return this.groupsRepository.listForUser(userId);
   }
 
   async getGroup(groupId: string, userId: string): Promise<GroupRecord> {
+    if (await this.accessService.isPlatformAdmin(userId)) {
+      const group = await this.groupsRepository.findGroupById(groupId);
+      if (!group) {
+        throw new NotFoundException('Group not found');
+      }
+      return { ...group, role: 'admin' };
+    }
     const membership = await this.accessService.assertGroupMembership(
       groupId,
       userId,
@@ -71,7 +82,7 @@ export class GroupsService {
     userId: string,
     dto: UpdateGroupDto,
   ): Promise<GroupRecord> {
-    await this.accessService.assertGroupRole(groupId, userId, [
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
       'admin',
       'delegated_lead',
     ]);
@@ -168,29 +179,14 @@ export class GroupsService {
       );
     }
 
-    const previousRole = target.role;
-    await this.groupsRepository.updateMemberRole(
+    const transfer = await this.groupsRepository.transferLeadGuarded(
       groupId,
-      target.memberId,
-      'admin',
+      newManagerUserId,
     );
-
-    // Demote every other current active owner to admin so the Group never
-    // ends up with more than one manager as a side effect of a transfer, and
-    // never zero (the promoted member above guarantees at least one).
-    const members = await this.groupsRepository.listMembers(groupId);
-    for (const member of members) {
-      if (
-        member.role === 'admin' &&
-        member.memberStatus === 'active' &&
-        member.userId !== newManagerUserId
-      ) {
-        await this.groupsRepository.updateMemberRole(
-          groupId,
-          member.id,
-          'delegated_lead',
-        );
-      }
+    if (!transfer) {
+      throw new BadRequestException(
+        'The new manager must already be an active member of the Group',
+      );
     }
 
     await this.auditEventsService.recordProjectEvent({
@@ -201,7 +197,7 @@ export class GroupsService {
       metadata: {
         groupId,
         newManagerUserId,
-        previousRole,
+        previousRole: transfer.previousRole,
       },
     });
 
@@ -212,8 +208,26 @@ export class GroupsService {
     groupId: string,
     userId: string,
   ): Promise<GroupMemberRecord[]> {
-    await this.accessService.assertGroupMembership(groupId, userId);
+    if (!(await this.accessService.isPlatformAdmin(userId))) {
+      await this.accessService.assertGroupMembership(groupId, userId);
+    }
     return this.groupsRepository.listMembers(groupId);
+  }
+
+  async searchEligibleInternalUsers(
+    groupId: string,
+    userId: string,
+    search: string,
+  ): Promise<InternalUserDirectoryEntry[]> {
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId);
+    const normalized = search.trim();
+    if (normalized.length < 2) {
+      return [];
+    }
+    return this.groupsRepository.searchEligibleInternalUsers(
+      groupId,
+      normalized,
+    );
   }
 
   async updateMemberRole(
@@ -222,7 +236,7 @@ export class GroupsService {
     memberId: string,
     dto: UpdateMemberRoleDto,
   ): Promise<GroupMemberRecord> {
-    await this.accessService.assertGroupRole(groupId, userId, [
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
       'admin',
       'delegated_lead',
     ]);
@@ -287,7 +301,7 @@ export class GroupsService {
     memberId: string,
     reason?: string,
   ): Promise<GroupMemberRecord> {
-    await this.accessService.assertGroupRole(groupId, userId, [
+    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
       'admin',
       'delegated_lead',
     ]);

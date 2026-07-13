@@ -123,6 +123,19 @@ export class GroupsController {
     return this.groupsService.listMembers(groupId, this.requireUserId(req));
   }
 
+  @Get(':groupId/eligible-users')
+  searchEligibleUsers(
+    @Req() req: Request,
+    @Param('groupId') groupId: string,
+    @Query('search') search = '',
+  ) {
+    return this.groupsService.searchEligibleInternalUsers(
+      groupId,
+      this.requireUserId(req),
+      search,
+    );
+  }
+
   @Patch(':groupId/members/:memberId')
   updateMemberRole(
     @Req() req: Request,

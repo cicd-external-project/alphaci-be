@@ -2,8 +2,11 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
+import type { AppConfig } from '../../../config/app.config';
 import { AuditEventsService } from '../../audit/audit-events.service';
 import { GroupsRepository } from '../groups/groups.repository';
 import { GithubAccessSyncRepository } from '../github-sync/github-access-sync.repository';
@@ -25,6 +28,7 @@ export class AssignmentsService {
     private readonly groupsRepository: GroupsRepository,
     private readonly accessService: HierarchyAccessService,
     private readonly auditEventsService: AuditEventsService,
+    private readonly configService: ConfigService,
   ) {}
 
   /** Transition #1 (plan §1.6): verifies group membership, creates the pending row, enqueues the grant job. */
@@ -33,6 +37,12 @@ export class AssignmentsService {
     userId: string,
     dto: CreateAssignmentDto,
   ): Promise<AssignmentRecord> {
+    const config = this.configService.getOrThrow<AppConfig>('app');
+    if (config.hierarchy.githubSyncMode !== 'live') {
+      throw new ServiceUnavailableException(
+        'Repository assignment is unavailable until live GitHub synchronization is enabled',
+      );
+    }
     const { groupId } =
       await this.accessService.assertRepositoryManagerOrPlatformAdmin(
         repositoryId,
@@ -48,6 +58,11 @@ export class AssignmentsService {
     if (!targetMembership) {
       throw new BadRequestException(
         "The target user must be an active member of the repository's owning Group",
+      );
+    }
+    if (targetMembership.role !== 'member') {
+      throw new BadRequestException(
+        'Only users with the Member role can be assigned to a repository',
       );
     }
 

@@ -48,6 +48,14 @@ export interface GroupMemberRecord {
   createdAt: string;
 }
 
+export interface InternalUserDirectoryEntry {
+  id: string;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+}
+
 export interface ActiveMembership {
   workspaceId: string;
   userId: string;
@@ -120,35 +128,85 @@ export class GroupsRepository {
     businessUnit?: string | null;
     creatorUserId: string;
   }): Promise<GroupRecord> {
-    const result = await this.databaseService.query<GroupRow>(
-      `
-        INSERT INTO orgs.workspaces (owner_user_id, name, kind, description, business_unit, status)
-        VALUES ($1, $2, 'team', $3, $4, 'active')
-        RETURNING id, name, description, business_unit, status, archived_at, archived_by, created_at;
-      `,
-      [
-        input.creatorUserId,
-        input.name,
-        input.description ?? null,
-        input.businessUnit ?? null,
-      ],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      throw new Error('Group insert did not return a row');
-    }
+    return this.databaseService.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        const result = await client.query<GroupRow>(
+          `
+            INSERT INTO orgs.workspaces (owner_user_id, name, kind, description, business_unit, status)
+            VALUES ($1, $2, 'team', $3, $4, 'active')
+            RETURNING id, name, description, business_unit, status, archived_at, archived_by, created_at;
+          `,
+          [
+            input.creatorUserId,
+            input.name,
+            input.description ?? null,
+            input.businessUnit ?? null,
+          ],
+        );
+        const row = result.rows[0];
+        if (!row) {
+          throw new Error('Group insert did not return a row');
+        }
+        await client.query(
+          `
+            INSERT INTO orgs.workspace_members (workspace_id, user_id, role, member_status)
+            VALUES ($1, $2, 'admin', 'active');
+          `,
+          [row.id, input.creatorUserId],
+        );
+        await client.query('COMMIT');
+        return this.toGroup(row, { memberCount: 1, systemCount: 0 });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    });
+  }
 
-    await this.databaseService.query(
-      `
-        INSERT INTO orgs.workspace_members (workspace_id, user_id, role, member_status)
-        VALUES ($1, $2, 'admin', 'active');
-      `,
-      [row.id, input.creatorUserId],
-    );
-
-    // A freshly created Group always has exactly one active member (the
-    // creator) and zero systems — no need for a round trip to compute this.
-    return this.toGroup(row, { memberCount: 1, systemCount: 0 });
+  async transferLeadGuarded(
+    groupId: string,
+    newLeadUserId: string,
+  ): Promise<{ previousRole: GroupRole } | null> {
+    return this.databaseService.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await client.query(
+          `SELECT id FROM orgs.workspace_members WHERE workspace_id = $1 AND member_status = 'active' FOR UPDATE;`,
+          [groupId],
+        );
+        const targetResult = await client.query<{ role: GroupRole }>(
+          `
+            SELECT role
+            FROM orgs.workspace_members
+            WHERE workspace_id = $1 AND user_id = $2 AND member_status = 'active';
+          `,
+          [groupId, newLeadUserId],
+        );
+        const target = targetResult.rows[0];
+        if (!target) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+        await client.query(
+          `
+            UPDATE orgs.workspace_members
+            SET role = CASE WHEN user_id = $2 THEN 'admin' ELSE 'delegated_lead' END
+            WHERE workspace_id = $1 AND member_status = 'active' AND (role = 'admin' OR user_id = $2);
+          `,
+          [groupId, newLeadUserId],
+        );
+        await client.query(
+          `UPDATE orgs.workspaces SET owner_user_id = $2, updated_at = NOW() WHERE id = $1 AND kind = 'team';`,
+          [groupId, newLeadUserId],
+        );
+        await client.query('COMMIT');
+        return { previousRole: target.role };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    });
   }
 
   async listForUser(userId: string): Promise<GroupRecord[]> {
@@ -170,6 +228,20 @@ export class GroupsRepository {
     const counts = await this.getCountsForGroups(
       result.rows.map((row) => row.id),
     );
+    return result.rows.map((row) => this.toGroup(row, counts.get(row.id)));
+  }
+
+  async listAllGroups(): Promise<GroupRecord[]> {
+    const result = await this.databaseService.query<GroupRow>(
+      `
+        SELECT id, name, description, business_unit, status, archived_at, archived_by, created_at,
+          'admin'::text AS role
+        FROM orgs.workspaces
+        WHERE kind = 'team'
+        ORDER BY created_at DESC;
+      `,
+    );
+    const counts = await this.getCountsForGroups(result.rows.map((row) => row.id));
     return result.rows.map((row) => this.toGroup(row, counts.get(row.id)));
   }
 
@@ -663,6 +735,62 @@ export class GroupsRepository {
       [loginOrEmail],
     );
     return result.rows[0] ?? null;
+  }
+
+  async findInternalUserById(userId: string): Promise<{ id: string } | null> {
+    const result = await this.databaseService.query<{ id: string }>(
+      `
+        SELECT id
+        FROM identity.app_users
+        WHERE id = $1 AND is_internal = true
+        LIMIT 1;
+      `,
+      [userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+
+  async searchEligibleInternalUsers(
+    groupId: string,
+    search: string,
+    limit = 20,
+  ): Promise<InternalUserDirectoryEntry[]> {
+    const result = await this.databaseService.query<{
+      id: string;
+      login: string;
+      display_name: string | null;
+      email: string | null;
+      avatar_url: string | null;
+    }>(
+      `
+        SELECT app_user.id, app_user.login, app_user.display_name, app_user.email, app_user.avatar_url
+        FROM identity.app_users AS app_user
+        WHERE app_user.is_internal = true
+          AND (
+            lower(app_user.login) LIKE lower($2)
+            OR lower(COALESCE(app_user.display_name, '')) LIKE lower($2)
+            OR lower(COALESCE(app_user.email, '')) LIKE lower($2)
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM orgs.workspace_members AS member
+            WHERE member.workspace_id = $1
+              AND member.user_id = app_user.id
+              AND member.member_status = 'active'
+          )
+        ORDER BY lower(app_user.login) ASC
+        LIMIT $3;
+      `,
+      [groupId, `%${search}%`, limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      login: row.login,
+      name: row.display_name,
+      email: row.email,
+      avatarUrl: row.avatar_url,
+    }));
   }
 
   private toGroup(

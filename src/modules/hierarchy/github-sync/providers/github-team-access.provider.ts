@@ -42,6 +42,7 @@ export abstract class GithubTeamAccessProvider {
     repoFullName: string;
     githubLogin: string;
     expectedPermission: 'write';
+    expectedTeamSlug?: string;
     actingUserId: string;
   }): Promise<VerifyPermissionResult>;
 }
