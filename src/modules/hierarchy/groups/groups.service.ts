@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { AuditEventsService } from '../../audit/audit-events.service';
+import { GithubService } from '../../github/github.service';
 import { AssignmentsRepository } from '../assignments/assignments.repository';
 import { GithubSyncService } from '../github-sync/github-sync.service';
 import { HierarchyAccessService } from '../hierarchy-access.service';
@@ -26,6 +27,7 @@ export class GroupsService {
     private readonly accessService: HierarchyAccessService,
     private readonly assignmentsRepository: AssignmentsRepository,
     private readonly githubSyncService: GithubSyncService,
+    private readonly githubService: GithubService,
     private readonly auditEventsService: AuditEventsService,
   ) {}
 
@@ -214,6 +216,14 @@ export class GroupsService {
     return this.groupsRepository.listMembers(groupId);
   }
 
+  /**
+   * Roster for the invite picker, sourced from the enforced GitHub
+   * organization (Alpha-Explora). Every org member is returned; those without
+   * an AlphaCI account are flagged `hasAccount: false` so the UI can show them
+   * disabled ("hasn't signed in yet"). Members already active in the Group are
+   * omitted. Falls back to the local internal directory when the org roster is
+   * unavailable (stub mode / no installation token / missing Members:Read).
+   */
   async searchEligibleInternalUsers(
     groupId: string,
     userId: string,
@@ -221,13 +231,52 @@ export class GroupsService {
   ): Promise<InternalUserDirectoryEntry[]> {
     await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId);
     const normalized = search.trim();
-    if (normalized.length < 2) {
-      return [];
+
+    const orgMembers = await this.githubService.listOrganizationMembers(userId);
+    if (orgMembers.length === 0) {
+      // Graceful fallback: no org roster available — use the local directory,
+      // which requires a search term (unchanged legacy behavior).
+      if (normalized.length < 2) return [];
+      return this.groupsRepository.searchEligibleInternalUsers(
+        groupId,
+        normalized,
+      );
     }
-    return this.groupsRepository.searchEligibleInternalUsers(
+
+    const accounts = await this.groupsRepository.findAccountsByLogins(
       groupId,
-      normalized,
+      orgMembers.map((member) => member.login),
     );
+    const accountByLogin = new Map(
+      accounts.map((account) => [account.login.toLowerCase(), account]),
+    );
+    const term = normalized.toLowerCase();
+
+    return orgMembers
+      .map((member): InternalUserDirectoryEntry => {
+        const account = accountByLogin.get(member.login.toLowerCase());
+        return {
+          id: account?.id ?? null,
+          login: member.login,
+          name: account?.name ?? member.login,
+          email: account?.email ?? null,
+          avatarUrl: account?.avatarUrl ?? member.avatarUrl,
+          hasAccount: account !== undefined,
+        };
+      })
+      // Drop people already active in this Group.
+      .filter(
+        (entry) =>
+          !accountByLogin.get(entry.login.toLowerCase())?.isActiveMember,
+      )
+      // Apply the narrowing search over login + display name.
+      .filter(
+        (entry) =>
+          term.length === 0 ||
+          entry.login.toLowerCase().includes(term) ||
+          (entry.name ?? '').toLowerCase().includes(term),
+      )
+      .slice(0, 50);
   }
 
   async updateMemberRole(
@@ -236,10 +285,12 @@ export class GroupsService {
     memberId: string,
     dto: UpdateMemberRoleDto,
   ): Promise<GroupMemberRecord> {
-    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    const { viaPlatformAdmin, membership } =
+      await this.accessService.assertGroupManagerOrPlatformAdmin(
+        groupId,
+        userId,
+        ['admin', 'delegated_lead'],
+      );
     const target = await this.groupsRepository.findMemberById(
       groupId,
       memberId,
@@ -248,9 +299,18 @@ export class GroupsService {
       throw new NotFoundException('Member not found');
     }
 
-    if (dto.role === 'admin' && target.role !== 'admin') {
+    // A Lead promotes members to whichever tier they choose (Member,
+    // Delegated lead, or Admin). Granting the top Admin/Lead tier is reserved
+    // for an existing Admin (or a platform admin) — a Delegated lead cannot
+    // mint an Admin above their own authority. The last-owner guard below
+    // still prevents demoting the final Admin out of existence.
+    if (
+      dto.role === 'admin' &&
+      !viaPlatformAdmin &&
+      membership?.role !== 'admin'
+    ) {
       throw new ForbiddenException(
-        'Ownership only changes via the transfer endpoint',
+        'Only a Group Admin can grant the Admin (Lead) role',
       );
     }
 

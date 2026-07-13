@@ -1,14 +1,9 @@
-import { IsIn, IsString, MinLength } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
 
-import type { InvitableRole } from '../hierarchy.types';
-
-const INVITABLE_ROLES: InvitableRole[] = ['delegated_lead', 'member', 'viewer'];
-
+// Invitations no longer carry a role: everyone joins as a plain Member and a
+// Lead promotes them afterward via PATCH /groups/:groupId/members/:memberId.
 export class CreateInvitationDto {
   @IsString()
   @MinLength(1)
   inviteeUserId: string = '';
-
-  @IsIn(INVITABLE_ROLES)
-  role: InvitableRole = 'member';
 }

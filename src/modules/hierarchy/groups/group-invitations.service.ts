@@ -24,16 +24,22 @@ export class GroupInvitationsService {
   async createInvitation(
     groupId: string,
     actorUserId: string,
-    input: { inviteeUserId: string; role: InvitableRole },
+    input: { inviteeUserId: string },
   ): Promise<GroupInvitationRecord> {
     await this.accessService.assertGroupManagerOrPlatformAdmin(
       groupId,
       actorUserId,
     );
 
-    // Approved internal user directory gate (source plan §4 step 4; plan §6
-    // open question #2 treats is_internal=true as that directory pending
-    // user confirmation).
+    // Everyone joins a Group as a plain Member (product rule: only the
+    // Group owner starts as Lead/Admin; a Lead promotes members afterward via
+    // PATCH /groups/:groupId/members/:memberId). Invitations therefore never
+    // carry a role — the grant is always 'member'.
+    const role: InvitableRole = 'member';
+
+    // Approved internal user directory gate: the invitee must have an AlphaCI
+    // account (matched to a GitHub org member at the picker layer). Org
+    // members with no account cannot be invited until they sign in.
     const invitee = await this.groupsRepository.findInternalUserById(
       input.inviteeUserId,
     );
@@ -57,19 +63,19 @@ export class GroupInvitationsService {
       groupId,
       invitedUserId: input.inviteeUserId,
       invitedBy: actorUserId,
-      role: input.role,
+      role,
     });
 
     await this.auditEventsService.recordProjectEvent({
       workspaceId: groupId,
       actorUserId,
       eventCode: HIERARCHY_EVENT_CODES.invitationCreated,
-      message: `Invitation created for role ${input.role}`,
+      message: `Invitation created for role ${role}`,
       metadata: {
         groupId,
         invitationId: invitation.id,
         inviteeUserId: input.inviteeUserId,
-        role: input.role,
+        role,
       },
     });
 

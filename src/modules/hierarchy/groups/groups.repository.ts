@@ -49,11 +49,24 @@ export interface GroupMemberRecord {
 }
 
 export interface InternalUserDirectoryEntry {
+  /** Null when the GitHub org member has never signed into AlphaCI. */
+  id: string | null;
+  login: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  /** True only when this org member has an AlphaCI account and can be invited. */
+  hasAccount: boolean;
+}
+
+export interface DirectoryAccountRecord {
   id: string;
   login: string;
   name: string | null;
   email: string | null;
   avatarUrl: string | null;
+  /** Already an active member of the Group being invited into. */
+  isActiveMember: boolean;
 }
 
 export interface ActiveMembership {
@@ -790,6 +803,50 @@ export class GroupsRepository {
       name: row.display_name,
       email: row.email,
       avatarUrl: row.avatar_url,
+      hasAccount: true,
+    }));
+  }
+
+  /**
+   * Resolves a batch of GitHub logins to AlphaCI accounts, flagging any that
+   * are already an active member of the given Group. Used to cross-reference
+   * the GitHub org roster against local accounts for the invite picker.
+   */
+  async findAccountsByLogins(
+    groupId: string,
+    logins: string[],
+  ): Promise<DirectoryAccountRecord[]> {
+    if (logins.length === 0) return [];
+    const result = await this.databaseService.query<{
+      id: string;
+      login: string;
+      display_name: string | null;
+      email: string | null;
+      avatar_url: string | null;
+      is_active_member: boolean;
+    }>(
+      `
+        SELECT
+          app_user.id, app_user.login, app_user.display_name,
+          app_user.email, app_user.avatar_url,
+          EXISTS (
+            SELECT 1 FROM orgs.workspace_members AS member
+            WHERE member.workspace_id = $1
+              AND member.user_id = app_user.id
+              AND member.member_status = 'active'
+          ) AS is_active_member
+        FROM identity.app_users AS app_user
+        WHERE lower(app_user.login) = ANY($2::text[]);
+      `,
+      [groupId, logins.map((login) => login.toLowerCase())],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      login: row.login,
+      name: row.display_name,
+      email: row.email,
+      avatarUrl: row.avatar_url,
+      isActiveMember: row.is_active_member,
     }));
   }
 

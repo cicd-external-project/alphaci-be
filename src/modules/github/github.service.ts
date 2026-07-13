@@ -175,6 +175,52 @@ export class GithubService {
   }
 
   /**
+   * Lists the login + avatar of every member of the enforced GitHub
+   * organization, using the acting user's installation token. Powers the
+   * Group invite picker (members list is sourced from the GitHub org, not the
+   * local directory). Returns [] when no installation token is available —
+   * e.g. the acting user has no installation, or the App lacks org
+   * `Members: Read` — so callers can fall back gracefully rather than error.
+   */
+  async listOrganizationMembers(
+    userId: string,
+  ): Promise<Array<{ login: string; avatarUrl: string | null }>> {
+    const org = this.getEnforcedOrg();
+    const token = await this.getInstallationAccessTokenForUser(userId);
+    if (!token) return [];
+
+    const members: Array<{ login: string; avatarUrl: string | null }> = [];
+    const maxPages = 5; // cap at 500 members — more than enough for this org
+    for (let page = 1; page <= maxPages; page += 1) {
+      const response = await this.fetchWithRetry(
+        `https://api.github.com/orgs/${org}/members?per_page=100&page=${String(page)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'cicd-workflow-product',
+          },
+        },
+      );
+      if (!response.ok) {
+        this.logger.warn(
+          `Could not list members for org ${org} (${String(response.status)}) — check the App has org Members:Read`,
+        );
+        break;
+      }
+      const batch = (await response.json()) as Array<{
+        login: string;
+        avatar_url?: string | null;
+      }>;
+      for (const item of batch) {
+        members.push({ login: item.login, avatarUrl: item.avatar_url ?? null });
+      }
+      if (batch.length < 100) break;
+    }
+    return members;
+  }
+
+  /**
    * Wraps fetch with bounded retry/backoff for GitHub rate limits.
    *
    * Retries only on 429 and rate-limit 403s — detected via response headers so

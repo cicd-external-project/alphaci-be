@@ -4,6 +4,7 @@ import type { AuditEventsService } from '../../audit/audit-events.service';
 import type { PlatformAdminsRepository } from '../../admin/platform-admins.repository';
 import type { AssignmentsRepository } from '../assignments/assignments.repository';
 import type { DeliveryProjectsRepository } from '../delivery-projects/delivery-projects.repository';
+import type { GithubService } from '../../github/github.service';
 import type { GithubSyncService } from '../github-sync/github-sync.service';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import type { RepositoriesRepository } from '../repositories/repositories.repository';
@@ -93,12 +94,16 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       record: jest.fn(),
       recordProjectEvent: jest.fn(),
     } as unknown as jest.Mocked<AuditEventsService>;
+    const githubService = {
+      listOrganizationMembers: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<GithubService>;
 
     service = new GroupsService(
       groupsRepository,
       accessService,
       assignmentsRepository,
       githubSyncService,
+      githubService,
       auditEventsService,
     );
   });
@@ -246,7 +251,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
     );
   });
 
-  it('blocks promoting a member directly to owner — ownership only changes via transfer', async () => {
+  it('allows an owner (Admin) to promote a member directly to Admin (co-lead)', async () => {
     groupsRepository.findActiveMembership.mockResolvedValue({
       workspaceId: 'group-1',
       userId: 'owner-1',
@@ -254,9 +259,34 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
       memberId: owner.id,
     });
     groupsRepository.findMemberById.mockResolvedValue(developer);
+    groupsRepository.changeMemberRoleGuarded.mockResolvedValue({
+      member: { ...developer, role: 'admin' },
+      blockedLastOwner: false,
+    });
 
     await expect(
       service.updateMemberRole('group-1', 'owner-1', 'member-dev', {
+        role: 'admin',
+      }),
+    ).resolves.toMatchObject({ role: 'admin' });
+    expect(groupsRepository.changeMemberRoleGuarded).toHaveBeenCalledWith(
+      'group-1',
+      'member-dev',
+      'admin',
+    );
+  });
+
+  it('blocks a delegated lead from granting the Admin role', async () => {
+    groupsRepository.findActiveMembership.mockResolvedValue({
+      workspaceId: 'group-1',
+      userId: 'delegated-1',
+      role: 'delegated_lead',
+      memberId: 'member-delegated',
+    });
+    groupsRepository.findMemberById.mockResolvedValue(developer);
+
+    await expect(
+      service.updateMemberRole('group-1', 'delegated-1', 'member-dev', {
         role: 'admin',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
