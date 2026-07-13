@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { PlatformAdminsRepository } from '../admin/platform-admins.repository';
+import {
+  type AppRole,
+  PlatformAdminsRepository,
+} from '../admin/platform-admins.repository';
 import { AssignmentsRepository, type AssignmentRecord } from './assignments/assignments.repository';
 import { DeliveryProjectsRepository } from './delivery-projects/delivery-projects.repository';
 import { type ActiveMembership, GroupsRepository } from './groups/groups.repository';
@@ -49,7 +52,15 @@ export class HierarchyAccessService {
 
   async isPlatformAdmin(userId: string): Promise<boolean> {
     const role = await this.platformAdminsRepository.findRole(userId);
-    return role !== null;
+    if (role !== null) return true;
+    // A global 'admin' app_role is also a full override in the single-role
+    // model, even without a platform_admins row.
+    return (await this.platformAdminsRepository.findAppRole(userId)) === 'admin';
+  }
+
+  /** The user's global hierarchy role (admin | lead | member). */
+  async getAppRole(userId: string): Promise<AppRole> {
+    return this.platformAdminsRepository.findAppRole(userId);
   }
 
   /** Any active member — used for read endpoints scoped to "active member". */

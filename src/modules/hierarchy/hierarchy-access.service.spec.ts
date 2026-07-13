@@ -28,6 +28,7 @@ describe('HierarchyAccessService', () => {
   } as unknown as jest.Mocked<AssignmentsRepository>;
   const platformAdminsRepository = {
     findRole: jest.fn(),
+    findAppRole: jest.fn().mockResolvedValue('member'),
   } as unknown as jest.Mocked<PlatformAdminsRepository>;
 
   let service: HierarchyAccessService;

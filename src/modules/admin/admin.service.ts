@@ -13,6 +13,7 @@ import type {
 import { AdminRepository, type ListUsersOptions } from './admin.repository';
 import {
   PlatformAdminsRepository,
+  type AppRole,
   type PlatformAdminRecord,
   type PlatformRole,
 } from './platform-admins.repository';
@@ -175,6 +176,31 @@ export class AdminService {
         targetUserId,
       },
     );
+  }
+
+  /**
+   * Sets a user's GLOBAL hierarchy role (Admin / Lead / Member) — the single
+   * place roles are assigned. An admin cannot strip their own Admin role
+   * (self-lockout guard).
+   */
+  async setAppRole(
+    actorId: string,
+    targetUserId: string,
+    role: AppRole,
+  ): Promise<void> {
+    if (actorId === targetUserId && role !== 'admin') {
+      throw new BadRequestException('You cannot remove your own Admin role');
+    }
+    const target = await this.adminRepository.findUserById(targetUserId);
+    if (!target) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.platformAdminsRepository.setAppRole(targetUserId, role);
+    await this.audit(actorId, 'admin.app_role.set', 'Admin set global role', {
+      targetUserId,
+      role,
+    });
   }
 
   async listFeedback(
