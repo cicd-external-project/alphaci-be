@@ -80,9 +80,12 @@ export class AdminController {
   }
 
   // Global hierarchy role (Admin / Lead / Member) — the single place roles are
-  // assigned. Super-admin only, like the platform-role routes above.
+  // assigned. Open to ANY platform admin (the class-level PlatformAdminGuard),
+  // NOT just super-admins: Alpha-Explora org owners are provisioned as platform
+  // admins and are expected to manage hierarchy roles. This is deliberately a
+  // lower bar than the grant/revoke PLATFORM-role routes above, which stay
+  // super-admin only because they hand out platform-admin powers themselves.
   @Patch('users/:id/app-role')
-  @UseGuards(SuperAdminGuard)
   setAppRole(
     @Req() req: Request,
     @Param('id', new ParseUUIDPipe()) id: string,
