@@ -10,7 +10,10 @@ import { ProjectsRepository } from '../../projects/projects.repository';
 import { DeliveryProjectsRepository } from '../delivery-projects/delivery-projects.repository';
 import { HierarchyAccessService } from '../hierarchy-access.service';
 import { HIERARCHY_EVENT_CODES } from '../hierarchy.types';
-import { RepositoriesRepository, type RepositoryRecord } from './repositories.repository';
+import {
+  RepositoriesRepository,
+  type RepositoryRecord,
+} from './repositories.repository';
 import type { CreateRepositoryDto } from '../dto/create-repository.dto';
 import type { UpdateRepositoryDto } from '../dto/update-repository.dto';
 
@@ -37,10 +40,11 @@ export class RepositoriesService {
     githubAccessToken: string | undefined,
     dto: CreateRepositoryDto,
   ): Promise<RepositoryRecord> {
-    const { groupId } = await this.accessService.assertDeliveryProjectManager(
-      deliveryProjectId,
-      userId,
-    );
+    const { groupId } =
+      await this.accessService.assertCanCreateUnderDeliveryProject(
+        deliveryProjectId,
+        userId,
+      );
     if (!githubAccessToken) {
       throw new BadRequestException(
         'GitHub access token not found. Re-authenticate via GitHub OAuth.',

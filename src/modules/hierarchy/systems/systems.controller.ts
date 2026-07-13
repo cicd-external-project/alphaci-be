@@ -35,6 +35,7 @@ export class SystemsController {
     return this.systemsService.createSystem(
       groupId,
       this.requireUserId(req),
+      req.session.githubAccessToken,
       body,
     );
   }
@@ -64,10 +65,7 @@ export class SystemsController {
 
   @Post('systems/:systemId/archive')
   archiveSystem(@Req() req: Request, @Param('systemId') systemId: string) {
-    return this.systemsService.archiveSystem(
-      systemId,
-      this.requireUserId(req),
-    );
+    return this.systemsService.archiveSystem(systemId, this.requireUserId(req));
   }
 
   @Post('systems/:systemId/delivery-projects')

@@ -23,7 +23,7 @@ export class DeliveryProjectsService {
     userId: string,
     dto: CreateDeliveryProjectDto,
   ): Promise<DeliveryProjectRecord> {
-    const { groupId } = await this.accessService.assertSystemManager(
+    const { groupId } = await this.accessService.assertCanCreateUnderSystem(
       systemId,
       userId,
     );
@@ -62,9 +62,8 @@ export class DeliveryProjectsService {
       deliveryProjectId,
       userId,
     );
-    const deliveryProject = await this.deliveryProjectsRepository.findById(
-      deliveryProjectId,
-    );
+    const deliveryProject =
+      await this.deliveryProjectsRepository.findById(deliveryProjectId);
     if (!deliveryProject) {
       throw new NotFoundException('Delivery project not found');
     }
@@ -107,9 +106,8 @@ export class DeliveryProjectsService {
       deliveryProjectId,
       userId,
     );
-    const deliveryProject = await this.deliveryProjectsRepository.archive(
-      deliveryProjectId,
-    );
+    const deliveryProject =
+      await this.deliveryProjectsRepository.archive(deliveryProjectId);
     if (!deliveryProject) {
       throw new NotFoundException('Delivery project not found');
     }
