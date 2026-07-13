@@ -35,6 +35,15 @@ export class GroupsService {
     userId: string,
     input: { name: string; description?: string; businessUnit?: string },
   ): Promise<GroupRecord> {
+    // Only global Leads and Admins may create groups (Members cannot).
+    const appRole = await this.accessService.getAppRole(userId);
+    if (
+      appRole === 'member' &&
+      !(await this.accessService.isPlatformAdmin(userId))
+    ) {
+      throw new ForbiddenException('Only Leads and Admins can create groups');
+    }
+
     const group = await this.groupsRepository.createGroup({
       name: input.name,
       description: input.description ?? null,
@@ -234,9 +243,10 @@ export class GroupsService {
 
     const orgMembers = await this.githubService.listOrganizationMembers(userId);
     if (orgMembers.length === 0) {
-      // Graceful fallback: no org roster available — use the local directory,
-      // which requires a search term (unchanged legacy behavior).
-      if (normalized.length < 2) return [];
+      // Graceful fallback: no org roster available (stub mode / no token /
+      // missing Members:Read) — use the local account directory. An empty
+      // search returns the full directory so the picker is pre-populated
+      // with existing members rather than blank until the user types.
       return this.groupsRepository.searchEligibleInternalUsers(
         groupId,
         normalized,

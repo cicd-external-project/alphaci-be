@@ -73,6 +73,7 @@ describe('GroupsService — role enforcement (hard constraint: developer -> 403 
 
     const platformAdminsRepository = {
       findRole: jest.fn().mockResolvedValue(null),
+      findAppRole: jest.fn().mockResolvedValue('member'),
     } as unknown as jest.Mocked<PlatformAdminsRepository>;
 
     accessService = new HierarchyAccessService(

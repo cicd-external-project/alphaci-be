@@ -4,6 +4,9 @@ import { DatabaseService } from '../database/database.service';
 
 export type PlatformRole = 'admin' | 'super_admin';
 
+/** Global hierarchy role — single source of truth for group capabilities. */
+export type AppRole = 'admin' | 'lead' | 'member';
+
 export interface PlatformAdminRecord {
   userId: string;
   login: string;
@@ -37,6 +40,23 @@ export class PlatformAdminsRepository {
       [userId],
     );
     return result.rows[0]?.role ?? null;
+  }
+
+  /** Global hierarchy role (defaults to 'member' when the user is unknown). */
+  async findAppRole(userId: string): Promise<AppRole> {
+    const result = await this.databaseService.query<{ app_role: AppRole }>(
+      `SELECT app_role FROM identity.app_users WHERE id = $1 LIMIT 1;`,
+      [userId],
+    );
+    return result.rows[0]?.app_role ?? 'member';
+  }
+
+  /** Sets a user's global hierarchy role. */
+  async setAppRole(userId: string, role: AppRole): Promise<void> {
+    await this.databaseService.query(
+      `UPDATE identity.app_users SET app_role = $2 WHERE id = $1;`,
+      [userId, role],
+    );
   }
 
   async list(): Promise<PlatformAdminRecord[]> {

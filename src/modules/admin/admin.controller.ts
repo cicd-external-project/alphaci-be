@@ -19,6 +19,7 @@ import type { FeedbackStatus } from '../feedback/feedback.repository';
 import { AdminService } from './admin.service';
 import { GrantRoleDto } from './dto/grant-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { SetAppRoleDto } from './dto/set-app-role.dto';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 import { SuperAdminGuard } from './guards/super-admin.guard';
 
@@ -76,6 +77,18 @@ export class AdminController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.adminService.revokeRole(this.actorId(req), id);
+  }
+
+  // Global hierarchy role (Admin / Lead / Member) — the single place roles are
+  // assigned. Super-admin only, like the platform-role routes above.
+  @Patch('users/:id/app-role')
+  @UseGuards(SuperAdminGuard)
+  setAppRole(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: SetAppRoleDto,
+  ) {
+    return this.adminService.setAppRole(this.actorId(req), id, dto.role);
   }
 
   @Get('feedback')
