@@ -41,6 +41,7 @@ const makeCatalogService = () =>
 
 const makeGithubService = () =>
   ({
+    on: jest.fn(),
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
     getInstallationAccessTokenForUserRepo: jest
       .fn()
@@ -2689,6 +2690,383 @@ jobs:
         eventCode: 'project_sync_completed',
       }),
     );
+  });
+
+  describe('reconcileDeletedRepos', () => {
+    it('returns an empty summary when there are no tracked projects', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([]),
+      };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 0,
+        checked: 0,
+        deleted: 0,
+        skipped: 0,
+        outOfScope: 0,
+      });
+      expect(
+        reconcileGithubService.getOrganizationProvisioningContextByLogin,
+      ).toHaveBeenCalledWith('Alpha-Explora');
+    });
+
+    it('deletes confirmed-404 rows, skips inconclusive checks, and leaves reachable rows alone', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: jest
+          .fn()
+          // Alpha-Explora/reachable-api -> still exists, leave alone
+          .mockResolvedValueOnce(true)
+          // Alpha-Explora/gone-api -> confirmed 404, delete
+          .mockResolvedValueOnce(false)
+          // Alpha-Explora/flaky-api -> inconclusive (bad token/5xx/network), skip
+          .mockRejectedValueOnce(new Error('502 from GitHub')),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'Alpha-Explora/reachable-api',
+            user_id: 'user-1',
+          },
+          {
+            id: 'project-2',
+            repo_full_name: 'Alpha-Explora/gone-api',
+            user_id: 'user-2',
+          },
+          {
+            id: 'project-3',
+            repo_full_name: 'Alpha-Explora/flaky-api',
+            user_id: 'user-3',
+          },
+        ]),
+        deleteByRepoFullName: jest
+          .fn()
+          .mockResolvedValue([{ id: 'project-2', user_id: 'user-2' }]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 3,
+        checked: 3,
+        deleted: 1,
+        skipped: 1,
+        outOfScope: 0,
+      });
+
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledTimes(1);
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledWith(
+        'Alpha-Explora/gone-api',
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-2',
+          // Same FK reasoning as the webhook path: projectId is null, the
+          // deleted id travels in metadata instead.
+          projectId: null,
+          eventCode: 'project_deleted_reconciliation',
+          metadata: expect.objectContaining({
+            repoFullName: 'Alpha-Explora/gone-api',
+            source: 'reconciliation',
+            deletedProjectId: 'project-2',
+          }),
+        }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(1);
+    });
+
+    it('fans out a product event per distinct owner when multiple projects share a deleted repo', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: jest.fn().mockResolvedValue(false),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'Alpha-Explora/shared-gone-api',
+            user_id: 'user-1',
+          },
+        ]),
+        deleteByRepoFullName: jest.fn().mockResolvedValue([
+          { id: 'project-1', user_id: 'user-1' },
+          { id: 'project-9', user_id: 'user-9' },
+        ]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 1,
+        checked: 1,
+        deleted: 2,
+        skipped: 0,
+        outOfScope: 0,
+      });
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: 'user-1', projectId: null }),
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: 'user-9', projectId: null }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(2);
+    });
+
+    it('never checks or deletes a project whose repo is outside the enforced org', async () => {
+      // Safety guard: this job authenticates with a single org-level
+      // installation token, which returns 404 both for "deleted" and for
+      // "not accessible to this token". A repo outside the enforced org
+      // (e.g. one connected via the "import an existing repo" flow, which
+      // can point at any owner) must never be passed to repoExists() at
+      // all — otherwise a perfectly healthy external repo would look
+      // "confirmed gone" and get wrongly deleted.
+      const repoExistsSpy = jest.fn().mockResolvedValue(false);
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: repoExistsSpy,
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'some-other-owner/external-api',
+            user_id: 'user-1',
+          },
+          {
+            id: 'project-2',
+            repo_full_name: 'alpha-explora/in-scope-api',
+            user_id: 'user-2',
+          },
+        ]),
+        deleteByRepoFullName: jest
+          .fn()
+          .mockResolvedValue([{ id: 'project-2', user_id: 'user-2' }]),
+      };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 2,
+        checked: 1,
+        deleted: 1,
+        skipped: 0,
+        outOfScope: 1,
+      });
+
+      expect(repoExistsSpy).toHaveBeenCalledTimes(1);
+      expect(repoExistsSpy).toHaveBeenCalledWith(
+        'installation-token',
+        // Org match is case-insensitive.
+        'alpha-explora/in-scope-api',
+      );
+      expect(projectsRepository.deleteByRepoFullName).not.toHaveBeenCalledWith(
+        'some-other-owner/external-api',
+      );
+    });
+  });
+
+  describe('repository.deleted webhook subscription', () => {
+    it('subscribes to REPOSITORY_DELETED_EVENT on construction', () => {
+      const onSpy = jest.fn();
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: onSpy,
+      } as unknown as GithubService;
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        makeProjectsRepository(),
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      expect(onSpy).toHaveBeenCalledWith(
+        'repository.deleted',
+        expect.any(Function),
+      );
+    });
+
+    it('hard-deletes matching projects and records a per-owner event when the repo is deleted', async () => {
+      let capturedHandler:
+        | ((event: { repoFullName: string }) => void)
+        | undefined;
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: jest.fn((eventName: string, handler: typeof capturedHandler) => {
+          if (eventName === 'repository.deleted') {
+            capturedHandler = handler;
+          }
+        }),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        deleteByRepoFullName: jest.fn().mockResolvedValue([
+          { id: 'project-1', user_id: 'user-1' },
+          { id: 'project-9', user_id: 'user-2' },
+        ]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      expect(capturedHandler).toBeDefined();
+      capturedHandler?.({ repoFullName: 'Alpha-Explora/some-repo' });
+      // The handler is fire-and-forget (async work runs after the sync
+      // .on() callback returns), so flush microtasks before asserting.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledWith(
+        'Alpha-Explora/some-repo',
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-1',
+          // projectId must be null — the row is already deleted by the time
+          // this runs, and audit_events.project_id has an FK to
+          // provisioned_projects, so a non-null id here would fail the
+          // insert. The deleted id still travels in metadata.
+          projectId: null,
+          eventCode: 'project_deleted_webhook',
+          metadata: expect.objectContaining({ deletedProjectId: 'project-1' }),
+        }),
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-2',
+          projectId: null,
+          eventCode: 'project_deleted_webhook',
+          metadata: expect.objectContaining({ deletedProjectId: 'project-9' }),
+        }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(2);
+      expect(notificationEventsService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: null }),
+      );
+    });
+
+    it('does nothing when no project matches the deleted repo', async () => {
+      let capturedHandler:
+        | ((event: { repoFullName: string }) => void)
+        | undefined;
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: jest.fn((eventName: string, handler: typeof capturedHandler) => {
+          if (eventName === 'repository.deleted') {
+            capturedHandler = handler;
+          }
+        }),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        deleteByRepoFullName: jest.fn().mockResolvedValue([]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      capturedHandler?.({ repoFullName: 'tone/never-provisioned' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(auditEventsService.recordProjectEvent).not.toHaveBeenCalled();
+      expect(notificationEventsService.record).not.toHaveBeenCalled();
+    });
   });
 
   it('builds workflow YAML with generated defaults and enhancement flags', async () => {

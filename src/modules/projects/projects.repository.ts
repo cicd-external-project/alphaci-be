@@ -472,6 +472,70 @@ export class ProjectsRepository {
     return result.rowCount ?? 0;
   }
 
+  /**
+   * Hard-deletes every provisioned project row whose repo_full_name matches
+   * (case-insensitive). Used by two callers that both confirm — via the
+   * GitHub API or a `repository` `deleted` webhook — that the repo is
+   * actually gone, not just unreachable:
+   *   - ProjectsService.handleRepositoryDeleted() (live webhook path)
+   *   - ProjectsService.reconcileDeletedRepos() (scheduled backlog sweep)
+   * GitHub reports both org-wide with no user context, so unlike
+   * deleteByIdAndUser() this is NOT scoped to a userId; it matches purely on
+   * repo_full_name across every owner. CASCADE to ci.project_ci_tokens
+   * applies automatically — same table/FK as deleteByIdAndUser(). Returns
+   * the id + user_id of each row it deleted so the caller can still emit a
+   * per-owner audit/notification event.
+   */
+  async deleteByRepoFullName(
+    repoFullName: string,
+  ): Promise<Array<{ id: string; user_id: string }>> {
+    const result = await this.databaseService.query<{
+      id: string;
+      user_id: string;
+    }>(
+      `
+        DELETE FROM projects.provisioned_projects
+        WHERE lower(repo_full_name) = lower($1)
+        RETURNING id, user_id;
+      `,
+      [repoFullName],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Lists every tracked project system-wide (all users, all workspaces) —
+   * just the columns needed to check GitHub and delete confirmed-gone rows.
+   * Backs ProjectsService.reconcileDeletedRepos(), the scheduled sweep that
+   * catches repos deleted on GitHub before the repository.deleted webhook
+   * path existed.
+   *
+   * Capped at 5,000 rows in a single pass rather than following listByUser's
+   * 100-row cap: this is a full-table reconciliation script run a few times
+   * a day (see src/scripts/reconcile-deleted-repos.ts), not a
+   * user-interactive request, so a higher ceiling is appropriate. 5,000 is
+   * comfortably above current project volume; if the table grows past that,
+   * switch this to batched keyset pagination rather than raising the cap
+   * further.
+   */
+  async listAllRepoFullNames(): Promise<
+    Array<{ id: string; repo_full_name: string; user_id: string }>
+  > {
+    const result = await this.databaseService.query<{
+      id: string;
+      repo_full_name: string;
+      user_id: string;
+    }>(
+      `
+        SELECT id, repo_full_name, user_id
+        FROM projects.provisioned_projects
+        ORDER BY created_at ASC
+        LIMIT 5000;
+      `,
+    );
+    return result.rows;
+  }
+
   private splitRepoFullName(repoFullName: string): {
     ownerLogin: string | null;
     repoName: string | null;

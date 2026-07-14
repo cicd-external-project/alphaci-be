@@ -49,6 +49,7 @@ const makeCatalogService = () =>
 
 const makeGithubService = () =>
   ({
+    on: jest.fn(),
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue(null),
     getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
     // This suite exercises workflow-file push + secret install, not org

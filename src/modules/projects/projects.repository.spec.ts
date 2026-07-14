@@ -237,6 +237,66 @@ describe('ProjectsRepository', () => {
     expect(result).toBe(false);
   });
 
+  it('hard-deletes projects by repo_full_name across all owners, case-insensitively', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        { id: 'project-1', user_id: 'user-1' },
+        { id: 'project-9', user_id: 'user-2' },
+      ],
+    });
+
+    const result = await repo.deleteByRepoFullName('Alpha-Explora/Some-Repo');
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('lower(repo_full_name) = lower($1)'),
+      ['Alpha-Explora/Some-Repo'],
+    );
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [string];
+    expect(query).toContain('DELETE FROM projects.provisioned_projects');
+    expect(query).not.toContain('user_id = $');
+    expect(result).toEqual([
+      { id: 'project-1', user_id: 'user-1' },
+      { id: 'project-9', user_id: 'user-2' },
+    ]);
+  });
+
+  it('returns an empty array when no project matches the deleted repo', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+
+    const result = await repo.deleteByRepoFullName('tone/gone-repo');
+
+    expect(result).toEqual([]);
+  });
+
+  it('lists every tracked project system-wide, unscoped by user', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'project-1',
+          repo_full_name: 'tone/orders-api',
+          user_id: 'user-1',
+        },
+        {
+          id: 'project-2',
+          repo_full_name: 'tone/gone-api',
+          user_id: 'user-2',
+        },
+      ],
+    });
+
+    const result = await repo.listAllRepoFullNames();
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM projects.provisioned_projects'),
+    );
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [string];
+    expect(query).not.toContain('WHERE');
+    expect(result).toEqual([
+      { id: 'project-1', repo_full_name: 'tone/orders-api', user_id: 'user-1' },
+      { id: 'project-2', repo_full_name: 'tone/gone-api', user_id: 'user-2' },
+    ]);
+  });
+
   it('marks every created project as non-example', async () => {
     await repo.create({
       userId: 'user-1',
