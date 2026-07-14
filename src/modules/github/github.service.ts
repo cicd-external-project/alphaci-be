@@ -1,4 +1,5 @@
 import { createHmac, createSign, timingSafeEqual } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 import {
   BadGatewayException,
@@ -105,8 +106,24 @@ export class GithubRepoDeleteError extends Error {
  */
 const DEFAULT_ENFORCED_ORG = 'Alpha-Explora';
 
+/**
+ * Emitted on GithubService when a GitHub `repository` webhook reports
+ * `action: 'deleted'`. ProjectsService subscribes to this in its constructor
+ * to mark the matching provisioned_projects row 'orphaned' — see the
+ * module-level comment on that subscription for why an event is used
+ * instead of a direct repository injection (GithubModule must not import
+ * ProjectsModule, which a direct ProjectsRepository/ProjectsService
+ * dependency here would require).
+ */
+export const REPOSITORY_DELETED_EVENT = 'repository.deleted';
+
+export interface RepositoryDeletedEvent {
+  /** e.g. "Alpha-Explora/some-repo" — case-insensitive per GitHub semantics. */
+  repoFullName: string;
+}
+
 @Injectable()
-export class GithubService {
+export class GithubService extends EventEmitter {
   private readonly logger = new Logger(GithubService.name);
   private readonly appId: string;
   private readonly appSlug: string;
@@ -124,6 +141,7 @@ export class GithubService {
     @Inject(GithubInstallationsRepository)
     private readonly githubInstallationsRepository: GithubInstallationsRepository | null,
   ) {
+    super();
     const config = this.configService?.get<AppConfig>('app');
     this.appId = config?.github.appId ?? '';
     this.appSlug = config?.github.appSlug?.trim() ?? '';
@@ -580,6 +598,34 @@ export class GithubService {
   ): Promise<void> {
     if (!payload || typeof payload !== 'object') return;
     const body = payload as Record<string, unknown>;
+
+    // Handled before the `installation` guard below: a `repository` deleted
+    // event carries everything it needs in `repository.full_name` and must
+    // not depend on the installation payload shape (GitHub App webhooks
+    // normally include `installation`, but there's no reason to make repo
+    // deletion detection depend on it).
+    if (eventName === 'repository' && body['action'] === 'deleted') {
+      const repository = body['repository'];
+      if (repository && typeof repository === 'object') {
+        const fullName = (repository as Record<string, unknown>)[
+          'full_name'
+        ];
+        if (typeof fullName === 'string' && fullName.trim().length > 0) {
+          const event: RepositoryDeletedEvent = { repoFullName: fullName };
+          this.emit(REPOSITORY_DELETED_EVENT, event);
+        } else {
+          this.logger.warn(
+            `Ignoring repository.deleted webhook with missing/invalid full_name`,
+          );
+        }
+      } else {
+        this.logger.warn(
+          `Ignoring repository.deleted webhook with missing repository object`,
+        );
+      }
+      return;
+    }
+
     const installation = body['installation'];
     if (!installation || typeof installation !== 'object') return;
     const installationId = Number(

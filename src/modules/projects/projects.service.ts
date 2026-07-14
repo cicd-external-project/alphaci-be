@@ -31,7 +31,9 @@ import type {
 import {
   GithubRepoDeleteError,
   GithubService,
+  REPOSITORY_DELETED_EVENT,
   type GithubRepoDeleteErrorCode,
+  type RepositoryDeletedEvent,
 } from '../github/github.service';
 import { ProjectDeploymentProvisioningService } from '../env-provisioning/project-deployment-provisioning.service';
 import {
@@ -181,6 +183,25 @@ export interface SyncProjectsResponse {
   orphaned: number;
   reachable: number;
   total: number;
+}
+
+export interface ReconcileDeletedReposResult {
+  /** Total tracked projects fetched for this reconciliation pass. */
+  total: number;
+  /** Rows actually checked against GitHub — `total` minus `outOfScope`. */
+  checked: number;
+  /** Rows hard-deleted after a confirmed 404 from GitHub. */
+  deleted: number;
+  /** Rows left untouched because the GitHub check was inconclusive
+   *  (401/403/5xx/network error) — never treated as "confirmed gone". */
+  skipped: number;
+  /** Rows never checked at all because their repo doesn't belong to the
+   *  enforced org — the org-scoped installation token can't reliably tell
+   *  "deleted" apart from "not accessible to this token" for those repos
+   *  (e.g. projects added via the "import an existing repo" flow, which can
+   *  point at a personal account or a different org). See the method doc
+   *  on reconcileDeletedRepos() for the full reasoning. */
+  outOfScope: number;
 }
 
 export interface DisconnectProjectResponse {
@@ -372,7 +393,77 @@ export class ProjectsService {
     private readonly notificationEventsService?: NotificationEventsService,
     @Optional()
     private readonly workspaceAccessService?: WorkspaceAccessService,
-  ) {}
+  ) {
+    // GithubModule cannot import ProjectsModule (that would create a
+    // Projects → Github → Projects cycle), so GithubService can't inject
+    // ProjectsRepository/ProjectsService directly. Instead GithubService
+    // emits a plain EventEmitter event when a `repository` `deleted`
+    // webhook arrives, and — since ProjectsService already depends on
+    // GithubService one-way — this subscribes here to react to it. Fire-and
+    // -forget is intentional: handleWebhook() has already ack'd the
+    // delivery to GitHub by the time this listener runs, so failures are
+    // logged, not thrown.
+    this.githubService.on(
+      REPOSITORY_DELETED_EVENT,
+      (event: RepositoryDeletedEvent) => {
+        this.handleRepositoryDeleted(event).catch((error) => {
+          this.logger.warn(
+            `Failed to process repository.deleted webhook for ${event.repoFullName}: ${String(error)}`,
+          );
+        });
+      },
+    );
+  }
+
+  /**
+   * Reacts to GithubService's REPOSITORY_DELETED_EVENT (see constructor).
+   * Hard-deletes every provisioned project matching the deleted repo —
+   * matched by repo_full_name across all owners, since the GitHub webhook
+   * carries no user context — and records a per-owner product event for
+   * each row touched, so the deletion is still visible in audit/notification
+   * history even though the row itself is gone.
+   *
+   * projectId is deliberately `null` on these events, NOT `row.id`: both
+   * audit.audit_events.project_id and notifications.notifications.project_id
+   * are `REFERENCES projects.provisioned_projects(id)`, and by the time this
+   * runs that row has already been deleted — an INSERT referencing it would
+   * fail its FK constraint (ON DELETE SET NULL only rewrites *existing*
+   * rows, it doesn't permit new ones pointing at a since-deleted id). The
+   * deleted project's id is preserved in metadata instead. This mirrors
+   * disconnectProject(), which never emits a product event with a projectId
+   * after the delete that removes that project.
+   */
+  private async handleRepositoryDeleted(
+    event: RepositoryDeletedEvent,
+  ): Promise<void> {
+    const deletedRows = await this.projectsRepository.deleteByRepoFullName(
+      event.repoFullName,
+    );
+    if (deletedRows.length === 0) {
+      return;
+    }
+
+    this.logger.log(
+      `Deleted ${deletedRows.length} project(s) after GitHub reported ${event.repoFullName} deleted`,
+    );
+
+    await Promise.all(
+      deletedRows.map((row) =>
+        this.recordProductEvent({
+          userId: row.user_id,
+          projectId: null,
+          eventCode: 'project_deleted_webhook',
+          title: 'Repository deleted on GitHub',
+          body: `The GitHub repository ${event.repoFullName} was deleted, so this project has been deleted.`,
+          metadata: {
+            repoFullName: event.repoFullName,
+            source: 'webhook',
+            deletedProjectId: row.id,
+          },
+        }),
+      ),
+    );
+  }
 
   // ─── POST /projects ────────────────────────────────────────────────────────
 
@@ -1737,6 +1828,151 @@ export class ProjectsService {
       orphaned: orphanedCount,
       reachable: reachableCount,
       total: rows.length,
+    };
+  }
+
+  // ─── Scheduled reconciliation (src/scripts/reconcile-deleted-repos.ts) ────
+
+  /**
+   * System-wide sweep that hard-deletes provisioned projects whose GitHub
+   * repository is confirmed gone — catches the backlog of repos that were
+   * deleted on GitHub before the repository.deleted webhook path
+   * (handleRepositoryDeleted) existed. Driven by an external cron script,
+   * NOT the live webhook.
+   *
+   * Uses a single org-level installation token (via
+   * getOrganizationProvisioningContextByLogin(getEnforcedOrg())), not any
+   * individual user's session token, since this runs unattended with no
+   * signed-in user.
+   *
+   * SECOND non-negotiable safety rule, beyond the inconclusive-check one
+   * below: this org-scoped installation token can only reliably vouch for
+   * repos that actually belong to the enforced org. The "import an existing
+   * repo" flow (ExistingReposService) lets a project point at ANY repo the
+   * connecting user owns — personal account or a different org entirely —
+   * so provisioned_projects can legitimately contain rows outside the
+   * enforced org. GitHub's API returns a 404 both for "deleted" AND for "the
+   * calling token has no access to this repo", and an org installation token
+   * has no access to a repo it doesn't own — those two cases are
+   * indistinguishable from repoExists()'s return value alone. Checking such
+   * a row with the org token would therefore read as a false "confirmed
+   * gone" and wrongly delete a project whose repo is perfectly fine. Rows
+   * whose repo_full_name owner doesn't match the enforced org are skipped
+   * entirely (outOfScope), never passed to repoExists().
+   *
+   * Same concurrency-capped batching as syncProjects() (CONCURRENCY = 10)
+   * to avoid GitHub secondary rate limits, and the SAME non-negotiable
+   * safety rule for the repos this job CAN check: repoExists() throws on
+   * anything inconclusive (401/403/5xx/network errors) — those rows are
+   * skipped, NEVER treated as "confirmed gone". Only a clean `false`
+   * (confirmed 404 from a repo we know the token can see) qualifies a row
+   * for deletion. A bad/expired org token or a transient GitHub outage must
+   * never mass-delete every tracked project.
+   */
+  async reconcileDeletedRepos(): Promise<ReconcileDeletedReposResult> {
+    const enforcedOrg = this.githubService.getEnforcedOrg();
+    const { accessToken } =
+      await this.githubService.getOrganizationProvisioningContextByLogin(
+        enforcedOrg,
+      );
+
+    const allRows = await this.projectsRepository.listAllRepoFullNames();
+    if (allRows.length === 0) {
+      return { total: 0, checked: 0, deleted: 0, skipped: 0, outOfScope: 0 };
+    }
+
+    const normalizedOrg = enforcedOrg.toLowerCase();
+    const rows = allRows.filter(
+      (row) =>
+        row.repo_full_name.split('/')[0]?.toLowerCase() === normalizedOrg,
+    );
+    const outOfScope = allRows.length - rows.length;
+    if (outOfScope > 0) {
+      this.logger.warn(
+        `Reconcile: skipping ${String(outOfScope)} project(s) whose repo is outside the ${enforcedOrg} org — the org installation token cannot reliably verify them (see method doc).`,
+      );
+    }
+
+    const confirmedGoneRepoFullNames: string[] = [];
+    let skipped = 0;
+
+    const CONCURRENCY = 10;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      const batch = rows.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (row) => {
+          try {
+            const exists = await this.githubService.repoExists(
+              accessToken,
+              row.repo_full_name,
+            );
+            if (!exists) {
+              confirmedGoneRepoFullNames.push(row.repo_full_name);
+            }
+          } catch (err) {
+            // See method doc: inconclusive checks are skipped, never
+            // treated as confirmation the repo is gone.
+            skipped += 1;
+            this.logger.warn(
+              `Reconcile: GitHub check failed for ${row.repo_full_name}: ${String(err)}`,
+            );
+          }
+        }),
+      );
+    }
+
+    const deletedByOwner = new Map<
+      string,
+      Array<{ id: string; user_id: string }>
+    >();
+    for (const repoFullName of confirmedGoneRepoFullNames) {
+      const deletedRows =
+        await this.projectsRepository.deleteByRepoFullName(repoFullName);
+      if (deletedRows.length > 0) {
+        deletedByOwner.set(repoFullName, deletedRows);
+      }
+    }
+
+    const totalDeleted = [...deletedByOwner.values()].reduce(
+      (sum, rowsForRepo) => sum + rowsForRepo.length,
+      0,
+    );
+
+    this.logger.log(
+      `Reconcile: checked ${rows.length} project(s) (${String(outOfScope)} out of scope), deleted ${totalDeleted}, skipped ${skipped} (inconclusive)`,
+    );
+
+    await Promise.all(
+      [...deletedByOwner.entries()].flatMap(([repoFullName, deletedRows]) =>
+        deletedRows.map((row) =>
+          // projectId is `null`, not `row.id` — same FK reasoning as
+          // handleRepositoryDeleted: the row is already gone by the time
+          // this runs, and audit/notification project_id references would
+          // fail their FK constraint. `source: 'reconciliation'` (vs.
+          // 'webhook') keeps the two deletion paths distinguishable in
+          // audit history.
+          this.recordProductEvent({
+            userId: row.user_id,
+            projectId: null,
+            eventCode: 'project_deleted_reconciliation',
+            title: 'Repository deleted on GitHub',
+            body: `The GitHub repository ${repoFullName} was found deleted during scheduled reconciliation, so this project has been deleted.`,
+            metadata: {
+              repoFullName,
+              source: 'reconciliation',
+              deletedProjectId: row.id,
+            },
+          }),
+        ),
+      ),
+    );
+
+    return {
+      total: allRows.length,
+      checked: rows.length,
+      deleted: totalDeleted,
+      skipped,
+      outOfScope,
     };
   }
 

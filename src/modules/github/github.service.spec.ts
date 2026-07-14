@@ -584,6 +584,103 @@ describe('GithubService', () => {
         ),
       ).rejects.toThrow('Invalid GitHub webhook signature');
     });
+
+    describe('repository deleted', () => {
+      const sign = (payload: unknown) => {
+        const rawBody = Buffer.from(JSON.stringify(payload));
+        const signature = `sha256=${createHmac('sha256', 'webhook-secret')
+          .update(rawBody)
+          .digest('hex')}`;
+        return { rawBody, signature };
+      };
+
+      it('emits repository.deleted with the repo full_name', async () => {
+        const payload = {
+          action: 'deleted',
+          repository: { full_name: 'Alpha-Explora/some-repo' },
+          installation: { id: 12345 },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-1',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).toHaveBeenCalledWith({
+          repoFullName: 'Alpha-Explora/some-repo',
+        });
+        expect(installationsRepository.deleteInstallation).not.toHaveBeenCalled();
+      });
+
+      it('ignores repository events for actions other than deleted', async () => {
+        const payload = {
+          action: 'renamed',
+          repository: { full_name: 'Alpha-Explora/some-repo' },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await service.handleWebhook(
+          signature,
+          'repository',
+          'delivery-repo-2',
+          rawBody,
+          payload,
+        );
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it('does not emit when the repository object is missing', async () => {
+        const payload = { action: 'deleted' };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-3',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it('does not emit when full_name is missing or not a string', async () => {
+        const payload = {
+          action: 'deleted',
+          repository: { full_name: 42 },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-4',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('GitHub App installation repository reads', () => {
