@@ -8,6 +8,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -70,4 +71,9 @@ export class SetupProjectDto {
   @ValidateNested()
   @Type(() => DeploymentProvisioningRequestDto)
   deploymentProvisioning?: DeploymentProvisioningRequestDto;
+
+  /** Group/workspace to create this project inside (see CreateProjectDto). */
+  @IsOptional()
+  @IsUUID()
+  workspaceId?: string;
 }

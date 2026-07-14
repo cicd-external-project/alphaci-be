@@ -177,7 +177,7 @@ describe('ProjectsRepository', () => {
     const result = await repo.findByIdAndUser('project-1', 'user-1');
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE id = $1'),
+      expect.stringContaining('WHERE pp.id = $1'),
       ['project-1', 'user-1', null],
     );
     expect(result).toEqual(fakeRow);

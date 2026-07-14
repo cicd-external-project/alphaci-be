@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -309,4 +310,13 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => DeploymentProvisioningRequestDto)
   deploymentProvisioning?: DeploymentProvisioningRequestDto;
+
+  /**
+   * Group/workspace to create this project inside. When the "Create project"
+   * form is launched from a group, its id is passed here so the project is
+   * owned by that group. Omitted → the caller's default (personal) workspace.
+   */
+  @IsOptional()
+  @IsUUID()
+  workspaceId?: string;
 }
