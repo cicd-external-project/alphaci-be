@@ -10,7 +10,15 @@ import type { Request } from 'express';
 import { PlatformAdminsRepository } from '../platform-admins.repository';
 
 /**
- * PlatformAdminGuard — allows only platform admins (role 'admin' or 'super_admin').
+ * PlatformAdminGuard — gates the Admin Console on the GLOBAL admin tier.
+ *
+ * Access is granted to a user whose global `app_role` is 'admin', OR the
+ * permanent platform super-admin (identity.platform_admins.role='super_admin').
+ * This deliberately does NOT grant access on a bare platform_admins 'admin'
+ * row: a user who has been set to Lead or Member in the Admin Console must lose
+ * admin-tab access (product decision 2026-07-14 — "members and leads should not
+ * access the admin tab"). The super-admin is always allowed so the permanent
+ * admin can never be locked out.
  *
  * Designed to run AFTER SessionAuthGuard (which populates req.session.user), e.g.
  *   @UseGuards(SessionAuthGuard, PlatformAdminGuard)
@@ -32,11 +40,17 @@ export class PlatformAdminGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required');
     }
 
-    const role = await this.platformAdminsRepository.findRole(userId);
-    if (role === null) {
-      throw new ForbiddenException('Platform admin access required');
+    // The permanent super-admin always has access.
+    const platformRole = await this.platformAdminsRepository.findRole(userId);
+    if (platformRole === 'super_admin') {
+      return true;
     }
 
-    return true;
+    const appRole = await this.platformAdminsRepository.findAppRole(userId);
+    if (appRole === 'admin') {
+      return true;
+    }
+
+    throw new ForbiddenException('Admin access required');
   }
 }
