@@ -87,6 +87,19 @@ export interface GroupInvitationRecord {
   createdAt: string;
   respondedAt: string | null;
   expiresAt: string | null;
+  /**
+   * Display enrichment joined from identity.app_users / orgs.workspaces so the
+   * UI can render the invitee's real name + GitHub avatar (and, for the
+   * invitee's own inbox, who invited them and into which group) instead of a
+   * bare UUID. Null when the referenced profile/group no longer exists.
+   */
+  inviteeLogin: string | null;
+  inviteeName: string | null;
+  inviteeEmail: string | null;
+  inviteeAvatarUrl: string | null;
+  invitedByLogin: string | null;
+  invitedByName: string | null;
+  groupName: string | null;
 }
 
 interface GroupRow {
@@ -129,6 +142,13 @@ interface InvitationRow {
   created_at: string;
   responded_at: string | null;
   expires_at: string | null;
+  invitee_login: string | null;
+  invitee_name: string | null;
+  invitee_email: string | null;
+  invitee_avatar_url: string | null;
+  invited_by_login: string | null;
+  invited_by_name: string | null;
+  group_name: string | null;
 }
 
 @Injectable()
@@ -255,7 +275,9 @@ export class GroupsRepository {
         ORDER BY created_at DESC;
       `,
     );
-    const counts = await this.getCountsForGroups(result.rows.map((row) => row.id));
+    const counts = await this.getCountsForGroups(
+      result.rows.map((row) => row.id),
+    );
     return result.rows.map((row) => this.toGroup(row, counts.get(row.id)));
   }
 
@@ -658,36 +680,78 @@ export class GroupsRepository {
     });
   }
 
+  /**
+   * Shared SELECT for invitations, LEFT JOINed to the invitee + inviter
+   * profiles and the group so every read carries display enrichment (real
+   * name, GitHub login/avatar, group name). LEFT JOIN so a missing profile
+   * never drops the invitation row.
+   */
+  private static readonly INVITATION_SELECT = `
+    SELECT
+      inv.id, inv.workspace_id, inv.invited_user_id, inv.invited_by,
+      inv.role, inv.status, inv.created_at, inv.responded_at, inv.expires_at,
+      invitee.login AS invitee_login,
+      invitee.display_name AS invitee_name,
+      invitee.email AS invitee_email,
+      invitee.avatar_url AS invitee_avatar_url,
+      inviter.login AS invited_by_login,
+      inviter.display_name AS invited_by_name,
+      workspace.name AS group_name
+    FROM orgs.group_invitations AS inv
+    LEFT JOIN identity.app_users AS invitee ON invitee.id = inv.invited_user_id
+    LEFT JOIN identity.app_users AS inviter ON inviter.id = inv.invited_by
+    LEFT JOIN orgs.workspaces AS workspace ON workspace.id = inv.workspace_id
+  `;
+
   async createInvitation(input: {
     groupId: string;
     invitedUserId: string;
     invitedBy: string;
     role: InvitableRole;
   }): Promise<GroupInvitationRecord> {
-    const result = await this.databaseService.query<InvitationRow>(
+    const inserted = await this.databaseService.query<{ id: string }>(
       `
         INSERT INTO orgs.group_invitations (workspace_id, invited_user_id, invited_by, role)
         VALUES ($1, $2, $3, $4)
-        RETURNING id, workspace_id, invited_user_id, invited_by, role, status, created_at, responded_at, expires_at;
+        RETURNING id;
       `,
       [input.groupId, input.invitedUserId, input.invitedBy, input.role],
     );
-    const row = result.rows[0];
-    if (!row) {
+    const id = inserted.rows[0]?.id;
+    if (!id) {
       throw new Error('Invitation insert did not return a row');
     }
-    return this.toInvitation(row);
+    // Re-read through the enriched select so the created invitation carries the
+    // invitee's name/avatar just like the list/find paths do.
+    const invitation = await this.findInvitationById(id);
+    if (!invitation) {
+      throw new Error('Invitation could not be read back after insert');
+    }
+    return invitation;
   }
 
   async listInvitations(groupId: string): Promise<GroupInvitationRecord[]> {
     const result = await this.databaseService.query<InvitationRow>(
-      `
-        SELECT id, workspace_id, invited_user_id, invited_by, role, status, created_at, responded_at, expires_at
-        FROM orgs.group_invitations
-        WHERE workspace_id = $1
-        ORDER BY created_at DESC;
+      `${GroupsRepository.INVITATION_SELECT}
+        WHERE inv.workspace_id = $1
+        ORDER BY inv.created_at DESC;
       `,
       [groupId],
+    );
+    return result.rows.map((row) => this.toInvitation(row));
+  }
+
+  /** The invitee's own pending invitations across every group (their inbox). */
+  async listPendingInvitationsForUser(
+    userId: string,
+  ): Promise<GroupInvitationRecord[]> {
+    const result = await this.databaseService.query<InvitationRow>(
+      `${GroupsRepository.INVITATION_SELECT}
+        WHERE inv.invited_user_id = $1
+          AND inv.status = 'pending'
+        ORDER BY inv.created_at DESC;
+      `,
+      [userId],
     );
     return result.rows.map((row) => this.toInvitation(row));
   }
@@ -696,10 +760,8 @@ export class GroupsRepository {
     invitationId: string,
   ): Promise<GroupInvitationRecord | null> {
     const result = await this.databaseService.query<InvitationRow>(
-      `
-        SELECT id, workspace_id, invited_user_id, invited_by, role, status, created_at, responded_at, expires_at
-        FROM orgs.group_invitations
-        WHERE id = $1;
+      `${GroupsRepository.INVITATION_SELECT}
+        WHERE inv.id = $1;
       `,
       [invitationId],
     );
@@ -711,17 +773,18 @@ export class GroupsRepository {
     invitationId: string,
     status: InvitationStatus,
   ): Promise<GroupInvitationRecord | null> {
-    const result = await this.databaseService.query<InvitationRow>(
+    const updated = await this.databaseService.query(
       `
         UPDATE orgs.group_invitations
         SET status = $2, responded_at = NOW()
-        WHERE id = $1
-        RETURNING id, workspace_id, invited_user_id, invited_by, role, status, created_at, responded_at, expires_at;
+        WHERE id = $1;
       `,
       [invitationId, status],
     );
-    const row = result.rows[0];
-    return row ? this.toInvitation(row) : null;
+    if (updated.rowCount === 0) {
+      return null;
+    }
+    return this.findInvitationById(invitationId);
   }
 
   /** Activates membership on invitation acceptance — invited row becomes active, or is inserted if absent. */
@@ -771,7 +834,6 @@ export class GroupsRepository {
     );
     return result.rows[0] ?? null;
   }
-
 
   async searchEligibleInternalUsers(
     groupId: string,
@@ -898,6 +960,21 @@ export class GroupsRepository {
     };
   }
 
+  /**
+   * Hard-deletes a Group (team workspace). FK cascades remove its members,
+   * invitations, systems, delivery projects and hierarchy repositories; any
+   * provisioned_projects rows survive with workspace_id set to NULL (ON DELETE
+   * SET NULL), i.e. their GitHub repos are detached to "individual", never
+   * destroyed. Returns false when no such team workspace existed.
+   */
+  async deleteGroup(groupId: string): Promise<boolean> {
+    const result = await this.databaseService.query(
+      `DELETE FROM orgs.workspaces WHERE id = $1 AND kind = 'team';`,
+      [groupId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   private toInvitation(row: InvitationRow): GroupInvitationRecord {
     return {
       id: row.id,
@@ -909,6 +986,13 @@ export class GroupsRepository {
       createdAt: row.created_at,
       respondedAt: row.responded_at,
       expiresAt: row.expires_at,
+      inviteeLogin: row.invitee_login,
+      inviteeName: row.invitee_name ?? row.invitee_login,
+      inviteeEmail: row.invitee_email,
+      inviteeAvatarUrl: row.invitee_avatar_url,
+      invitedByLogin: row.invited_by_login,
+      invitedByName: row.invited_by_name ?? row.invited_by_login,
+      groupName: row.group_name,
     };
   }
 }

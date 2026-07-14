@@ -42,7 +42,9 @@ export class GroupsController {
     // Plan §2.4: "any authenticated internal user" — is_internal is already
     // stamped on the session at sign-in (session-user.interface.ts).
     if (req.session.user?.isInternal !== true) {
-      throw new ForbiddenException('Group creation requires an internal account');
+      throw new ForbiddenException(
+        'Group creation requires an internal account',
+      );
     }
     return this.groupsService.createGroup(userId, body);
   }
@@ -50,6 +52,13 @@ export class GroupsController {
   @Get()
   getMyGroups(@Req() req: Request) {
     return this.groupsService.getMyGroups(this.requireUserId(req));
+  }
+
+  // Declared before the ':groupId' routes so the literal 'invitations'
+  // segment is never captured as a groupId param.
+  @Get('invitations/mine')
+  listMyInvitations(@Req() req: Request) {
+    return this.invitationsService.listMyInvitations(this.requireUserId(req));
   }
 
   @Post('invitations/:invitationId/accept')
@@ -95,6 +104,11 @@ export class GroupsController {
   @Post(':groupId/archive')
   archiveGroup(@Req() req: Request, @Param('groupId') groupId: string) {
     return this.groupsService.archiveGroup(groupId, this.requireUserId(req));
+  }
+
+  @Delete(':groupId')
+  deleteGroup(@Req() req: Request, @Param('groupId') groupId: string) {
+    return this.groupsService.deleteGroup(groupId, this.requireUserId(req));
   }
 
   @Post(':groupId/reopen')

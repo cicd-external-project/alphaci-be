@@ -93,10 +93,11 @@ export class GroupsService {
     userId: string,
     dto: UpdateGroupDto,
   ): Promise<GroupRecord> {
-    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    await this.accessService.assertGroupManagerOrPlatformAdmin(
+      groupId,
+      userId,
+      ['admin', 'delegated_lead'],
+    );
     const group = await this.groupsRepository.updateGroup(groupId, dto);
     if (!group) {
       throw new NotFoundException('Group not found');
@@ -137,6 +138,45 @@ export class GroupsService {
     });
 
     return group;
+  }
+
+  /**
+   * Hard-deletes a Group. Restricted to the Group's top tier ('admin' = the
+   * "Lead" product label) or a platform admin — the same gate archiving uses,
+   * since delete is strictly more destructive. Cascades handle members /
+   * invitations / systems; any provisioned repositories are detached to
+   * "individual" (workspace_id → NULL), never destroyed (see
+   * GroupsRepository.deleteGroup).
+   */
+  async deleteGroup(
+    groupId: string,
+    userId: string,
+  ): Promise<{ id: string; deleted: true }> {
+    await this.accessService.assertGroupManagerOrPlatformAdmin(
+      groupId,
+      userId,
+      ['admin'],
+    );
+    const group = await this.groupsRepository.findGroupById(groupId);
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    // Record the intent BEFORE the row (and its cascaded audit rows) disappear.
+    await this.auditEventsService.recordProjectEvent({
+      workspaceId: groupId,
+      actorUserId: userId,
+      eventCode: HIERARCHY_EVENT_CODES.groupDeleted,
+      message: `Group "${group.name}" deleted`,
+      metadata: { groupId, name: group.name },
+    });
+
+    const deleted = await this.groupsRepository.deleteGroup(groupId);
+    if (!deleted) {
+      throw new NotFoundException('Group not found');
+    }
+
+    return { id: groupId, deleted: true };
   }
 
   async reopenGroup(groupId: string, userId: string): Promise<GroupRecord> {
@@ -262,31 +302,33 @@ export class GroupsService {
     );
     const term = normalized.toLowerCase();
 
-    return orgMembers
-      .map((member): InternalUserDirectoryEntry => {
-        const account = accountByLogin.get(member.login.toLowerCase());
-        return {
-          id: account?.id ?? null,
-          login: member.login,
-          name: account?.name ?? member.login,
-          email: account?.email ?? null,
-          avatarUrl: account?.avatarUrl ?? member.avatarUrl,
-          hasAccount: account !== undefined,
-        };
-      })
-      // Drop people already active in this Group.
-      .filter(
-        (entry) =>
-          !accountByLogin.get(entry.login.toLowerCase())?.isActiveMember,
-      )
-      // Apply the narrowing search over login + display name.
-      .filter(
-        (entry) =>
-          term.length === 0 ||
-          entry.login.toLowerCase().includes(term) ||
-          (entry.name ?? '').toLowerCase().includes(term),
-      )
-      .slice(0, 50);
+    return (
+      orgMembers
+        .map((member): InternalUserDirectoryEntry => {
+          const account = accountByLogin.get(member.login.toLowerCase());
+          return {
+            id: account?.id ?? null,
+            login: member.login,
+            name: account?.name ?? member.login,
+            email: account?.email ?? null,
+            avatarUrl: account?.avatarUrl ?? member.avatarUrl,
+            hasAccount: account !== undefined,
+          };
+        })
+        // Drop people already active in this Group.
+        .filter(
+          (entry) =>
+            !accountByLogin.get(entry.login.toLowerCase())?.isActiveMember,
+        )
+        // Apply the narrowing search over login + display name.
+        .filter(
+          (entry) =>
+            term.length === 0 ||
+            entry.login.toLowerCase().includes(term) ||
+            (entry.name ?? '').toLowerCase().includes(term),
+        )
+        .slice(0, 50)
+    );
   }
 
   async updateMemberRole(
@@ -371,10 +413,11 @@ export class GroupsService {
     memberId: string,
     reason?: string,
   ): Promise<GroupMemberRecord> {
-    await this.accessService.assertGroupManagerOrPlatformAdmin(groupId, userId, [
-      'admin',
-      'delegated_lead',
-    ]);
+    await this.accessService.assertGroupManagerOrPlatformAdmin(
+      groupId,
+      userId,
+      ['admin', 'delegated_lead'],
+    );
     const target = await this.groupsRepository.findMemberById(
       groupId,
       memberId,

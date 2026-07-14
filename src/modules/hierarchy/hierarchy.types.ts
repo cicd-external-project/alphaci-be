@@ -66,7 +66,11 @@ export type ConfigurationType = 'variable' | 'secret';
 
 export type ConfigurationAction = 'create' | 'update' | 'delete';
 
-export type ApprovalState = 'not_required' | 'pending' | 'approved' | 'rejected';
+export type ApprovalState =
+  | 'not_required'
+  | 'pending'
+  | 'approved'
+  | 'rejected';
 
 export type ConfigurationSyncState = 'pending' | 'synced' | 'failed';
 
@@ -86,6 +90,7 @@ export const HIERARCHY_EVENT_CODES = {
   groupUpdated: 'hierarchy.group.updated',
   groupArchived: 'hierarchy.group.archived',
   groupReopened: 'hierarchy.group.reopened',
+  groupDeleted: 'hierarchy.group.deleted',
   groupManagerTransferred: 'hierarchy.group.manager_transferred',
   invitationCreated: 'hierarchy.group.invitation_created',
   invitationAccepted: 'hierarchy.group.invitation_accepted',

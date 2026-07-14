@@ -90,6 +90,15 @@ export class GroupInvitationsService {
     return this.groupsRepository.listInvitations(groupId);
   }
 
+  /**
+   * The caller's own pending invitations across every group — the invitee
+   * inbox that makes an invitation actionable (accept / decline). No group
+   * membership is required: by definition the invitee is not yet a member.
+   */
+  async listMyInvitations(userId: string): Promise<GroupInvitationRecord[]> {
+    return this.groupsRepository.listPendingInvitationsForUser(userId);
+  }
+
   async acceptInvitation(
     invitationId: string,
     userId: string,
