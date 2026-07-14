@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -490,7 +491,10 @@ export class ProjectsService {
       // whose pipelines can never authenticate.
       row = await this.projectsRepository.create({
         userId,
-        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        workspaceId: await this.resolveWorkspaceIdForCreate(
+          userId,
+          dto.workspaceId,
+        ),
         repoFullName,
         templateId,
         serviceName: dto.serviceName,
@@ -741,7 +745,10 @@ export class ProjectsService {
       // access-gate runs as soon as a workflow file is pushed.
       backendRow = await this.projectsRepository.create({
         userId,
-        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        workspaceId: await this.resolveWorkspaceIdForCreate(
+          userId,
+          dto.workspaceId,
+        ),
         repoFullName,
         templateId: backendTemplateId,
         serviceName: backend.serviceName,
@@ -840,7 +847,10 @@ export class ProjectsService {
         try {
           await this.projectsRepository.create({
             userId,
-            workspaceId: await this.resolveDefaultWorkspaceId(userId),
+            workspaceId: await this.resolveWorkspaceIdForCreate(
+              userId,
+              dto.workspaceId,
+            ),
             repoFullName,
             templateId: frontendTemplateId,
             serviceName: frontend.serviceName,
@@ -962,7 +972,10 @@ export class ProjectsService {
 
     const row = await this.projectsRepository.create({
       userId,
-      workspaceId: await this.resolveDefaultWorkspaceId(userId),
+      workspaceId: await this.resolveWorkspaceIdForCreate(
+        userId,
+        dto.workspaceId,
+      ),
       repoFullName: dto.repoFullName,
       templateId: dto.templateId,
       serviceName: dto.serviceName,
@@ -3019,7 +3032,10 @@ export class ProjectsService {
       // access-gate run can authenticate (see createProject for rationale).
       backendRow = await this.projectsRepository.create({
         userId,
-        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        workspaceId: await this.resolveWorkspaceIdForCreate(
+          userId,
+          dto.workspaceId,
+        ),
         repoFullName: beRepoFullName,
         templateId: backendTemplateId,
         serviceName: backend.serviceName,
@@ -3182,7 +3198,10 @@ export class ProjectsService {
 
       feRow = await this.projectsRepository.create({
         userId,
-        workspaceId: await this.resolveDefaultWorkspaceId(userId),
+        workspaceId: await this.resolveWorkspaceIdForCreate(
+          userId,
+          dto.workspaceId,
+        ),
         repoFullName: feRepoFullName,
         templateId: frontendTemplateId,
         serviceName: frontend.serviceName,
@@ -3461,6 +3480,33 @@ export class ProjectsService {
   ): Promise<string | null> {
     const workspaces = await this.workspacesService?.getMyWorkspaces(userId);
     return workspaces?.items[0]?.id ?? null;
+  }
+
+  /**
+   * Workspace a newly-created project belongs to. When the caller creates from
+   * inside a group (the "Create project" form passes that group's id), the
+   * project is owned by that group — but only if the caller actually belongs to
+   * it (or is a global admin), so a project can't be smuggled into a group the
+   * caller has no access to. Otherwise it falls back to the caller's default
+   * (personal) workspace.
+   */
+  private async resolveWorkspaceIdForCreate(
+    userId: string,
+    workspaceId?: string | null,
+  ): Promise<string | null> {
+    if (!workspaceId) {
+      return this.resolveDefaultWorkspaceId(userId);
+    }
+    const allowed = await this.projectsRepository.canCreateInWorkspace(
+      userId,
+      workspaceId,
+    );
+    if (!allowed) {
+      throw new ForbiddenException(
+        'You are not a member of the selected group.',
+      );
+    }
+    return workspaceId;
   }
 
   /**

@@ -4,6 +4,42 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 
+/**
+ * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
+ * `userParam` is a positional placeholder literal (e.g. '$1') — NOT user input,
+ * so interpolating it carries no injection risk. A project is visible when the
+ * viewer is:
+ *   - a GLOBAL admin (app_role 'admin', or any platform_admins row) — sees all;
+ *   - the project owner;
+ *   - a MANAGER (Lead/owner tier) of the owning group/workspace; or
+ *   - actively assigned to the hierarchy repository linked to the project.
+ * A plain group member with no assignment therefore only sees the repositories
+ * they were explicitly assigned to (product decision 2026-07-14).
+ */
+function projectVisibilitySql(userParam: string): string {
+  return `
+    EXISTS (SELECT 1 FROM identity.app_users vu
+             WHERE vu.id = ${userParam} AND vu.app_role = 'admin')
+    OR EXISTS (SELECT 1 FROM identity.platform_admins vpa
+                WHERE vpa.user_id = ${userParam})
+    OR pp.user_id = ${userParam}
+    OR EXISTS (
+      SELECT 1 FROM orgs.workspace_members vm
+       WHERE vm.workspace_id = pp.workspace_id
+         AND vm.user_id = ${userParam}
+         AND vm.member_status = 'active'
+         AND vm.role IN ('admin', 'delegated_lead')
+    )
+    OR EXISTS (
+      SELECT 1
+        FROM hierarchy.repositories vhr
+        JOIN hierarchy.repository_assignments vra ON vra.repository_id = vhr.id
+       WHERE vhr.provisioned_project_id = pp.id
+         AND vra.user_id = ${userParam}
+         AND vra.status IN ('active', 'pending')
+    )`;
+}
+
 export type ProvisionedProjectStatus =
   | 'provisioning'
   | 'provisioned'
@@ -176,7 +212,7 @@ export class ProjectsRepository {
       ? Math.max(1, Math.min(100, Math.trunc(limit)))
       : 25;
 
-    const workspaceFilter = workspaceId ? 'AND workspace_id = $3' : '';
+    const workspaceFilter = workspaceId ? 'AND pp.workspace_id = $3' : '';
     const values = workspaceId
       ? [userId, safeLimit, workspaceId]
       : [userId, safeLimit];
@@ -184,38 +220,30 @@ export class ProjectsRepository {
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          template_id,
-          service_name,
-          workflow_path,
-          status,
-          github_commit_sha,
-          github_commit_url,
-          failure_reason,
-          github_repository_url AS repo_url,
-          visibility,
-          repo_shape,
-          project_type_id,
-          workflow_recipe_id,
-          project_options,
-          workspace_id,
-          is_example,
-          created_at,
-          updated_at
-        FROM projects.provisioned_projects
-        WHERE (
-          user_id = $1
-          OR EXISTS (
-            SELECT 1
-            FROM orgs.workspace_members AS member
-            WHERE member.workspace_id = projects.provisioned_projects.workspace_id
-              AND member.user_id = $1
-          )
-        )
+          pp.id,
+          pp.user_id,
+          pp.repo_full_name,
+          pp.template_id,
+          pp.service_name,
+          pp.workflow_path,
+          pp.status,
+          pp.github_commit_sha,
+          pp.github_commit_url,
+          pp.failure_reason,
+          pp.github_repository_url AS repo_url,
+          pp.visibility,
+          pp.repo_shape,
+          pp.project_type_id,
+          pp.workflow_recipe_id,
+          pp.project_options,
+          pp.workspace_id,
+          pp.is_example,
+          pp.created_at,
+          pp.updated_at
+        FROM projects.provisioned_projects AS pp
+        WHERE (${projectVisibilitySql('$1')})
         ${workspaceFilter}
-        ORDER BY created_at DESC
+        ORDER BY pp.created_at DESC
         LIMIT $2;
       `,
       values,
@@ -235,6 +263,34 @@ export class ProjectsRepository {
    * for a destructive/sensitive read (e.g. before an opt-in GitHub repo
    * delete) should pass an explicit allowedRoles list.
    */
+  /**
+   * May this user create a project inside the given workspace/group? True for
+   * an active member of the workspace, or any global admin (app_role 'admin' or
+   * a platform_admins row). Used to validate a group-scoped "Create project".
+   */
+  async canCreateInWorkspace(
+    userId: string,
+    workspaceId: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query<{ allowed: boolean }>(
+      `
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM orgs.workspace_members m
+             WHERE m.workspace_id = $2 AND m.user_id = $1
+               AND m.member_status = 'active'
+          )
+          OR EXISTS (SELECT 1 FROM identity.app_users u
+                      WHERE u.id = $1 AND u.app_role = 'admin')
+          OR EXISTS (SELECT 1 FROM identity.platform_admins pa
+                      WHERE pa.user_id = $1)
+        ) AS allowed;
+      `,
+      [userId, workspaceId],
+    );
+    return result.rows[0]?.allowed ?? false;
+  }
+
   async findByIdAndUser(
     id: string,
     userId: string,
@@ -243,37 +299,45 @@ export class ProjectsRepository {
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          template_id,
-          service_name,
-          workflow_path,
-          status,
-          github_commit_sha,
-          github_commit_url,
-          failure_reason,
-          github_repository_url AS repo_url,
-          visibility,
-          repo_shape,
-          project_type_id,
-          workflow_recipe_id,
-          project_options,
-          workspace_id,
-          is_example,
-          created_at,
-          updated_at
-        FROM projects.provisioned_projects
-        WHERE id = $1
+          pp.id,
+          pp.user_id,
+          pp.repo_full_name,
+          pp.template_id,
+          pp.service_name,
+          pp.workflow_path,
+          pp.status,
+          pp.github_commit_sha,
+          pp.github_commit_url,
+          pp.failure_reason,
+          pp.github_repository_url AS repo_url,
+          pp.visibility,
+          pp.repo_shape,
+          pp.project_type_id,
+          pp.workflow_recipe_id,
+          pp.project_options,
+          pp.workspace_id,
+          pp.is_example,
+          pp.created_at,
+          pp.updated_at
+        FROM projects.provisioned_projects AS pp
+        WHERE pp.id = $1
           AND (
-            user_id = $2
-            OR EXISTS (
-              SELECT 1
-              FROM orgs.workspace_members AS member
-              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
-                AND member.user_id = $2
-                AND ($3::text[] IS NULL OR member.role = ANY($3::text[]))
-            )
+            CASE WHEN $3::text[] IS NOT NULL THEN
+              -- Restricted mode (e.g. destructive delete): owner OR a workspace
+              -- member holding one of the explicitly allowed roles. Unchanged.
+              pp.user_id = $2
+              OR EXISTS (
+                SELECT 1
+                FROM orgs.workspace_members AS member
+                WHERE member.workspace_id = pp.workspace_id
+                  AND member.user_id = $2
+                  AND member.role = ANY($3::text[])
+              )
+            ELSE
+              -- Default read: same role-aware visibility as the dashboard list
+              -- (global admin / owner / group manager / assigned member).
+              ${projectVisibilitySql('$2')}
+            END
           )
         LIMIT 1;
       `,
