@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -194,6 +195,29 @@ export class AdminService {
     const target = await this.adminRepository.findUserById(targetUserId);
     if (!target) {
       throw new NotFoundException('User not found');
+    }
+
+    // Admin-tier authorization (product decision 2026-07-14):
+    //  - The permanent super-admin can never be demoted below Admin.
+    //  - Promoting someone TO Admin, or demoting someone FROM Admin, is
+    //    reserved for the super-admin. A regular Admin may still shuffle the
+    //    lower Lead/Member tiers but cannot mint or unmake other Admins.
+    const [actorPlatformRole, targetPlatformRole, targetCurrentRole] =
+      await Promise.all([
+        this.platformAdminsRepository.findRole(actorId),
+        this.platformAdminsRepository.findRole(targetUserId),
+        this.platformAdminsRepository.findAppRole(targetUserId),
+      ]);
+
+    if (targetPlatformRole === 'super_admin' && role !== 'admin') {
+      throw new BadRequestException('The permanent admin cannot be demoted.');
+    }
+
+    const involvesAdminTier = role === 'admin' || targetCurrentRole === 'admin';
+    if (involvesAdminTier && actorPlatformRole !== 'super_admin') {
+      throw new ForbiddenException(
+        'Only the super-admin can change Admin-level roles.',
+      );
     }
 
     await this.platformAdminsRepository.setAppRole(targetUserId, role);
