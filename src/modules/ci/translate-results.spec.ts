@@ -20,26 +20,44 @@ describe('translateResults', () => {
   });
 
   describe('conclusion = failure with empty results', () => {
-    it('returns generic crash message for non-access stages', () => {
+    it('explains when quality diagnostics were not reported', () => {
       const msgs = translateResults('quality', 'failure', {});
       expect(msgs).toHaveLength(1);
       expect(msgs[0]?.severity).toBe('error');
-      expect(msgs[0]?.title).toBe('Pipeline job crashed');
-      expect(msgs[0]?.hint).toContain('GitHub Actions run logs');
+      expect(msgs[0]?.title).toBe(
+        'Quality check failed before diagnostics were reported',
+      );
+      expect(msgs[0]?.hint).toContain('first failed quality step');
     });
 
-    it('returns access-specific message for access stage', () => {
+    it('explains when access diagnostics were not reported', () => {
       const msgs = translateResults('access', 'failure', {});
       expect(msgs).toHaveLength(1);
       expect(msgs[0]?.severity).toBe('error');
-      expect(msgs[0]?.title).toBe('Access gate failed');
-      expect(msgs[0]?.hint).toContain('CI_TOKEN');
+      expect(msgs[0]?.title).toBe(
+        'Access check failed before diagnostics were reported',
+      );
+      expect(msgs[0]?.hint).toContain('ALPHACI_TOKEN');
     });
 
-    it('returns crash message for package stage with empty results', () => {
+    it('explains when package diagnostics were not reported', () => {
       const msgs = translateResults('package', 'failure', {});
       expect(msgs).toHaveLength(1);
-      expect(msgs[0]?.title).toBe('Pipeline job crashed');
+      expect(msgs[0]?.title).toBe(
+        'Build or package check failed before diagnostics were reported',
+      );
+    });
+
+    it('turns a reported failed job into a concrete fix', () => {
+      const msgs = translateResults(
+        'quality',
+        'failure',
+        {},
+        'Failed GitHub Actions job: typecheck',
+      );
+      expect(msgs[0]?.title).toBe('Type check failed');
+      expect(msgs[0]?.hint).toContain('npm run typecheck');
+      expect(msgs[0]?.items).toEqual([{ label: 'typecheck' }]);
     });
   });
 

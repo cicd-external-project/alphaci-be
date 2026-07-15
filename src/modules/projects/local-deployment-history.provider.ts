@@ -48,6 +48,7 @@ export class LocalDeploymentHistoryProvider {
         createdAt: now,
         readyAt: now,
         providerUrl: this.providerUrl(target),
+        consoleUrl: this.consoleUrl(target),
       }),
     );
     return Promise.resolve(deployments);
@@ -73,7 +74,7 @@ export class LocalDeploymentHistoryProvider {
     return 'unknown';
   }
 
-  private providerUrl(target: DeploymentTargetSummary): string {
+  providerUrl(target: DeploymentTargetSummary): string {
     if (target.provider === 'vercel') {
       const teamSlug =
         typeof target.providerMetadata['vercelTeamSlug'] === 'string'
@@ -85,5 +86,19 @@ export class LocalDeploymentHistoryProvider {
     }
 
     return `https://dashboard.render.com/web/${target.providerProjectId}`;
+  }
+
+  consoleUrl(target: DeploymentTargetSummary): string {
+    if (target.provider === 'vercel') {
+      const teamSlug =
+        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+          ? target.providerMetadata['vercelTeamSlug'].trim()
+          : '';
+      return teamSlug
+        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
+        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
+    }
+
+    return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
   }
 }

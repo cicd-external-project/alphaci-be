@@ -47,11 +47,31 @@ async function bootstrap(): Promise<void> {
       s: typeof session,
     ) => new (options: Record<string, unknown>) => session.Store;
     const PgStore = connectPg(session);
+    // Connection budget: this pool shares the Supabase Supavisor session-mode
+    // pooler (pool_size: 15 project-wide) with DatabaseService's app pool and
+    // the process-outbox cron job. Session reads/writes are cheap single-row
+    // lookups, so a small cap is plenty — see the shared-budget comment on
+    // DatabaseService's pool in database.service.ts for the full math. Left
+    // unset, pg defaults `max` to 10, which alone was enough to blow the
+    // budget and is what caused the EMAXCONNSESSION crashes.
+    const sessionPool = new Pool({
+      connectionString: appCfg.supabase.dbUrl,
+      ssl: postgresSslConfig(appCfg.supabase.dbUrl, appCfg.supabase.dbCaCert),
+      max: 2,
+    });
+    // pg emits 'error' on IDLE clients when the server or network drops them
+    // out from under the pool (mirrors the handler on DatabaseService's pool).
+    // Without this, a dropped idle client here throws unhandled and crashes
+    // the process — every request passes through session middleware first,
+    // so this pool's errors are the most likely source of an unhandled
+    // exception reaching AllExceptionsFilter.
+    sessionPool.on('error', (err) => {
+      logger.warn(
+        `Idle session-store Postgres client error (connection dropped, will be replaced): ${err.message}`,
+      );
+    });
     sessionStore = new PgStore({
-      pool: new Pool({
-        connectionString: appCfg.supabase.dbUrl,
-        ssl: postgresSslConfig(appCfg.supabase.dbUrl, appCfg.supabase.dbCaCert),
-      }),
+      pool: sessionPool,
       tableName: 'session',
       createTableIfMissing: true,
     });

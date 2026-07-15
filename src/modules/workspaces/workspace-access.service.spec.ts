@@ -25,15 +25,15 @@ describe('WorkspaceAccessService', () => {
     repository.findMembership.mockResolvedValue({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'owner',
+      role: 'admin',
     });
 
     await expect(
-      service.assertWorkspaceRole('workspace-1', 'user-1', ['owner', 'admin']),
+      service.assertWorkspaceRole('workspace-1', 'user-1', ['admin', 'delegated_lead']),
     ).resolves.toEqual({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'owner',
+      role: 'admin',
     });
   });
 
@@ -41,11 +41,11 @@ describe('WorkspaceAccessService', () => {
     repository.findMembership.mockResolvedValue({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'developer',
+      role: 'member',
     });
 
     await expect(
-      service.assertWorkspaceRole('workspace-1', 'user-1', ['owner', 'admin']),
+      service.assertWorkspaceRole('workspace-1', 'user-1', ['admin', 'delegated_lead']),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -71,8 +71,8 @@ describe('WorkspaceAccessService', () => {
     await expect(
       service.assertCanChangeOwnerRole(
         'workspace-1',
-        { workspaceId: 'workspace-1', userId: 'owner-1', role: 'owner' },
-        'admin',
+        { workspaceId: 'workspace-1', userId: 'owner-1', role: 'admin' },
+        'delegated_lead',
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -84,7 +84,7 @@ describe('WorkspaceAccessService', () => {
       service.assertCanRemoveMember('workspace-1', {
         workspaceId: 'workspace-1',
         userId: 'owner-1',
-        role: 'owner',
+        role: 'admin',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });

@@ -31,6 +31,7 @@ const makeGithubService = () =>
     getAppInstallUrl: jest
       .fn()
       .mockReturnValue('https://github.com/apps/flowci/installations/new'),
+    getAppSlug: jest.fn().mockReturnValue('flowci'),
     linkInstallation: jest.fn().mockResolvedValue({
       reposLinked: 3,
       repositorySelection: 'selected',
@@ -82,6 +83,7 @@ describe('GithubController', () => {
   it('returns the GitHub App installation URL', () => {
     expect(controller.getAppInstallUrl()).toEqual({
       installUrl: 'https://github.com/apps/flowci/installations/new',
+      appSlug: 'flowci',
     });
   });
 
@@ -203,14 +205,14 @@ describe('GithubController', () => {
         repoUrl: 'https://github.com/tone/orders-api',
         cloneUrl: 'https://github.com/tone/orders-api.git',
         defaultBranch: 'main',
-        branchesCreated: ['main', 'develop', 'uat', 'test'],
+        branchesCreated: ['main', 'develop', 'uat'],
       });
 
       expect(service.createRepo).toHaveBeenCalledWith('gh-token', {
         repoName: 'orders-api',
         private: true,
       });
-      expect(service.createBranch).toHaveBeenCalledTimes(3);
+      expect(service.createBranch).toHaveBeenCalledTimes(2);
       expect(service.createBranch).toHaveBeenNthCalledWith(
         1,
         'gh-token',
@@ -227,15 +229,21 @@ describe('GithubController', () => {
         'uat',
         'main',
       );
-      expect(service.createBranch).toHaveBeenNthCalledWith(
-        3,
+      expect(service.applyBranchProtection).toHaveBeenCalledTimes(2);
+      expect(service.applyBranchProtection).toHaveBeenNthCalledWith(
+        1,
         'gh-token',
         'tone',
         'orders-api',
-        'test',
+        'uat',
+      );
+      expect(service.applyBranchProtection).toHaveBeenNthCalledWith(
+        2,
+        'gh-token',
+        'tone',
+        'orders-api',
         'main',
       );
-      expect(service.applyBranchProtection).toHaveBeenCalledTimes(4);
     });
   });
 });

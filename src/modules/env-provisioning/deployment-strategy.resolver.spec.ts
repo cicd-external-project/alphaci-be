@@ -3,7 +3,7 @@ import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 describe('DeploymentStrategyResolver', () => {
   const resolver = new DeploymentStrategyResolver();
 
-  it('uses CI-pushed deployments for FlowCI-managed Vercel targets', () => {
+  it('uses CI-pushed deployments for ALPHACI-managed Vercel targets', () => {
     expect(
       resolver.resolve({
         provider: 'vercel',
@@ -21,7 +21,7 @@ describe('DeploymentStrategyResolver', () => {
     ).toBe('vercel_ci_pushed');
   });
 
-  it('uses image-pushed deployments for FlowCI-managed Render targets', () => {
+  it('uses image-pushed deployments for ALPHACI-managed Render targets', () => {
     expect(
       resolver.resolve({
         provider: 'render',

@@ -42,6 +42,7 @@ describe('UsersRepository', () => {
         name: 'Test User',
         email: 'test@example.com',
         avatarUrl: 'https://example.com/avatar.png',
+        isInternal: false,
       });
 
       expect(result).toMatchObject({
@@ -60,8 +61,25 @@ describe('UsersRepository', () => {
         repo.upsertGitHubUser({
           githubUserId: 'gh-456',
           login: 'norow',
+          isInternal: false,
         }),
       ).rejects.toThrow('Upsert returned no row');
+    });
+
+    it('passes null through to preserve is_internal on the sold platform', async () => {
+      await repo.upsertGitHubUser({
+        githubUserId: 'gh-preserve',
+        login: 'employee',
+        isInternal: null,
+      });
+
+      const [sql, params] = (db.query as jest.Mock).mock.calls[0] as [
+        string,
+        unknown[],
+      ];
+      // On UPDATE, COALESCE keeps the existing flag when the parameter is null.
+      expect(sql).toContain('COALESCE($6::boolean, app_users.is_internal)');
+      expect(params[5]).toBeNull();
     });
 
     it('normalizes login with special characters', async () => {
@@ -72,6 +90,7 @@ describe('UsersRepository', () => {
       const result = await repo.upsertGitHubUser({
         githubUserId: 'gh-789',
         login: 'User Name!',
+        isInternal: false,
       });
 
       expect(result.login).toBe('user-name');
@@ -186,20 +205,20 @@ describe('UsersRepository', () => {
       (db.query as jest.Mock).mockResolvedValueOnce({
         rows: [{ ...fakeRow }],
       });
-      const result = await repo.restoreByGithubUserId('gh-123');
+      const result = await repo.restoreByGithubUserId('gh-123', false);
       expect(result.id).toBe('user-uuid-1');
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(db.query).toHaveBeenCalledWith(
         expect.stringContaining('archived_at   = NULL'),
-        ['gh-123'],
+        ['gh-123', false],
       );
     });
 
     it('throws when no row is returned', async () => {
       (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
-      await expect(repo.restoreByGithubUserId('gh-missing')).rejects.toThrow(
-        'Restore found no matching archived row',
-      );
+      await expect(
+        repo.restoreByGithubUserId('gh-missing', false),
+      ).rejects.toThrow('Restore found no matching archived row');
     });
   });
 

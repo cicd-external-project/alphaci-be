@@ -72,6 +72,9 @@ import { VercelCiSecretsService } from './vercel-ci-secrets.service';
     ProjectDeploymentProvisioningService,
     DeploymentTargetsRepository,
     EnvVarsRepository,
+    ProviderConnectionsRepository,
+    EnvTokenEncryptionService,
+    ProviderClientRegistry,
   ],
 })
 export class EnvProvisioningModule {}

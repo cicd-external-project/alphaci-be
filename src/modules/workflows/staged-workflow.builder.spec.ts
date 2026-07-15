@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 import type { WorkflowTemplate } from '../catalog/catalog.service';
 import {
   buildStagedWorkflowBundle,
+  resolveDefaultCentralWorkflowRef,
   resolvePlatformBaseUrl,
 } from './staged-workflow.builder';
 
@@ -56,22 +57,63 @@ describe('buildStagedWorkflowBundle', () => {
     expect(resolvePlatformBaseUrl({})).toBe('http://localhost:4000');
   });
 
-  it('emits the three-stage bundle with unsuffixed names and paths by default', () => {
+  it('defaults the central workflow ref to v1 but honors CENTRAL_WORKFLOW_REF', () => {
+    expect(resolveDefaultCentralWorkflowRef({})).toBe('v1');
+    expect(
+      resolveDefaultCentralWorkflowRef({ CENTRAL_WORKFLOW_REF: 'internal-v1' }),
+    ).toBe('internal-v1');
+    // Blank/whitespace falls back to v1.
+    expect(
+      resolveDefaultCentralWorkflowRef({ CENTRAL_WORKFLOW_REF: '  ' }),
+    ).toBe('v1');
+  });
+
+  it('pins internal pipelines to internal-v1 when the ref is provided', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'payments',
+      centralWorkflowRef: 'internal-v1',
+    });
+    const allYaml = bundle.workflowFiles.map((f) => f.yaml).join('\n');
+    expect(allYaml).toContain('@internal-v1');
+    expect(allYaml).not.toContain('lint-check.yml@v1');
+  });
+
+  it('emits the staged bundle plus env guard with unsuffixed names and paths by default', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
     expect(bundle.workflowFiles.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
-      '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+      '.github/workflows/20-alphaci-package.yml',
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
     expect(bundle.workflowFiles.map((file) => file.name)).toEqual([
-      'FlowCI Access Gate',
-      'FlowCI Quality',
-      'FlowCI Package',
+      'ALPHACI Access Gate',
+      'ALPHACI Quality',
+      'ALPHACI Package',
+      'ALPHACI Env Guard',
     ]);
+  });
+
+  it('triggers generated workflows only for uat and main', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+    const access = yaml.load(bundle.workflowFiles[0]!.yaml) as Record<
+      string,
+      unknown
+    >;
+
+    expect(access['on']).toEqual({
+      push: { branches: ['uat', 'main'] },
+      pull_request: { branches: ['uat', 'main'] },
+      workflow_dispatch: {},
+    });
   });
 
   it('includes a best-effort report-results job in every stage', () => {
@@ -80,7 +122,10 @@ describe('buildStagedWorkflowBundle', () => {
       serviceName: 'orders-api',
     });
 
-    for (const file of bundle.workflowFiles) {
+    // the standalone env guard never reports to the platform
+    for (const file of bundle.workflowFiles.filter(
+      (item) => item.stage !== 'guard',
+    )) {
       const wf = yaml.load(file.yaml) as ParsedWorkflow;
       const reportJob = wf.jobs['report-results'];
 
@@ -97,6 +142,7 @@ describe('buildStagedWorkflowBundle', () => {
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     expect(quality.jobs['report-results']?.needs).toContain('backend-tests');
     expect(quality.jobs['report-results']?.needs).toContain('sonar');
+    expect(quality.jobs['report-results']?.needs).toContain('typecheck');
 
     // package: needs validate-access + build
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
@@ -128,22 +174,26 @@ describe('buildStagedWorkflowBundle', () => {
     expect(qualityYaml).not.toContain('coverage/coverage-summary.json');
     // payload must be built with jq, not a heredoc interpolating context values
     expect(qualityYaml).toContain('jq -n');
-    // curl must POST to CI_REPORT_URL with CI_TOKEN
-    expect(qualityYaml).toContain('CI_REPORT_URL');
-    expect(qualityYaml).toContain('CI_TOKEN');
+    // curl must POST to ALPHACI_REPORT_URL with ALPHACI_TOKEN
+    expect(qualityYaml).toContain('ALPHACI_REPORT_URL');
+    expect(qualityYaml).toContain('ALPHACI_TOKEN');
   });
 
-  it('all three stages expose CI_REPORT_URL in env and curl uses it', () => {
+  it('all three stages expose ALPHACI_REPORT_URL in env and curl uses it', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
-    for (const file of bundle.workflowFiles) {
-      expect(file.yaml).toContain('CI_REPORT_URL');
+    for (const file of bundle.workflowFiles.filter(
+      (item) => item.stage !== 'guard',
+    )) {
+      expect(file.yaml).toContain('ALPHACI_REPORT_URL');
+      expect(file.yaml).toContain('FAILED_JOBS');
+      expect(file.yaml).toContain('rawLogs');
       // graceful degradation: curl failure must not fail the pipeline
       expect(file.yaml).toContain(
-        '|| echo "::warning::Failed to report pipeline results to FlowCI"',
+        '|| echo "::warning::Failed to report pipeline results to ALPHACI"',
       );
     }
   });
@@ -157,21 +207,23 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     expect(bundle.workflowFiles.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access-backend.yml',
-      '.github/workflows/10-flowci-quality-backend.yml',
-      '.github/workflows/20-flowci-package-backend.yml',
+      '.github/workflows/00-alphaci-access-backend.yml',
+      '.github/workflows/10-alphaci-quality-backend.yml',
+      '.github/workflows/20-alphaci-package-backend.yml',
+      // repo-wide env guard rides with the backend bundle, unsuffixed
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
 
     const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
 
-    expect(quality.name).toBe('FlowCI Quality (backend)');
+    expect(quality.name).toBe('ALPHACI Quality (backend)');
     expect(quality.on.workflow_run?.workflows).toEqual([
-      'FlowCI Access Gate (backend)',
+      'ALPHACI Access Gate (backend)',
     ]);
-    expect(pkg.name).toBe('FlowCI Package (backend)');
+    expect(pkg.name).toBe('ALPHACI Package (backend)');
     expect(pkg.on.workflow_run?.workflows).toEqual([
-      'FlowCI Quality (backend)',
+      'ALPHACI Quality (backend)',
     ]);
   });
 
@@ -205,6 +257,7 @@ describe('buildStagedWorkflowBundle', () => {
       'backend',
     );
     expect(quality.jobs['lint']?.with?.['working-directory']).toBe('backend');
+    expect(quality.jobs['typecheck']).toBeDefined();
   });
 
   it('selects the backend or frontend test workflow based on the template stack', () => {
@@ -219,6 +272,35 @@ describe('buildStagedWorkflowBundle', () => {
 
     expect(backend.workflowFiles[1]!.yaml).toContain('backend-tests.yml@v1');
     expect(frontend.workflowFiles[1]!.yaml).toContain('frontend-tests.yml@v1');
+  });
+
+  it('enforces tests/unit for scaffolded repos and falls back to src for BYO', () => {
+    const scaffolded = buildStagedWorkflowBundle(makeTemplate('react'), {
+      templateId: 'fe-react',
+      serviceName: 'orders-web',
+      hasTestsDirectory: true,
+    });
+    const byo = buildStagedWorkflowBundle(makeTemplate('react'), {
+      templateId: 'fe-react',
+      serviceName: 'orders-web',
+    });
+
+    const scaffoldedQuality = yaml.load(
+      scaffolded.workflowFiles[1]!.yaml,
+    ) as ParsedWorkflow;
+    const byoQuality = yaml.load(byo.workflowFiles[1]!.yaml) as ParsedWorkflow;
+
+    expect(
+      scaffoldedQuality.jobs['frontend-tests']?.with?.['unit-tests-directory'],
+    ).toBe('tests/unit');
+    expect(scaffoldedQuality.jobs['sonar']?.with?.['tests-path']).toBe(
+      'src,tests',
+    );
+
+    expect(
+      byoQuality.jobs['frontend-tests']?.with?.['unit-tests-directory'],
+    ).toBe('src');
+    expect(byoQuality.jobs['sonar']?.with?.['tests-path']).toBe('src');
   });
 
   it('resolves per-branch governance through the branch-policy job', () => {
@@ -244,6 +326,27 @@ describe('buildStagedWorkflowBundle', () => {
     );
     expect(quality.jobs['lint']?.with?.['fail-on-warning']).toBe(
       '${{ fromJson(needs.branch-policy.outputs.fail-on-warning) }}',
+    );
+  });
+
+  it('adds a dedicated typecheck job to the quality stage', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
+      templateId: 'fe-nextjs',
+      serviceName: 'orders-web',
+      servicePath: 'frontend',
+      nodeVersion: '24',
+    });
+
+    const quality = yaml.load(bundle.workflowFiles[1]!.yaml) as ParsedWorkflow;
+    const typecheck = quality.jobs['typecheck'];
+    const qualityYaml = bundle.workflowFiles[1]!.yaml;
+
+    expect(typecheck?.needs).toEqual(['branch-policy']);
+    expect(qualityYaml).toContain('working-directory: ./frontend');
+    expect(qualityYaml).toContain('npm run typecheck');
+    expect(qualityYaml).toContain('npx tsc --noEmit');
+    expect(qualityYaml).toContain(
+      'github.event.workflow_run.head_sha || github.sha',
     );
   });
 
@@ -305,7 +408,7 @@ describe('buildStagedWorkflowBundle', () => {
     expect(gate?.with?.['require-approval']).toBe(true);
   });
 
-  it('deploys Vercel previews on test and uat, production on gated main', () => {
+  it('emits branch-scoped Vercel deploy jobs when deployment targets are present', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate('nextjs'), {
       templateId: 'fe-nextjs',
       serviceName: 'orders-web',
@@ -324,19 +427,21 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const deploy = pkg.jobs['deploy-vercel-standalone'];
+    const packageYaml = bundle.workflowFiles[2]!.yaml;
 
-    expect(deploy?.needs).toEqual(['build', 'production-gate']);
-    // all three branches deploy; main additionally requires the production gate
-    expect(deploy?.if).toContain("== 'test'");
-    expect(deploy?.if).toContain("== 'uat'");
-    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
-    expect(deploy?.with?.['environment']).toBe(
-      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'preview' }}",
+    expect(pkg.jobs['deploy-vercel-standalone-uat']?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/vercel-deploy.yml@v1',
     );
+    expect(pkg.jobs['deploy-vercel-standalone-uat']?.with?.environment).toBe(
+      'preview',
+    );
+    expect(pkg.jobs['deploy-vercel-standalone-main']?.with?.environment).toBe(
+      'production',
+    );
+    expect(packageYaml).toContain('VERCEL_TOKEN_STANDALONE');
   });
 
-  it('maps render deploys to per-branch environments with main gated', () => {
+  it('does not emit Render deploy jobs without deployment target details', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -344,34 +449,61 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const deploy = pkg.jobs['deploy-render'];
+    const packageYaml = bundle.workflowFiles[2]!.yaml;
 
-    expect(deploy?.needs).toEqual(['build', 'production-gate']);
-    expect(deploy?.if).toContain("== 'test'");
-    expect(deploy?.if).toContain("needs.production-gate.result == 'success'");
-    expect(deploy?.with?.['environment']).toBe(
-      "${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || (github.event.workflow_run.head_branch || github.ref_name) }}",
-    );
+    expect(pkg.jobs['deploy-render']).toBeUndefined();
+    expect(packageYaml).not.toContain('render-deploy.yml');
   });
 
-  it('creates promotion PR jobs for test→uat and uat→main', () => {
+  it('emits Render docker and deploy jobs per branch when targets are present', () => {
+    const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+      deploymentTargets: [
+        {
+          slot: 'backend',
+          provider: 'render',
+          branchName: 'uat',
+          deploymentStrategy: 'render_image_pushed',
+          dockerContext: 'backend',
+          dockerfilePath: 'Dockerfile',
+          imageName: 'alphaci-backend-uat-orders-api',
+          secretNames: {
+            deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
+            healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
+          },
+        },
+      ],
+    });
+
+    const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
+
+    expect(pkg.jobs['docker-backend-uat']?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/docker-build.yml@v1',
+    );
+    expect(pkg.jobs['deploy-render-backend-uat']?.uses).toBe(
+      'cicd-external-project/cicd-workflow/.github/workflows/render-deploy.yml@v1',
+    );
+    expect(pkg.jobs['deploy-render-backend-uat']?.needs).toEqual([
+      'docker-backend-uat',
+    ]);
+  });
+
+  it('creates only the uat→main promotion PR job', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const toUat = pkg.jobs['promote-to-uat'];
     const toMain = pkg.jobs['promote-to-main'];
 
-    expect(toUat?.uses).toBe(
+    expect(pkg.jobs['promote-to-uat']).toBeUndefined();
+    expect(toMain?.uses).toBe(
       'cicd-external-project/cicd-workflow/.github/workflows/promotion.yml@v1',
     );
-    expect(toUat?.needs).toEqual(['build']);
-    expect(toUat?.if).toContain("== 'test'");
-    expect(toUat?.with?.['direction']).toBe('test-to-uat');
-    expect(toUat?.with?.['system1-name']).toBe('orders-api');
-    expect(toUat?.secrets).toEqual({
+    expect(toMain?.with?.['system1-name']).toBe('orders-api');
+    expect(toMain?.secrets).toEqual({
       PR_TOKEN:
         "${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || github.token }}",
     });
@@ -380,7 +512,7 @@ describe('buildStagedWorkflowBundle', () => {
     expect(toMain?.with?.['direction']).toBe('uat-to-main');
   });
 
-  it('makes promotion wait on deploy jobs, tolerating skips', () => {
+  it('keeps promotion independent when no deployment targets are present', () => {
     const bundle = buildStagedWorkflowBundle(makeTemplate(), {
       templateId: 'be-nestjs',
       serviceName: 'orders-api',
@@ -388,11 +520,63 @@ describe('buildStagedWorkflowBundle', () => {
     });
 
     const pkg = yaml.load(bundle.workflowFiles[2]!.yaml) as ParsedWorkflow;
-    const toUat = pkg.jobs['promote-to-uat'];
+    const toMain = pkg.jobs['promote-to-main'];
 
-    expect(toUat?.needs).toEqual(['build', 'deploy-render']);
-    expect(toUat?.if).toContain(
-      "(needs.deploy-render.result == 'success' || needs.deploy-render.result == 'skipped')",
-    );
+    expect(toMain?.needs).toEqual(['build']);
+    expect(toMain?.if).not.toContain('deploy-render');
+  });
+
+  describe('env guard workflow', () => {
+    const guardOf = (variant?: 'backend' | 'frontend') => {
+      const bundle = buildStagedWorkflowBundle(makeTemplate(), {
+        templateId: 'be-nestjs',
+        serviceName: 'orders-api',
+        ...(variant !== undefined && { workflowVariant: variant }),
+      });
+      return bundle.workflowFiles.find((file) => file.stage === 'guard');
+    };
+
+    it('is included once per repo: default and backend variants only', () => {
+      expect(guardOf()).toBeDefined();
+      expect(guardOf('backend')).toBeDefined();
+      expect(guardOf('frontend')).toBeUndefined();
+    });
+
+    it('watches only protected branch pushes and pull requests', () => {
+      const guard = guardOf()!;
+      const wf = yaml.load(guard.yaml) as Record<string, unknown>;
+
+      expect(wf['on']).toEqual({
+        push: { branches: ['uat', 'main'] },
+        pull_request: { branches: ['uat', 'main'] },
+      });
+      expect(wf['permissions']).toEqual({
+        contents: 'write',
+        issues: 'write',
+      });
+      // job id must match the branch-protection required context
+      const jobs = wf['jobs'] as Record<string, unknown>;
+      expect(Object.keys(jobs)).toEqual(['env-guard']);
+    });
+
+    it('detects dotenv files but allows committable placeholders', () => {
+      const guard = guardOf()!;
+      expect(guard.yaml).toContain('git ls-files');
+      // .env, .env.local, nested backend/.env.production are all matched
+      expect(guard.yaml).toContain('(^|/)\\.env(\\.[^/]*)?$');
+      // the scaffold ships .env.example and must never trip the guard
+      expect(guard.yaml).toContain('(^|/)\\.env\\.(example|sample|template)$');
+    });
+
+    it('rolls back on push, skips CI on the rollback commit, and fails the run', () => {
+      const guard = guardOf()!;
+      expect(guard.yaml).toContain('git rm --quiet --ignore-unmatch');
+      expect(guard.yaml).toContain('[skip ci]');
+      expect(guard.yaml).toContain('rotate any exposed secrets');
+      expect(guard.yaml).toContain('gh issue create');
+      expect(guard.yaml).toContain('exit 1');
+      // write steps must never run for pull_request events (fork tokens are read-only)
+      expect(guard.yaml).toContain("github.event_name == 'push'");
+    });
   });
 });

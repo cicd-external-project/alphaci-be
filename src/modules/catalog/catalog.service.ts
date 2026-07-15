@@ -75,12 +75,23 @@ export interface ProjectOptionsResult {
   nodeVersions: NodeVersionOption[];
 }
 
+export interface CentralWorkflowTagsResult {
+  tags: string[];
+  defaultRef: string;
+}
+
 // ─── Static fallback catalog ─────────────────────────────────────────────────
 
 // Order matters: the FE preselects the first enabled shape, so the simplest
-// option (standalone) must come first. 'mono' is parked as disabled until the
-// monorepo scaffold produces a real multi-package workspace with per-package
-// pipelines — today it would mislead users into a generic TS workspace.
+// option (standalone) must come first. 'microservices' (backend + frontend in
+// one repo) is archived and intentionally omitted from this list — not just
+// disabled — so it never appears in the create-project picker at all; the
+// product surfaces exactly two shapes: a single application, or backend +
+// frontend as two repositories. The backend still recognizes the id
+// internally (existing projects, normalizeRepoShape) for back-compat. 'mono'
+// is parked as disabled (shown, greyed out) until the monorepo scaffold
+// produces a real multi-package workspace with per-package pipelines — today
+// it would mislead users into a generic TS workspace.
 const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
   repoShapes: [
     {
@@ -89,13 +100,6 @@ const STATIC_PROJECT_OPTIONS: ProjectOptionsResult = {
       enabled: true,
       description:
         'One repository with one app. The simplest way to start — best for most projects.',
-    },
-    {
-      id: 'microservices',
-      label: 'Backend + frontend (one repo)',
-      enabled: true,
-      description:
-        'One repository with backend/ and frontend/ folders. Each service gets its own CI pipeline.',
     },
     {
       id: 'multi',
@@ -299,6 +303,17 @@ interface EngineWorkflowRefsFile {
   workflows?: Record<string, string>;
 }
 
+// The reusable gated-stage workflow logic (Access, Quality, Package) that every
+// generated pipeline calls into via `uses: <repo>/<workflow>@<ref>`. Public
+// repo — tags are readable via GitHub's unauthenticated REST API.
+const CENTRAL_WORKFLOW_REPO = 'cicd-external-project/cicd-workflow';
+
+function resolveDefaultCentralWorkflowRef(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env['CENTRAL_WORKFLOW_REF']?.trim() || 'v1';
+}
+
 @Injectable()
 export class CatalogService {
   private readonly logger = new Logger(CatalogService.name);
@@ -307,6 +322,11 @@ export class CatalogService {
     null;
   private projectOptionsCache: ProjectOptionsResult | null = null;
   private readonly cacheTtlMs = 20_000;
+  private centralWorkflowTagsCache: {
+    loadedAt: number;
+    tags: string[];
+  } | null = null;
+  private readonly centralWorkflowTagsCacheTtlMs = 5 * 60_000;
 
   constructor(private readonly configService: ConfigService) {
     this.config = this.configService.getOrThrow<AppConfig>('app');
@@ -326,6 +346,59 @@ export class CatalogService {
         `Could not load engine project catalog; using static fallback: ${(error as Error).message}`,
       );
       return STATIC_PROJECT_OPTIONS;
+    }
+  }
+
+  /**
+   * Lists the git tags published on the central-workflow repo, so the
+   * "Central workflow ref" field can be a dropdown of real, existing refs
+   * instead of free text a user could mistype into a broken pipeline. Falls
+   * back to just the configured default ref if GitHub is unreachable or
+   * rate-limits the (unauthenticated, public-repo) request — the field must
+   * always have at least one valid, selectable value.
+   */
+  async getCentralWorkflowTags(): Promise<CentralWorkflowTagsResult> {
+    const defaultRef = resolveDefaultCentralWorkflowRef();
+
+    if (
+      this.centralWorkflowTagsCache &&
+      Date.now() - this.centralWorkflowTagsCache.loadedAt <
+        this.centralWorkflowTagsCacheTtlMs
+    ) {
+      return { tags: this.centralWorkflowTagsCache.tags, defaultRef };
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${CENTRAL_WORKFLOW_REPO}/tags?per_page=30`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'alphaci-platform',
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `GitHub tags request failed with status ${String(response.status)}`,
+        );
+      }
+
+      const body = (await response.json()) as Array<{ name?: string }>;
+      const tags = body
+        .map((tag) => tag.name)
+        .filter(
+          (name): name is string => typeof name === 'string' && name.length > 0,
+        );
+
+      this.centralWorkflowTagsCache = { loadedAt: Date.now(), tags };
+      return { tags, defaultRef };
+    } catch (error) {
+      this.logger.warn(
+        `Could not fetch central-workflow tags from GitHub; falling back to the default ref only: ${(error as Error).message}`,
+      );
+      return { tags: [defaultRef], defaultRef };
     }
   }
 

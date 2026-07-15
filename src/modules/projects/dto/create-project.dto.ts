@@ -5,11 +5,13 @@ import {
   IsInt,
   IsObject,
   IsOptional,
+  IsPositive,
   IsString,
   Max,
   MaxLength,
   Min,
   MinLength,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -235,6 +237,15 @@ export class CreateProjectDto {
   @IsIn(['private', 'public'])
   visibility!: 'private' | 'public';
 
+  @IsOptional()
+  @IsIn(['personal', 'organization'])
+  ownerType?: 'personal' | 'organization';
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  installationId?: number;
+
   // Catalog IDs ('mono', 'multi') and canonical IDs ('monorepo', 'multi-repo')
   // are both accepted; the service normalizes via normalizeRepoShape().
   @IsOptional()
@@ -299,4 +310,13 @@ export class CreateProjectDto {
   @ValidateNested()
   @Type(() => DeploymentProvisioningRequestDto)
   deploymentProvisioning?: DeploymentProvisioningRequestDto;
+
+  /**
+   * Group/workspace to create this project inside. When the "Create project"
+   * form is launched from a group, its id is passed here so the project is
+   * owned by that group. Omitted → the caller's default (personal) workspace.
+   */
+  @IsOptional()
+  @IsUUID()
+  workspaceId?: string;
 }

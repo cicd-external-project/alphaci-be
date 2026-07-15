@@ -2,14 +2,17 @@ import { readFile } from 'node:fs/promises';
 
 import {
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 
 import type { CatalogService } from '../catalog/catalog.service.js';
 import type { CiService } from '../ci/ci.service.js';
+import { GithubRepoDeleteError } from '../github/github.service.js';
 import type { GithubService } from '../github/github.service.js';
 import type { WorkspacesService } from '../workspaces/workspaces.service.js';
+import type { WorkspaceAccessService } from '../workspaces/workspace-access.service.js';
 import type { ProjectsRepository } from './projects.repository.js';
 import { ProjectsService } from './projects.service.js';
 
@@ -38,8 +41,21 @@ const makeCatalogService = () =>
 
 const makeGithubService = () =>
   ({
+    on: jest.fn(),
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
+    getInstallationAccessTokenForUserRepo: jest
+      .fn()
+      .mockResolvedValue('app-token'),
     getInstallationOwnerLogin: jest.fn().mockResolvedValue(undefined),
+    getEnforcedOrg: jest.fn().mockReturnValue(''),
+    getOrganizationProvisioningContext: jest.fn().mockResolvedValue({
+      accessToken: 'installation-token',
+      ownerLogin: 'tone',
+    }),
+    getOrganizationProvisioningContextByLogin: jest.fn().mockResolvedValue({
+      accessToken: 'installation-token',
+      ownerLogin: 'Alpha-Explora',
+    }),
     createRepo: jest.fn().mockResolvedValue({
       repoUrl: 'https://github.com/tone/orders-api',
       cloneUrl: 'https://github.com/tone/orders-api.git',
@@ -65,6 +81,7 @@ const makeGithubService = () =>
     setActionsSecret: jest.fn().mockResolvedValue(undefined),
     setActionsSecretStrict: jest.fn().mockResolvedValue(undefined),
     deleteRepo: jest.fn().mockResolvedValue(true),
+    deleteRepoForUser: jest.fn().mockResolvedValue(undefined),
   }) as unknown as GithubService;
 
 const makeProjectsRepository = () =>
@@ -74,8 +91,20 @@ const makeProjectsRepository = () =>
     }),
     updateStatus: jest.fn().mockResolvedValue(undefined),
     deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+    findByIdAndUser: jest.fn().mockResolvedValue({
+      id: 'project-1',
+      repo_full_name: 'tone/orders-api',
+    }),
     listByUser: jest.fn().mockResolvedValue([]),
   }) as unknown as ProjectsRepository;
+
+const makeWorkspaceAccessService = (
+  overrides: Partial<{ assertProjectRole: jest.Mock }> = {},
+) =>
+  ({
+    assertProjectRole: jest.fn().mockResolvedValue(null),
+    ...overrides,
+  }) as unknown as WorkspaceAccessService;
 
 const makeCiService = () =>
   ({
@@ -93,7 +122,7 @@ const makeWorkspacesService = () =>
           id: 'workspace-1',
           name: 'Personal workspace',
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     }),
@@ -103,7 +132,7 @@ const makeOverviewReadRepositories = () => ({
   ciTokensRepository: {
     findProjectTokenStatus: jest.fn().mockResolvedValue({
       status: 'active',
-      tokenPrefix: 'fci_test',
+      tokenPrefix: 'aci_test',
       createdAt: '2026-06-12T00:00:00.000Z',
       updatedAt: '2026-06-12T00:00:00.000Z',
       revokedAt: null,
@@ -158,11 +187,11 @@ const makeOverviewReadRepositories = () => ({
         templateName: 'Backend API',
         stack: 'nestjs',
         serviceName: 'orders-api',
-        outputFileName: '00-flowci-access.yml',
+        outputFileName: '00-alphaci-access.yml',
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: FlowCI Access Gate',
+        yaml: 'name: ALPHACI Access Gate',
       },
       {
         id: 'history-other',
@@ -186,11 +215,11 @@ const makeOverviewReadRepositories = () => ({
         templateName: 'Backend API',
         stack: 'nestjs',
         serviceName: 'orders-api',
-        outputFileName: '00-flowci-access.yml',
+        outputFileName: '00-alphaci-access.yml',
         sourceWorkflowFile: 'workflow-templates/be-nestjs.yml',
         sourcePropertiesFile: 'workflow-templates/be-nestjs.properties',
         lineCount: 42,
-        yaml: 'name: FlowCI Access Gate',
+        yaml: 'name: ALPHACI Access Gate',
       },
     ]),
   },
@@ -218,7 +247,7 @@ const makeOverviewReadRepositories = () => ({
     createRequest: jest.fn().mockResolvedValue({
       id: 'request-1',
       projectId: 'project-1',
-      branchName: 'flowci/workflow-update-20260612000000',
+      branchName: 'alphaci/workflow-update-20260612000000',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
       status: 'created',
@@ -250,7 +279,14 @@ describe('ProjectsService', () => {
   let githubService: GithubService;
   let githubServiceMock: {
     getInstallationAccessTokenForUser: jest.Mock;
+    getInstallationAccessTokenForUserRepo: jest.Mock;
+    getEnforcedOrg: jest.Mock;
+    getOrganizationProvisioningContext: jest.Mock;
+    getOrganizationProvisioningContextByLogin: jest.Mock;
     createRepo: jest.Mock;
+    createBranch: jest.Mock;
+    applyBranchProtection: jest.Mock;
+    setActionsSecretStrict: jest.Mock;
   };
   let projectDeploymentProvisioningService: {
     provisionForProject: jest.Mock;
@@ -271,7 +307,14 @@ jobs:
     githubService = makeGithubService();
     githubServiceMock = githubService as unknown as {
       getInstallationAccessTokenForUser: jest.Mock;
+      getInstallationAccessTokenForUserRepo: jest.Mock;
+      getEnforcedOrg: jest.Mock;
+      getOrganizationProvisioningContext: jest.Mock;
+      getOrganizationProvisioningContextByLogin: jest.Mock;
       createRepo: jest.Mock;
+      createBranch: jest.Mock;
+      applyBranchProtection: jest.Mock;
+      setActionsSecretStrict: jest.Mock;
     };
     projectDeploymentProvisioningService = {
       provisionForProject: jest.fn().mockResolvedValue({
@@ -330,6 +373,100 @@ jobs:
       expect.objectContaining({ repoName: 'orders-api' }),
       undefined,
     );
+  });
+
+  it('uses OAuth to create an organization repository and the installation token to configure it', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      ownerType: 'organization',
+      installationId: 12345,
+    });
+
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).toHaveBeenCalledWith('user-1', 12345);
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'oauth-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'tone',
+    );
+    expect(githubServiceMock.setActionsSecretStrict).toHaveBeenCalledWith(
+      'installation-token',
+      'tone',
+      'orders-api',
+      'ALPHACI_TOKEN',
+      'flowci-token',
+    );
+  });
+
+  it('rejects organization repository creation without a user OAuth token', async () => {
+    await expect(
+      service.createProject('user-1', 'tone', null, {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        ownerType: 'organization',
+        installationId: 12345,
+      }),
+    ).rejects.toThrow(
+      'A GitHub OAuth token with the repo scope is required to create a repository in an organization.',
+    );
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
+  });
+
+  it('forces every repository into the enforced org regardless of ownerType', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      // Even a "personal" request must land in the enforced org.
+      ownerType: 'personal',
+    });
+
+    expect(
+      githubServiceMock.getOrganizationProvisioningContextByLogin,
+    ).toHaveBeenCalledWith('Alpha-Explora');
+    expect(
+      githubServiceMock.getOrganizationProvisioningContext,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).toHaveBeenCalledWith(
+      'oauth-token',
+      expect.objectContaining({ repoName: 'orders-api' }),
+      'Alpha-Explora',
+    );
+  });
+
+  it('rejects enforced-org creation when the session has no OAuth token', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await expect(
+      service.createProject('user-1', 'tone', null, {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+      }),
+    ).rejects.toThrow(
+      'required to create a repository in the Alpha-Explora organization',
+    );
+    expect(
+      githubServiceMock.getOrganizationProvisioningContextByLogin,
+    ).not.toHaveBeenCalled();
+    expect(githubServiceMock.createRepo).not.toHaveBeenCalled();
   });
 
   it('records audit and notification events after project creation', async () => {
@@ -580,7 +717,72 @@ jobs:
     );
   });
 
-  it('generates BYO Vercel deploy jobs for frontend single-repo creation', async () => {
+  it('maps is_owner to a viewer-relative isOwner so admin/manager-visible projects are distinguishable from owned ones', async () => {
+    const projectsRepository = {
+      listByUser: jest.fn().mockResolvedValue([
+        {
+          id: 'project-own',
+          user_id: 'user-1',
+          repo_full_name: 'tone/orders-api',
+          template_id: 'be-nestjs',
+          service_name: 'orders-api',
+          workflow_path: '.github/workflows/ci.yml',
+          status: 'provisioned',
+          github_commit_sha: null,
+          github_commit_url: null,
+          failure_reason: null,
+          repo_url: null,
+          visibility: 'private',
+          repo_shape: 'single-app',
+          project_type_id: 'nestjs-api',
+          workflow_recipe_id: 'backend-api-ci',
+          project_options: {},
+          workspace_id: null,
+          is_owner: true,
+          created_at: '2026-06-05T00:00:00.000Z',
+          updated_at: '2026-06-05T00:00:00.000Z',
+        },
+        {
+          id: 'project-other',
+          user_id: 'user-2',
+          repo_full_name: 'antoneeeeems/iuyyxfgfuy',
+          template_id: 'be-nestjs',
+          service_name: 'iuyyxfgfuy',
+          workflow_path: '.github/workflows/ci.yml',
+          status: 'provisioned',
+          github_commit_sha: null,
+          github_commit_url: null,
+          failure_reason: null,
+          repo_url: null,
+          visibility: 'private',
+          repo_shape: 'single-app',
+          project_type_id: 'nestjs-api',
+          workflow_recipe_id: 'backend-api-ci',
+          project_options: {},
+          workspace_id: null,
+          is_owner: false,
+          created_at: '2026-06-05T00:00:00.000Z',
+          updated_at: '2026-06-05T00:00:00.000Z',
+        },
+      ]),
+    } as unknown as jest.Mocked<ProjectsRepository>;
+    const listService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    const result = await listService.listProjects('admin-1', 25);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'project-own', isOwner: true }),
+      expect.objectContaining({ id: 'project-other', isOwner: false }),
+    ]);
+  });
+
+  it('omits Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
       visibility: 'private',
@@ -612,15 +814,16 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
   });
 
-  it('generates managed Vercel deploy jobs for frontend single-repo creation', async () => {
+  it('emits managed Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
       visibility: 'private',
@@ -651,15 +854,16 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
   });
 
-  it('generates BYO Vercel deploy jobs for frontend single-repo setup', async () => {
+  it('emits Vercel deploy jobs for frontend single-repo setup', async () => {
     await service.setupProject('user-1', 'oauth-token', {
       repoFullName: 'tone/orders-ui',
       templateId: 'be-nestjs',
@@ -691,33 +895,110 @@ jobs:
       ).pushWorkflowFile.mock.calls as Array<
         [string, string, string, string, string]
       >
-    ).find(([, , , path]) => path.endsWith('20-flowci-package.yml'));
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
 
-    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend');
+    expect(packageWorkflow?.[4]).not.toContain('deploy-vercel-frontend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-vercel-frontend-main');
+    expect(packageWorkflow?.[4]).toContain('vercel-deploy.yml');
     expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_TOKEN');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_ORG_ID');
-    expect(packageWorkflow?.[4]).toContain('VERCEL_FRONTEND_PROJECT_ID');
   });
 
-  it('provisions deployment targets after the GitHub project row exists', async () => {
-    await service.createProject('user-1', 'tone', 'oauth-token', {
-      repoName: 'orders-api',
-      visibility: 'private',
-      projectTypeId: 'nestjs-api',
-      workflowRecipeId: 'backend-api-ci',
+  it('uses a linked GitHub App installation token for existing private repo setup without provider provisioning', async () => {
+    const result = await service.setupProject('user-1', null, {
+      repoFullName: 'tone/orders-api',
+      templateId: 'be-nestjs',
       serviceName: 'orders-api',
-      deploymentProvisioning: {
-        enabled: true,
+    });
+
+    expect(
+      githubServiceMock.getInstallationAccessTokenForUserRepo,
+    ).toHaveBeenCalledWith('user-1', 'tone/orders-api');
+    expect(githubServiceMock.setActionsSecretStrict).toHaveBeenCalledWith(
+      'app-token',
+      'tone',
+      'orders-api',
+      'ALPHACI_TOKEN',
+      'flowci-token',
+    );
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).not.toHaveBeenCalled();
+    expect(result.deploymentProvisioning.status).toBe('skipped');
+  });
+
+  it('rejects Setup-flow attachment of a repo outside the enforced org', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await expect(
+      service.setupProject('user-1', 'oauth-token', {
+        repoFullName: 'some-other-org/external-repo',
+        templateId: 'be-nestjs',
+        serviceName: 'external-repo',
+      }),
+    ).rejects.toThrow(
+      "repoFullName must belong to the Alpha-Explora organization. 'some-other-org' is not allowed for new Setup-flow attachments.",
+    );
+    expect(githubServiceMock.setActionsSecretStrict).not.toHaveBeenCalled();
+  });
+
+  it('allows Setup-flow attachment when the repo owner case-insensitively matches the enforced org', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    const result = await service.setupProject('user-1', null, {
+      repoFullName: 'alpha-explora/orders-api',
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    expect(result.repoFullName).toBe('alpha-explora/orders-api');
+  });
+
+  it('provisions centralized deployment targets during GitHub project creation', async () => {
+    projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
+      {
+        status: 'completed',
         targets: [
           {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
+            deploymentStrategy: 'render_image_pushed',
+            status: 'created',
+            deploymentTargetId: 'target-1',
+            providerProjectId: 'srv-1',
+            providerProjectName: 'orders-api-test',
+            providerMetadata: {},
+            errorSummary: null,
+            env: [],
           },
         ],
       },
-    });
+    );
+
+    const result = await service.createProject(
+      'user-1',
+      'tone',
+      'oauth-token',
+      {
+        repoName: 'orders-api',
+        visibility: 'private',
+        projectTypeId: 'nestjs-api',
+        workflowRecipeId: 'backend-api-ci',
+        serviceName: 'orders-api',
+        deploymentProvisioning: {
+          enabled: true,
+          targets: [
+            {
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'orders-api-uat',
+            },
+          ],
+        },
+      },
+    );
 
     expect(
       projectDeploymentProvisioningService.provisionForProject,
@@ -733,14 +1014,128 @@ jobs:
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
+            projectName: 'orders-api-uat',
+          },
+        ],
+      },
+    });
+    expect(result.deploymentProvisioning.status).toBe('completed');
+  });
+
+  it('defaults backend repo creation to managed Render provisioning when the UI sends no deployment request', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        userId: 'user-1',
+        repoFullName: 'tone/orders-api',
+        githubAccessToken: 'oauth-token',
+        request: {
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              projectName: 'orders-api-uat',
+              branchName: 'uat',
+              rootDirectory: '.',
+              renderDeployMethod: 'managed_image',
+              renderRuntime: 'docker',
+              renderInstanceType: 'free',
+            }),
+          ],
+        },
+      }),
+    );
+
+    const packageWorkflow = (
+      (
+        service as unknown as {
+          pushWorkflowFile: jest.Mock;
+        }
+      ).pushWorkflowFile.mock.calls as Array<
+        [string, string, string, string, string]
+      >
+    ).find(([, , , path]) => path.endsWith('20-alphaci-package.yml'));
+
+    expect(packageWorkflow?.[4]).not.toContain('deploy-render-backend-test');
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-uat');
+    expect(packageWorkflow?.[4]).toContain('deploy-render-backend-main');
+    expect(packageWorkflow?.[4]).toContain('RENDER_DEPLOY_HOOK_URL_UAT');
+    expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'develop',
+      'main',
+    );
+    expect(githubServiceMock.createBranch).toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'uat',
+      'main',
+    );
+    expect(githubServiceMock.createBranch).not.toHaveBeenCalledWith(
+      'oauth-token',
+      'tone',
+      'orders-api',
+      'test',
+      'main',
+    );
+    expect(githubServiceMock.applyBranchProtection.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['oauth-token', 'tone', 'orders-api', 'uat'],
+        ['oauth-token', 'tone', 'orders-api', 'main'],
+      ]),
+    );
+    expect(
+      githubServiceMock.applyBranchProtection.mock.calls.some(
+        (call) => call[3] === 'develop' || call[3] === 'test',
+      ),
+    ).toBe(false);
+  });
+
+  it('forces BYO provisioning requests onto centralized hosting and drops connection ids', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders-api',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+      deploymentProvisioning: {
+        enabled: true,
+        targets: [
+          {
+            slot: 'backend',
+            provider: 'render',
+            ownershipMode: 'byo',
+            providerConnectionId: 'connection-1',
             projectName: 'orders-api-test',
           },
         ],
       },
     });
+
+    const request = (
+      projectDeploymentProvisioningService.provisionForProject.mock
+        .calls[0] as [{ request: { targets: Array<Record<string, unknown>> } }]
+    )[0].request;
+    expect(request.targets[0]?.['ownershipMode']).toBe('flowci_managed');
+    expect(request.targets[0]).not.toHaveProperty('providerConnectionId');
   });
 
-  it('returns the GitHub project when provider provisioning fails', async () => {
+  it('reports provisioning failures without failing project creation', async () => {
     projectDeploymentProvisioningService.provisionForProject.mockResolvedValueOnce(
       {
         status: 'failed',
@@ -784,6 +1179,7 @@ jobs:
     );
 
     expect(result.repoFullName).toBe('tone/orders-api');
+    expect(result.status).toBe('provisioned');
     expect(result.deploymentProvisioning.status).toBe('failed');
   });
 
@@ -802,7 +1198,7 @@ jobs:
       },
     );
 
-    expect(result.workflowPath).toBe('.github/workflows/00-flowci-access.yml');
+    expect(result.workflowPath).toBe('.github/workflows/00-alphaci-access.yml');
   });
 
   it("dispatches the catalog shape ID 'multi' to the multi-repo flow (two repos)", async () => {
@@ -848,6 +1244,23 @@ jobs:
       undefined,
     );
     expect(result.secondaryRepoFullName).toBeDefined();
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              renderDeployMethod: 'managed_image',
+            }),
+          ],
+        }),
+      }),
+    );
   });
 
   it("renders the monorepo scaffold for the catalog shape ID 'mono'", async () => {
@@ -866,6 +1279,44 @@ jobs:
       >
     ).map((call) => call[3]);
     expect(pushedPaths).toContain('packages/core/package.json');
+
+    const readmeContent = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).find((call) => call[3] === 'README.md')?.[4];
+    expect(readmeContent).toContain(
+      'Created by ALPHACI as a NestJS API monorepo workspace.',
+    );
+    expect(readmeContent).toContain('`packages/core/` contains');
+  });
+
+  it('normalizes legacy project type IDs when creating starter files', async () => {
+    await service.createProject('user-1', 'tone', 'oauth-token', {
+      repoName: 'orders',
+      visibility: 'private',
+      projectTypeId: 'nestjs-api',
+      workflowRecipeId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    const pushedPaths = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).map((call) => call[3]);
+    expect(pushedPaths).toContain('src/main.ts');
+    expect(pushedPaths).toContain('src/app.module.ts');
+
+    const readmeContent = (
+      pushWorkflowFileSpy.mock.calls as unknown as Array<
+        [string, string, string, string, string]
+      >
+    ).find((call) => call[3] === 'README.md')?.[4];
+    expect(readmeContent).toContain(
+      'Created by ALPHACI as a NestJS API standalone repository.',
+    );
+    expect(readmeContent).toContain('`src/main.ts` boots the NestJS app.');
   });
 
   it('pushes variant-suffixed workflow files for the microservices shape so the slots do not collide', async () => {
@@ -900,21 +1351,40 @@ jobs:
 
     expect(pushedPaths).toEqual(
       expect.arrayContaining([
-        '.github/workflows/00-flowci-access-backend.yml',
-        '.github/workflows/10-flowci-quality-backend.yml',
-        '.github/workflows/20-flowci-package-backend.yml',
-        '.github/workflows/00-flowci-access-frontend.yml',
-        '.github/workflows/10-flowci-quality-frontend.yml',
-        '.github/workflows/20-flowci-package-frontend.yml',
+        '.github/workflows/00-alphaci-access-backend.yml',
+        '.github/workflows/10-alphaci-quality-backend.yml',
+        '.github/workflows/20-alphaci-package-backend.yml',
+        '.github/workflows/00-alphaci-access-frontend.yml',
+        '.github/workflows/10-alphaci-quality-frontend.yml',
+        '.github/workflows/20-alphaci-package-frontend.yml',
       ]),
     );
     // The unsuffixed paths would mean one slot overwrote the other.
-    expect(pushedPaths).not.toContain('.github/workflows/00-flowci-access.yml');
     expect(pushedPaths).not.toContain(
-      '.github/workflows/10-flowci-quality.yml',
+      '.github/workflows/00-alphaci-access.yml',
     );
     expect(pushedPaths).not.toContain(
-      '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+    );
+    expect(pushedPaths).not.toContain(
+      '.github/workflows/20-alphaci-package.yml',
+    );
+    expect(
+      projectDeploymentProvisioningService.provisionForProject,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          enabled: true,
+          targets: [
+            expect.objectContaining({
+              slot: 'backend',
+              provider: 'render',
+              ownershipMode: 'flowci_managed',
+              renderDeployMethod: 'managed_image',
+            }),
+          ],
+        }),
+      }),
     );
   });
 
@@ -928,7 +1398,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -943,14 +1413,14 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
             {
               stage: 'quality',
-              name: 'FlowCI Quality',
-              path: '.github/workflows/10-flowci-quality.yml',
+              name: 'ALPHACI Quality',
+              path: '.github/workflows/10-alphaci-quality.yml',
               gated: true,
             },
           ],
@@ -1013,8 +1483,8 @@ jobs:
     });
     expect(overview.workflow.stageCount).toBe(2);
     expect(overview.workflow.files.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
     ]);
     expect(overview.deploymentTargets.count).toBe(1);
     expect(overview.environment.items).toEqual([
@@ -1156,7 +1626,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1171,8 +1641,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1277,7 +1747,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1358,7 +1828,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url:
@@ -1373,8 +1843,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1425,19 +1895,20 @@ jobs:
     expect(githubWithWrites.createBranch).not.toHaveBeenCalled();
     expect(githubWithWrites.pushWorkflowFile).not.toHaveBeenCalled();
     expect(result.workflowFiles.map((file) => file.path)).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
-      '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+      '.github/workflows/20-alphaci-package.yml',
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
-    expect(result.workflowFiles[0]?.yaml).toContain('FlowCI Access Gate');
+    expect(result.workflowFiles[0]?.yaml).toContain('ALPHACI Access Gate');
     expect(result.diffSummary).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
           status: 'changed',
         }),
         expect.objectContaining({
-          path: '.github/workflows/10-flowci-quality.yml',
+          path: '.github/workflows/10-alphaci-quality.yml',
           status: 'new',
         }),
       ]),
@@ -1455,7 +1926,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1519,7 +1990,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1533,8 +2004,8 @@ jobs:
           workflowFiles: [
             {
               stage: 'access',
-              name: 'FlowCI Access Gate',
-              path: '.github/workflows/00-flowci-access.yml',
+              name: 'ALPHACI Access Gate',
+              path: '.github/workflows/00-alphaci-access.yml',
               gated: true,
             },
           ],
@@ -1600,25 +2071,26 @@ jobs:
       'app-token',
       'tone',
       'orders-api',
-      expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+      expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
       'main',
     );
-    expect(githubWrites.putFileContent).toHaveBeenCalledTimes(3);
+    expect(githubWrites.putFileContent).toHaveBeenCalledTimes(4);
     const putFileContentCalls = githubWrites.putFileContent.mock.calls as Array<
       [string, string, string, string, string, string, string]
     >;
     expect(putFileContentCalls.map((call) => call[3])).toEqual([
-      '.github/workflows/00-flowci-access.yml',
-      '.github/workflows/10-flowci-quality.yml',
-      '.github/workflows/20-flowci-package.yml',
+      '.github/workflows/00-alphaci-access.yml',
+      '.github/workflows/10-alphaci-quality.yml',
+      '.github/workflows/20-alphaci-package.yml',
+      '.github/workflows/05-alphaci-env-guard.yml',
     ]);
     expect(githubWrites.createPullRequest).toHaveBeenCalledWith(
       'app-token',
       'tone',
       'orders-api',
       expect.objectContaining({
-        title: 'Update FlowCI workflow configuration',
-        head: expect.stringMatching(/^flowci\/workflow-update-\d{14}$/),
+        title: 'Update ALPHACI workflow configuration',
+        head: expect.stringMatching(/^alphaci\/workflow-update-\d{14}$/),
         base: 'main',
         body: expect.stringContaining(
           'Runtime environment values are not included.',
@@ -1658,7 +2130,7 @@ jobs:
     expect(result).toMatchObject({
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/orders-api/pull/42',
-      workflowPath: '.github/workflows/00-flowci-access.yml',
+      workflowPath: '.github/workflows/00-alphaci-access.yml',
     });
   });
 
@@ -1672,7 +2144,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1752,7 +2224,7 @@ jobs:
         repo_full_name: 'tone/orders-api',
         template_id: 'be-nestjs',
         service_name: 'orders-api',
-        workflow_path: '.github/workflows/00-flowci-access.yml',
+        workflow_path: '.github/workflows/00-alphaci-access.yml',
         status: 'provisioned',
         github_commit_sha: 'abc123456789',
         github_commit_url: null,
@@ -1843,13 +2315,15 @@ jobs:
     ).rejects.toThrow('Project not found');
   });
 
-  it('disconnects an owned project through the repository', async () => {
+  it('disconnects an owned project through the repository (default, no GitHub call)', async () => {
     const projectsRepository = {
       deleteByIdAndUser: jest.fn().mockResolvedValue(true),
+      findByIdAndUser: jest.fn(),
     };
+    const githubServiceSpy = makeGithubService();
     const disconnectService = new ProjectsService(
       makeCatalogService(),
-      githubService,
+      githubServiceSpy,
       projectsRepository as never,
       makeCiService(),
       projectDeploymentProvisioningService as never,
@@ -1857,11 +2331,18 @@ jobs:
 
     await expect(
       disconnectService.disconnectProject('project-1', 'user-1'),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
+    // Default path passes allowedRoles: undefined through, which falls back
+    // to deleteByIdAndUser's own default (admin/delegated_lead/member) — the
+    // plain-disconnect permissive role set stays unchanged.
     expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
       'project-1',
       'user-1',
+      undefined,
     );
+    // Default path must never touch GitHub or require a repo lookup.
+    expect(projectsRepository.findByIdAndUser).not.toHaveBeenCalled();
+    expect(githubServiceSpy.deleteRepoForUser).not.toHaveBeenCalled();
   });
 
   it('throws not found when disconnecting a project outside the user scope', async () => {
@@ -1876,6 +2357,304 @@ jobs:
     await expect(
       disconnectService.disconnectProject('project-1', 'user-2'),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  describe('disconnectProject with deleteGithubRepo opt-in', () => {
+    const buildService = (options: {
+      githubServiceOverride?: Partial<{
+        deleteRepoForUser: jest.Mock;
+      }>;
+      workspaceAccessService?: WorkspaceAccessService;
+      projectsRepositoryOverride?: Partial<{
+        findByIdAndUser: jest.Mock;
+        deleteByIdAndUser: jest.Mock;
+      }>;
+      auditEventsService?: { recordProjectEvent: jest.Mock };
+      notificationEventsService?: { record: jest.Mock };
+    }) => {
+      const githubServiceMock = {
+        ...(makeGithubService() as unknown as Record<string, unknown>),
+        ...options.githubServiceOverride,
+      } as unknown as GithubService;
+      const projectsRepository = {
+        ...(makeProjectsRepository() as unknown as Record<string, unknown>),
+        ...options.projectsRepositoryOverride,
+      } as unknown as ProjectsRepository;
+
+      const service = new ProjectsService(
+        makeCatalogService(),
+        githubServiceMock,
+        projectsRepository,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined, // ciTokensRepository
+        undefined, // deploymentTargetsRepository
+        undefined, // envVarsRepository
+        undefined, // workflowHistoryRepository
+        undefined, // dashboardSnapshotsRepository
+        undefined, // configService
+        undefined, // workflowSettingsRepository
+        undefined, // workflowUpdateRequestsRepository
+        undefined, // usageQuotaService
+        (options.auditEventsService as never) ?? undefined, // auditEventsService
+        undefined, // workspacesService
+        (options.notificationEventsService as never) ?? undefined, // notificationEventsService
+        options.workspaceAccessService, // workspaceAccessService
+      );
+
+      return { service, githubServiceMock, projectsRepository };
+    };
+
+    it('succeeds and calls GithubService.deleteRepoForUser when confirmRepoName matches', async () => {
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+        auditEventsService,
+        notificationEventsService,
+      });
+
+      const result = await service.disconnectProject(
+        'project-1',
+        'user-1',
+        { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+        'gh-token',
+      );
+
+      expect(result).toEqual({ ok: true, githubRepoDeleted: true });
+      expect(githubServiceMock.deleteRepoForUser).toHaveBeenCalledWith(
+        'gh-token',
+        'tone',
+        'orders-api',
+      );
+      // Both the role-scoped lookup and the final delete must carry the
+      // tightened role list — this is the SQL-level (fail-closed)
+      // enforcement, independent of workspaceAccessService.
+      expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventCode: 'project_github_repo_deleted' }),
+      );
+    });
+
+    it('rejects a mismatched confirmRepoName without ever calling GitHub, and audits the rejection', async () => {
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+        auditEventsService,
+      });
+
+      await expect(
+        service.disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'wrong/name' },
+          'gh-token',
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_rejected',
+          metadata: expect.objectContaining({
+            reason: 'confirmation_mismatch',
+          }),
+        }),
+      );
+    });
+
+    it('rejects deleteGithubRepo=true for a developer-role user via the app-layer pre-check (owner/admin only), and audits it', async () => {
+      const workspaceAccessService = makeWorkspaceAccessService({
+        assertProjectRole: jest
+          .fn()
+          .mockRejectedValue(
+            new ForbiddenException('Insufficient workspace role'),
+          ),
+      });
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService,
+        auditEventsService,
+      });
+
+      await expect(
+        service.disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+          'gh-token',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      expect(projectsRepository.findByIdAndUser).not.toHaveBeenCalled();
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_rejected',
+          metadata: expect.objectContaining({ reason: 'insufficient_role' }),
+        }),
+      );
+    });
+
+    it('fails closed at the SQL layer even when workspaceAccessService is entirely absent (H1 defense-in-depth)', async () => {
+      // No workspaceAccessService passed at all — the app-layer pre-check
+      // no-ops via `?.`. The role-scoped findByIdAndUser must still deny
+      // access on its own: simulate the DB returning no row, as it would for
+      // a caller whose workspace role isn't in the allowedRoles list.
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        projectsRepositoryOverride: {
+          findByIdAndUser: jest.fn().mockResolvedValue(null),
+        },
+        auditEventsService,
+      });
+
+      await expect(
+        service.disconnectProject(
+          'project-1',
+          'user-1',
+          { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+          'gh-token',
+        ),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(projectsRepository.findByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      expect(projectsRepository.deleteByIdAndUser).not.toHaveBeenCalled();
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_rejected',
+          metadata: expect.objectContaining({
+            reason: 'not_found_or_insufficient_role',
+          }),
+        }),
+      );
+    });
+
+    it('lets the local disconnect proceed and reports a missing-scope error when GitHub delete fails with 403', async () => {
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+        githubServiceOverride: {
+          deleteRepoForUser: jest
+            .fn()
+            .mockRejectedValue(
+              new GithubRepoDeleteError(
+                'missing_scope',
+                'GitHub denied deleting tone/orders-api (403). Reconnect your GitHub account.',
+              ),
+            ),
+        },
+        auditEventsService,
+      });
+
+      const result = await service.disconnectProject(
+        'project-1',
+        'user-1',
+        { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+        'gh-token',
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        githubRepoDeleted: false,
+        githubRepoDeleteError: {
+          code: 'missing_scope',
+          message:
+            'GitHub denied deleting tone/orders-api (403). Reconnect your GitHub account.',
+        },
+      });
+      // The local DB row must still be removed even though GitHub failed,
+      // and still scoped to the tightened role list.
+      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_missing_scope',
+        }),
+      );
+    });
+
+    it('reports missing_scope without calling GitHub when the session has no access token', async () => {
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+      });
+
+      const result = await service.disconnectProject(
+        'project-1',
+        'user-1',
+        { deleteGithubRepo: true, confirmRepoName: 'tone/orders-api' },
+        null,
+      );
+
+      expect(result.githubRepoDeleted).toBe(false);
+      expect(result.githubRepoDeleteError?.code).toBe('missing_scope');
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+    });
+
+    it('reports an "other" error and audits it when repo_full_name has no owner/repo split', async () => {
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const { service, githubServiceMock, projectsRepository } = buildService({
+        workspaceAccessService: makeWorkspaceAccessService(),
+        projectsRepositoryOverride: {
+          findByIdAndUser: jest
+            .fn()
+            .mockResolvedValue({ id: 'project-1', repo_full_name: 'no-slash' }),
+        },
+        auditEventsService,
+      });
+
+      const result = await service.disconnectProject(
+        'project-1',
+        'user-1',
+        { deleteGithubRepo: true, confirmRepoName: 'no-slash' },
+        'gh-token',
+      );
+
+      expect(result.githubRepoDeleted).toBe(false);
+      expect(result.githubRepoDeleteError?.code).toBe('other');
+      expect(githubServiceMock.deleteRepoForUser).not.toHaveBeenCalled();
+      // Local disconnect still proceeds even for this failure mode.
+      expect(projectsRepository.deleteByIdAndUser).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        ['admin', 'delegated_lead'],
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventCode: 'project_github_repo_delete_failed',
+          metadata: expect.objectContaining({ code: 'other' }),
+        }),
+      );
+    });
   });
 
   it('returns an empty sync summary when the user has no projects', async () => {
@@ -2003,6 +2782,383 @@ jobs:
         eventCode: 'project_sync_completed',
       }),
     );
+  });
+
+  describe('reconcileDeletedRepos', () => {
+    it('returns an empty summary when there are no tracked projects', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([]),
+      };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 0,
+        checked: 0,
+        deleted: 0,
+        skipped: 0,
+        outOfScope: 0,
+      });
+      expect(
+        reconcileGithubService.getOrganizationProvisioningContextByLogin,
+      ).toHaveBeenCalledWith('Alpha-Explora');
+    });
+
+    it('deletes confirmed-404 rows, skips inconclusive checks, and leaves reachable rows alone', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: jest
+          .fn()
+          // Alpha-Explora/reachable-api -> still exists, leave alone
+          .mockResolvedValueOnce(true)
+          // Alpha-Explora/gone-api -> confirmed 404, delete
+          .mockResolvedValueOnce(false)
+          // Alpha-Explora/flaky-api -> inconclusive (bad token/5xx/network), skip
+          .mockRejectedValueOnce(new Error('502 from GitHub')),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'Alpha-Explora/reachable-api',
+            user_id: 'user-1',
+          },
+          {
+            id: 'project-2',
+            repo_full_name: 'Alpha-Explora/gone-api',
+            user_id: 'user-2',
+          },
+          {
+            id: 'project-3',
+            repo_full_name: 'Alpha-Explora/flaky-api',
+            user_id: 'user-3',
+          },
+        ]),
+        deleteByRepoFullName: jest
+          .fn()
+          .mockResolvedValue([{ id: 'project-2', user_id: 'user-2' }]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 3,
+        checked: 3,
+        deleted: 1,
+        skipped: 1,
+        outOfScope: 0,
+      });
+
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledTimes(1);
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledWith(
+        'Alpha-Explora/gone-api',
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-2',
+          // Same FK reasoning as the webhook path: projectId is null, the
+          // deleted id travels in metadata instead.
+          projectId: null,
+          eventCode: 'project_deleted_reconciliation',
+          metadata: expect.objectContaining({
+            repoFullName: 'Alpha-Explora/gone-api',
+            source: 'reconciliation',
+            deletedProjectId: 'project-2',
+          }),
+        }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(1);
+    });
+
+    it('fans out a product event per distinct owner when multiple projects share a deleted repo', async () => {
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: jest.fn().mockResolvedValue(false),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'Alpha-Explora/shared-gone-api',
+            user_id: 'user-1',
+          },
+        ]),
+        deleteByRepoFullName: jest.fn().mockResolvedValue([
+          { id: 'project-1', user_id: 'user-1' },
+          { id: 'project-9', user_id: 'user-9' },
+        ]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 1,
+        checked: 1,
+        deleted: 2,
+        skipped: 0,
+        outOfScope: 0,
+      });
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: 'user-1', projectId: null }),
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actorUserId: 'user-9', projectId: null }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(2);
+    });
+
+    it('never checks or deletes a project whose repo is outside the enforced org', async () => {
+      // Safety guard: this job authenticates with a single org-level
+      // installation token, which returns 404 both for "deleted" and for
+      // "not accessible to this token". A repo outside the enforced org
+      // (e.g. one connected via the "import an existing repo" flow, which
+      // can point at any owner) must never be passed to repoExists() at
+      // all — otherwise a perfectly healthy external repo would look
+      // "confirmed gone" and get wrongly deleted.
+      const repoExistsSpy = jest.fn().mockResolvedValue(false);
+      const reconcileGithubService = {
+        ...makeGithubService(),
+        getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
+        repoExists: repoExistsSpy,
+      } as unknown as GithubService;
+      const projectsRepository = {
+        listAllRepoFullNames: jest.fn().mockResolvedValue([
+          {
+            id: 'project-1',
+            repo_full_name: 'some-other-owner/external-api',
+            user_id: 'user-1',
+          },
+          {
+            id: 'project-2',
+            repo_full_name: 'alpha-explora/in-scope-api',
+            user_id: 'user-2',
+          },
+        ]),
+        deleteByRepoFullName: jest
+          .fn()
+          .mockResolvedValue([{ id: 'project-2', user_id: 'user-2' }]),
+      };
+      const reconcileService = new ProjectsService(
+        makeCatalogService(),
+        reconcileGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      await expect(reconcileService.reconcileDeletedRepos()).resolves.toEqual({
+        total: 2,
+        checked: 1,
+        deleted: 1,
+        skipped: 0,
+        outOfScope: 1,
+      });
+
+      expect(repoExistsSpy).toHaveBeenCalledTimes(1);
+      expect(repoExistsSpy).toHaveBeenCalledWith(
+        'installation-token',
+        // Org match is case-insensitive.
+        'alpha-explora/in-scope-api',
+      );
+      expect(projectsRepository.deleteByRepoFullName).not.toHaveBeenCalledWith(
+        'some-other-owner/external-api',
+      );
+    });
+  });
+
+  describe('repository.deleted webhook subscription', () => {
+    it('subscribes to REPOSITORY_DELETED_EVENT on construction', () => {
+      const onSpy = jest.fn();
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: onSpy,
+      } as unknown as GithubService;
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        makeProjectsRepository(),
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+      );
+
+      expect(onSpy).toHaveBeenCalledWith(
+        'repository.deleted',
+        expect.any(Function),
+      );
+    });
+
+    it('hard-deletes matching projects and records a per-owner event when the repo is deleted', async () => {
+      let capturedHandler:
+        | ((event: { repoFullName: string }) => void)
+        | undefined;
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: jest.fn((eventName: string, handler: typeof capturedHandler) => {
+          if (eventName === 'repository.deleted') {
+            capturedHandler = handler;
+          }
+        }),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        deleteByRepoFullName: jest.fn().mockResolvedValue([
+          { id: 'project-1', user_id: 'user-1' },
+          { id: 'project-9', user_id: 'user-2' },
+        ]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      expect(capturedHandler).toBeDefined();
+      capturedHandler?.({ repoFullName: 'Alpha-Explora/some-repo' });
+      // The handler is fire-and-forget (async work runs after the sync
+      // .on() callback returns), so flush microtasks before asserting.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(projectsRepository.deleteByRepoFullName).toHaveBeenCalledWith(
+        'Alpha-Explora/some-repo',
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-1',
+          // projectId must be null — the row is already deleted by the time
+          // this runs, and audit_events.project_id has an FK to
+          // provisioned_projects, so a non-null id here would fail the
+          // insert. The deleted id still travels in metadata.
+          projectId: null,
+          eventCode: 'project_deleted_webhook',
+          metadata: expect.objectContaining({ deletedProjectId: 'project-1' }),
+        }),
+      );
+      expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'user-2',
+          projectId: null,
+          eventCode: 'project_deleted_webhook',
+          metadata: expect.objectContaining({ deletedProjectId: 'project-9' }),
+        }),
+      );
+      expect(notificationEventsService.record).toHaveBeenCalledTimes(2);
+      expect(notificationEventsService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: null }),
+      );
+    });
+
+    it('does nothing when no project matches the deleted repo', async () => {
+      let capturedHandler:
+        | ((event: { repoFullName: string }) => void)
+        | undefined;
+      const webhookGithubService = {
+        ...makeGithubService(),
+        on: jest.fn((eventName: string, handler: typeof capturedHandler) => {
+          if (eventName === 'repository.deleted') {
+            capturedHandler = handler;
+          }
+        }),
+      } as unknown as GithubService;
+      const projectsRepository = {
+        deleteByRepoFullName: jest.fn().mockResolvedValue([]),
+      };
+      const auditEventsService = { recordProjectEvent: jest.fn() };
+      const notificationEventsService = { record: jest.fn() };
+
+      new ProjectsService(
+        makeCatalogService(),
+        webhookGithubService,
+        projectsRepository as never,
+        makeCiService(),
+        projectDeploymentProvisioningService as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        auditEventsService as never,
+        undefined,
+        notificationEventsService as never,
+      );
+
+      capturedHandler?.({ repoFullName: 'tone/never-provisioned' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(auditEventsService.recordProjectEvent).not.toHaveBeenCalled();
+      expect(notificationEventsService.record).not.toHaveBeenCalled();
+    });
   });
 
   it('builds workflow YAML with generated defaults and enhancement flags', async () => {

@@ -31,7 +31,7 @@ const makeService = () =>
     }),
     setupPullRequest: jest.fn().mockResolvedValue({
       repoFullName: 'tone/app',
-      branchName: 'flowci/app-ci',
+      branchName: 'alphaci/app-ci',
       workflowPath: '.github/workflows/ci.yml',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/app/pull/42',

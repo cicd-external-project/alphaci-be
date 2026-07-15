@@ -17,6 +17,7 @@ const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const fakeFreeSub: SubscriptionState = {
@@ -80,6 +81,7 @@ const makeConfigService = () =>
 const makePlatformAdminsRepository = () =>
   ({
     findRole: jest.fn().mockResolvedValue(null),
+    findAppRole: jest.fn().mockResolvedValue('member'),
   }) as unknown as PlatformAdminsRepository;
 
 describe('AuthController', () => {

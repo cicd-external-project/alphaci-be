@@ -14,6 +14,13 @@ function makeServiceMock(
       status,
       uptimeSeconds: 42,
       checks: { database, apiCenter: true },
+      deploy: {
+        gitCommit: 'test-sha',
+        githubEnforcedOrg: 'Alpha-Explora',
+        githubAppConfigured: true,
+        githubAppId: '4114943',
+        githubAppSlug: 'alphaci-test',
+      },
     } satisfies HealthResponse),
   };
 }

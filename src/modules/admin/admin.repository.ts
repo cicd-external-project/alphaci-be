@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
+import type { AppRole } from './platform-admins.repository';
 
 export interface AdminUserListRow {
   id: string;
@@ -13,6 +14,7 @@ export interface AdminUserListRow {
   last_login_at: string | null;
   archived_at: string | null;
   onboarding_completed_at: string | null;
+  app_role: AppRole;
   project_count: number;
   error_count: number;
 }
@@ -94,6 +96,7 @@ export class AdminRepository {
         SELECT
           u.id, u.login, u.display_name, u.email, u.avatar_url, u.provider,
           u.created_at, u.last_login_at, u.archived_at, u.onboarding_completed_at,
+          u.app_role,
           COALESCE(p.project_count, 0)::int AS project_count,
           COALESCE(e.error_count, 0)::int   AS error_count
         FROM identity.app_users AS u
@@ -124,6 +127,7 @@ export class AdminRepository {
         SELECT
           u.id, u.login, u.display_name, u.email, u.avatar_url, u.provider,
           u.created_at, u.last_login_at, u.archived_at, u.onboarding_completed_at,
+          u.app_role,
           (SELECT COUNT(*)::int FROM projects.provisioned_projects
              WHERE user_id = u.id AND is_example = false) AS project_count,
           (SELECT COUNT(*)::int FROM workflow.ci_run_reports

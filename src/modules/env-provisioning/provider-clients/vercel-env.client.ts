@@ -2,12 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../../config/app.config';
+import { fetchWithRetry } from './fetch-with-retry';
 import type {
   CreateProviderTargetInput,
   DeleteProviderEnvInput,
+  DeleteProviderTargetInput,
+  DeleteProviderTargetResult,
   ProviderAccountSummary,
+  ProviderDeployEvent,
   ProviderDeploymentTarget,
+  ProviderLogEntry,
+  ProviderLogsInput,
   ProviderProvisionResult,
+  ProviderTargetStatus,
+  ProviderTargetStatusInput,
   RuntimeEnvProviderClient,
   UpsertProviderEnvInput,
 } from './runtime-env-provider.client';
@@ -97,8 +105,7 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
   ): Promise<ProviderDeploymentTarget> {
     const [owner, repo] = input.repoFullName.split('/');
     const rootDirectory = this.normalizeRootDirectory(input.rootDirectory);
-    const shouldConnectGit =
-      input.deploymentStrategy !== 'vercel_ci_pushed' && Boolean(owner && repo);
+    const shouldConnectGit = Boolean(owner && repo);
     const vercelOrgId = this.resolveVercelOrgId(input);
     const response = await fetch(
       this.withTargetScope(`${VERCEL_API_URL}/v11/projects`, input),
@@ -207,6 +214,212 @@ export class VercelEnvClient implements RuntimeEnvProviderClient {
     await this.assertOk(deleteResponse, 'Vercel env var could not be deleted');
 
     return { key: input.key, status: 'removed' };
+  }
+
+  async getTargetStatus(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderTargetStatus> {
+    const response = await fetch(
+      this.withInputScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`, input),
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { exists: false };
+    }
+    await this.assertOk(response, 'Vercel project status could not be loaded');
+    const payload = (await response.json()) as {
+      id?: string;
+      name?: string;
+      latestDeployments?: Array<{ url?: string }>;
+    };
+
+    const url = payload.latestDeployments?.[0]?.url;
+
+    return {
+      exists: true,
+      ...(url !== undefined ? { url } : {}),
+    };
+  }
+
+  async deleteTarget(
+    input: DeleteProviderTargetInput,
+  ): Promise<DeleteProviderTargetResult> {
+    const response = await fetch(
+      this.withScope(`${VERCEL_API_URL}/v9/projects/${input.targetId}`),
+      { method: 'DELETE', headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return { deleted: true };
+    }
+    await this.assertOk(response, 'Vercel project could not be deleted');
+
+    return { deleted: true };
+  }
+
+  async getDeployHistory(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]> {
+    const response = await fetch(
+      this.withInputScope(
+        `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=20`,
+        input,
+      ),
+      { headers: this.headers(input.token) },
+    );
+    if (response.status === 404) {
+      return [];
+    }
+    await this.assertOk(
+      response,
+      'Vercel deploy history could not be loaded',
+    );
+    const payload = (await response.json()) as {
+      deployments?: Array<{
+        uid?: string;
+        state?: string;
+        readyState?: string;
+        source?: string;
+        createdAt?: number;
+        ready?: number;
+        meta?: {
+          githubCommitSha?: string;
+          githubCommitMessage?: string;
+        };
+      }>;
+    };
+
+    return (payload.deployments ?? [])
+      .filter((deployment): deployment is typeof deployment & { uid: string } =>
+        Boolean(deployment.uid),
+      )
+      .map((deployment) => ({
+        id: deployment.uid,
+        status: deployment.readyState ?? deployment.state ?? 'unknown',
+        createdAt: deployment.createdAt
+          ? new Date(deployment.createdAt).toISOString()
+          : new Date().toISOString(),
+        readyAt: deployment.ready
+          ? new Date(deployment.ready).toISOString()
+          : null,
+        commitSha: deployment.meta?.githubCommitSha ?? null,
+        commitMessage: deployment.meta?.githubCommitMessage ?? null,
+        trigger: deployment.source ?? null,
+      }));
+  }
+
+  async getLogs(input: ProviderLogsInput): Promise<ProviderLogEntry[]> {
+    const deploymentsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v6/deployments?projectId=${encodeURIComponent(input.targetId)}&limit=1`,
+      input,
+    );
+    const depResponse = await fetchWithRetry(
+      deploymentsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(depResponse, 'Vercel deployments could not be loaded');
+    const depData = (await depResponse.json()) as {
+      deployments?: Array<{ uid?: string }>;
+    };
+    const latestDeploymentId = depData.deployments?.[0]?.uid;
+    if (!latestDeploymentId) {
+      return [];
+    }
+
+    if (input.type === 'build') {
+      return this.getBuildLogs(input, latestDeploymentId);
+    }
+
+    const logsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v1/projects/${encodeURIComponent(
+        input.targetId,
+      )}/deployments/${encodeURIComponent(latestDeploymentId)}/runtime-logs?limit=100`,
+      input,
+    );
+    const logsResponse = await fetchWithRetry(
+      logsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(logsResponse, 'Vercel runtime logs could not be loaded');
+    interface VercelRuntimeLogEntry {
+      timestamp: number;
+      text?: string;
+      message?: string;
+      type?: string;
+      level?: string;
+    }
+    const logsData = (await logsResponse.json()) as
+      | VercelRuntimeLogEntry[]
+      | { logs?: VercelRuntimeLogEntry[] };
+    const logsList = Array.isArray(logsData)
+      ? logsData
+      : (logsData.logs ?? []);
+
+    return logsList.map((l) => ({
+      timestamp: l.timestamp
+        ? new Date(Number(l.timestamp)).toISOString()
+        : new Date().toISOString(),
+      message: l.text || l.message || '',
+      level:
+        l.type === 'err' || l.level === 'error'
+          ? 'error'
+          : l.type === 'warning' || l.level === 'warn'
+            ? 'warn'
+            : 'info',
+    }));
+  }
+
+  private async getBuildLogs(
+    input: ProviderLogsInput,
+    deploymentId: string,
+  ): Promise<ProviderLogEntry[]> {
+    const eventsUrl = this.withInputScope(
+      `${VERCEL_API_URL}/v2/deployments/${encodeURIComponent(deploymentId)}/events?limit=100`,
+      input,
+    );
+    const response = await fetchWithRetry(
+      eventsUrl,
+      { headers: this.headers(input.token) },
+      'Vercel',
+    );
+    await this.assertOk(response, 'Vercel build logs could not be loaded');
+    interface VercelBuildEvent {
+      created?: number;
+      type?: string;
+      payload?: { text?: string };
+    }
+    const events = (await response.json()) as VercelBuildEvent[];
+
+    return events
+      .filter((event) => typeof event.payload?.text === 'string')
+      .map((event) => ({
+        timestamp: event.created
+          ? new Date(event.created).toISOString()
+          : new Date().toISOString(),
+        message: event.payload?.text ?? '',
+        level: event.type === 'stderr' ? 'error' : 'info',
+      }));
+  }
+
+  private withInputScope(
+    url: string,
+    input: ProviderTargetStatusInput,
+  ): string {
+    const teamId = input.vercelTeamId?.trim();
+    const slug = input.vercelTeamSlug?.trim();
+    if (!teamId && !slug) {
+      return this.withScope(url);
+    }
+
+    const scopedUrl = new URL(url);
+    if (teamId) {
+      scopedUrl.searchParams.set('teamId', teamId);
+    } else if (slug) {
+      scopedUrl.searchParams.set('slug', slug);
+    }
+
+    return scopedUrl.toString();
   }
 
   private withScope(url: string): string {

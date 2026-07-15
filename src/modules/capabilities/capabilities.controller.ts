@@ -18,7 +18,10 @@ export class CapabilitiesController {
         enabled,
         providers: enabled ? ['render', 'vercel'] : [],
         environments: enabled ? ['test', 'uat', 'production'] : [],
-        modes: enabled ? ['byo', 'flowci_managed'] : [],
+        // Advertise the single ownership mode this deployment supports. BYO is
+        // archived — deployments always centralize on the platform's own
+        // Render/Vercel/SonarCloud credentials ('flowci_managed').
+        modes: enabled ? [config.envProvisioning.ownershipMode] : [],
       },
       projectSyncSnapshots: {
         enabled: config.projectSyncSnapshots.enabled,
@@ -75,6 +78,10 @@ export class CapabilitiesController {
       },
       notifications: {
         enabled: config.notifications.enabled,
+      },
+      hierarchy: {
+        enabled: config.hierarchy.enabled,
+        githubSyncMode: config.hierarchy.githubSyncMode,
       },
     };
   }

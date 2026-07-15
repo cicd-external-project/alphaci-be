@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import type {
 import { AdminRepository, type ListUsersOptions } from './admin.repository';
 import {
   PlatformAdminsRepository,
+  type AppRole,
   type PlatformAdminRecord,
   type PlatformRole,
 } from './platform-admins.repository';
@@ -175,6 +177,54 @@ export class AdminService {
         targetUserId,
       },
     );
+  }
+
+  /**
+   * Sets a user's GLOBAL hierarchy role (Admin / Lead / Member) — the single
+   * place roles are assigned. An admin cannot strip their own Admin role
+   * (self-lockout guard).
+   */
+  async setAppRole(
+    actorId: string,
+    targetUserId: string,
+    role: AppRole,
+  ): Promise<void> {
+    if (actorId === targetUserId && role !== 'admin') {
+      throw new BadRequestException('You cannot remove your own Admin role');
+    }
+    const target = await this.adminRepository.findUserById(targetUserId);
+    if (!target) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Admin-tier authorization (product decision 2026-07-14):
+    //  - The permanent super-admin can never be demoted below Admin.
+    //  - Promoting someone TO Admin, or demoting someone FROM Admin, is
+    //    reserved for the super-admin. A regular Admin may still shuffle the
+    //    lower Lead/Member tiers but cannot mint or unmake other Admins.
+    const [actorPlatformRole, targetPlatformRole, targetCurrentRole] =
+      await Promise.all([
+        this.platformAdminsRepository.findRole(actorId),
+        this.platformAdminsRepository.findRole(targetUserId),
+        this.platformAdminsRepository.findAppRole(targetUserId),
+      ]);
+
+    if (targetPlatformRole === 'super_admin' && role !== 'admin') {
+      throw new BadRequestException('The permanent admin cannot be demoted.');
+    }
+
+    const involvesAdminTier = role === 'admin' || targetCurrentRole === 'admin';
+    if (involvesAdminTier && actorPlatformRole !== 'super_admin') {
+      throw new ForbiddenException(
+        'Only the super-admin can change Admin-level roles.',
+      );
+    }
+
+    await this.platformAdminsRepository.setAppRole(targetUserId, role);
+    await this.audit(actorId, 'admin.app_role.set', 'Admin set global role', {
+      targetUserId,
+      role,
+    });
   }
 
   async listFeedback(

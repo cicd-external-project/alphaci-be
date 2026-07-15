@@ -1,3 +1,5 @@
+import { firstValueFrom } from 'rxjs';
+
 import { DeploymentTargetsController } from './deployment-targets.controller';
 import type { DeploymentTargetsService } from './deployment-targets.service';
 
@@ -12,6 +14,9 @@ describe('DeploymentTargetsController', () => {
         .fn()
         .mockResolvedValue({ id: 'target-1', branchName: 'test' }),
       detachDeploymentTarget: jest.fn().mockResolvedValue({ detached: true }),
+      getDeploymentTargetLogs: jest
+        .fn()
+        .mockResolvedValue({ source: 'live', logs: [] }),
     }) as unknown as jest.Mocked<DeploymentTargetsService>;
 
   const request = { session: { user: { id: 'user-1' } } } as never;
@@ -101,6 +106,99 @@ describe('DeploymentTargetsController', () => {
       'project-1',
       'target-1',
       'user-1',
+      undefined,
+    );
+  });
+
+  it('fetches deployment target logs with no filters for the current user', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+
+    await expect(
+      controller.logs(request, 'project-1', 'target-1'),
+    ).resolves.toEqual({ source: 'live', logs: [] });
+    expect(service.getDeploymentTargetLogs).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      {},
+    );
+  });
+
+  it('passes log type and time-range query params through to the service', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+
+    await expect(
+      controller.logs(
+        request,
+        'project-1',
+        'target-1',
+        'build',
+        '2026-07-11T00:00:00.000Z',
+        '2026-07-12T00:00:00.000Z',
+      ),
+    ).resolves.toEqual({ source: 'live', logs: [] });
+    expect(service.getDeploymentTargetLogs).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      {
+        type: 'build',
+        startTime: '2026-07-11T00:00:00.000Z',
+        endTime: '2026-07-12T00:00:00.000Z',
+      },
+    );
+  });
+
+  it('streams the deployment target logs as an SSE message', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+
+    const stream = controller.logsStream(request, 'project-1', 'target-1');
+    const event = await firstValueFrom(stream);
+
+    expect(event).toEqual({ data: { source: 'live', logs: [] } });
+    expect(service.getDeploymentTargetLogs).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      {},
+    );
+  });
+
+  it('emits an error-shaped SSE message when the service rejects', async () => {
+    const service = makeService();
+    service.getDeploymentTargetLogs.mockRejectedValueOnce(
+      new Error('Deployment target not found'),
+    );
+    const controller = new DeploymentTargetsController(service);
+
+    const stream = controller.logsStream(request, 'project-1', 'target-1');
+    const event = await firstValueFrom(stream);
+
+    expect(event).toEqual({
+      data: {
+        source: 'simulated',
+        reason: 'Deployment target not found',
+        logs: [],
+      },
+    });
+  });
+
+  it('passes the detach request body through to the service', async () => {
+    const service = makeService();
+    const controller = new DeploymentTargetsController(service);
+    const body = { deleteProviderResource: true };
+
+    await expect(
+      controller.detach(request, 'project-1', 'target-1', body),
+    ).resolves.toEqual({ detached: true });
+    expect(service.detachDeploymentTarget).toHaveBeenCalledWith(
+      'project-1',
+      'target-1',
+      'user-1',
+      body,
     );
   });
 });

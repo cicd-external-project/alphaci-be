@@ -67,10 +67,11 @@ describe('DeploymentTargetsService', () => {
     workspaceAccessService.assertProjectRole.mockResolvedValue({
       workspaceId: 'workspace-1',
       userId: 'user-1',
-      role: 'developer',
+      role: 'member',
     });
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
+        ownershipMode: 'byo',
         flowciManaged: {
           renderToken: 'render-token',
           vercelToken: 'flowci-vercel-token',
@@ -127,86 +128,7 @@ describe('DeploymentTargetsService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('creates FlowCI-managed Vercel targets as CI-pushed projects in the managed team', async () => {
-    vercelClient.createTarget.mockResolvedValueOnce({
-      id: 'prj_1',
-      name: 'demo-frontend',
-      provider: 'vercel',
-      metadata: {
-        deploymentStrategy: 'vercel_ci_pushed',
-        vercelOrgId: 'team_flowci',
-        vercelProjectId: 'prj_1',
-        vercelTeamId: 'team_flowci',
-        gitConnected: false,
-      },
-    });
-    deploymentTargetsRepository.createDeploymentTarget.mockResolvedValueOnce({
-      id: 'target-1',
-    });
-
-    await service.createDeploymentTarget('project-1', 'user-1', {
-      action: 'create',
-      slot: 'frontend',
-      ownershipMode: 'flowci_managed',
-      provider: 'vercel',
-      projectName: 'demo-frontend',
-    });
-
-    expect(vercelClient.createTarget).toHaveBeenCalledWith(
-      expect.objectContaining({
-        token: 'flowci-vercel-token',
-        deploymentStrategy: 'vercel_ci_pushed',
-        vercelOrgId: 'team_flowci',
-        vercelTeamId: 'team_flowci',
-        vercelTeamSlug: 'flowci-team',
-      }),
-    );
-    expect(
-      deploymentTargetsRepository.createDeploymentTarget,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ownershipMode: 'flowci_managed',
-        provider: 'vercel',
-        deploymentStrategy: 'vercel_ci_pushed',
-        providerConnectionId: null,
-      }),
-    );
-    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
-      'project-1',
-      'user-1',
-      ['owner', 'admin', 'developer'],
-    );
-    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actorUserId: 'user-1',
-        projectId: 'project-1',
-        eventCode: 'deployment_target_created',
-      }),
-    );
-    expect(notificationEventsService.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-1',
-        projectId: 'project-1',
-        eventCode: 'deployment_target_created',
-      }),
-    );
-  });
-
-  it('rejects FlowCI-managed Vercel targets when the managed team id is missing', async () => {
-    configService.getOrThrow.mockReturnValue({
-      envProvisioning: {
-        flowciManaged: {
-          renderToken: 'render-token',
-          vercelToken: 'flowci-vercel-token',
-          vercelTeamId: null,
-          vercelTeamSlug: 'flowci-team',
-        },
-      },
-      projectTargetManagement: {
-        enabled: true,
-      },
-    });
-
+  it('rejects archived ALPHACI-managed Vercel targets before provider calls', async () => {
     await expect(
       service.createDeploymentTarget('project-1', 'user-1', {
         action: 'create',
@@ -215,7 +137,106 @@ describe('DeploymentTargetsService', () => {
         provider: 'vercel',
         projectName: 'demo-frontend',
       }),
-    ).rejects.toThrow('FLOWCI_VERCEL_TEAM_ID is required');
+    ).rejects.toThrow(
+      'Managed vercel hosting is archived. Connect your own vercel account and use BYO hosting for new targets.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead', 'member'],
+    );
+  });
+
+  it('rejects archived ALPHACI-managed Render targets before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'backend',
+        ownershipMode: 'flowci_managed',
+        provider: 'render',
+        projectName: 'demo-backend',
+      }),
+    ).rejects.toThrow(
+      'Managed render hosting is archived. Connect your own render account and use BYO hosting for new targets.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects Render targets outside the backend slot before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'render',
+        providerConnectionId: 'connection-1',
+        projectName: 'demo-api',
+      }),
+    ).rejects.toThrow(
+      'Render deployment targets are backend-only. Choose the backend slot for Render.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects Vercel targets outside the frontend slot before provider calls', async () => {
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'backend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        providerConnectionId: 'connection-1',
+        projectName: 'demo-web',
+      }),
+    ).rejects.toThrow(
+      'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
+    );
+
+    expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(
+      deploymentTargetsRepository.createDeploymentTarget,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects BYO targets when the deployment centralizes on flowci_managed', async () => {
+    configService.getOrThrow.mockReturnValue({
+      envProvisioning: {
+        ownershipMode: 'flowci_managed',
+        flowciManaged: {
+          renderToken: 'render-token',
+          vercelToken: 'flowci-vercel-token',
+          vercelTeamId: 'team_flowci',
+          vercelTeamSlug: 'flowci-team',
+        },
+      },
+      projectTargetManagement: { enabled: true },
+    });
+
+    await expect(
+      service.createDeploymentTarget('project-1', 'user-1', {
+        action: 'create',
+        slot: 'frontend',
+        ownershipMode: 'byo',
+        provider: 'vercel',
+        projectName: 'demo-frontend',
+        providerConnectionId: 'conn-1',
+      }),
+    ).rejects.toThrow(
+      "This workspace centralizes deployments on the organization's vercel account. Bring-your-own vercel hosting is not available here.",
+    );
 
     expect(vercelClient.createTarget).not.toHaveBeenCalled();
     expect(
@@ -274,7 +295,7 @@ describe('DeploymentTargetsService', () => {
     expect(createInput.providerMetadata).not.toHaveProperty('deployHookUrl');
   });
 
-  it('updates FlowCI target metadata without calling provider clients', async () => {
+  it('updates ALPHACI target metadata without calling provider clients', async () => {
     const updatedTarget = {
       id: 'target-1',
       projectId: 'project-1',
@@ -287,6 +308,13 @@ describe('DeploymentTargetsService', () => {
       startCommand: 'npm run start:prod',
       renderEnvironmentName: 'uat',
     };
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        ...updatedTarget,
+        provider: 'render',
+        providerMetadata: {},
+      },
+    );
     deploymentTargetsRepository.updateDeploymentTargetMetadataForUser.mockResolvedValueOnce(
       updatedTarget,
     );
@@ -328,7 +356,7 @@ describe('DeploymentTargetsService', () => {
     expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
       'project-1',
       'user-1',
-      ['owner', 'admin', 'developer'],
+      ['admin', 'delegated_lead', 'member'],
     );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -337,6 +365,38 @@ describe('DeploymentTargetsService', () => {
         eventCode: 'deployment_target_updated',
       }),
     );
+  });
+
+  it('rejects slot metadata updates that violate provider ownership', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectName: 'orders-api',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.updateDeploymentTargetMetadata(
+        'project-1',
+        'target-1',
+        'user-1',
+        {
+          slot: 'frontend',
+        },
+      ),
+    ).rejects.toThrow(
+      'Render deployment targets are backend-only. Choose the backend slot for Render.',
+    );
+
+    expect(
+      deploymentTargetsRepository.updateDeploymentTargetMetadataForUser,
+    ).not.toHaveBeenCalled();
   });
 
   it('rejects metadata updates for another user target', async () => {
@@ -356,29 +416,177 @@ describe('DeploymentTargetsService', () => {
     ).rejects.toThrow('Deployment target not found');
   });
 
-  it('detaches a target from FlowCI without calling provider delete APIs', async () => {
+  it('detaches a target from ALPHACI without calling the provider delete API when not requested', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+    );
     deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
       true,
     );
 
     await expect(
       service.detachDeploymentTarget('project-1', 'target-1', 'user-1'),
-    ).resolves.toEqual({ detached: true });
+    ).resolves.toEqual({ detached: true, providerResourceDeleted: false });
 
     expect(vercelClient.createTarget).not.toHaveBeenCalled();
+    expect(clientRegistry.getClient).not.toHaveBeenCalled();
     expect(
       deploymentTargetsRepository.deleteDeploymentTargetForUser,
     ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead', 'member'],
+    );
     expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: 'user-1',
         projectId: 'project-1',
         eventCode: 'deployment_target_detached',
+        metadata: expect.objectContaining({
+          deleteProviderResourceRequested: false,
+          providerResourceDeleted: false,
+        }),
       }),
     );
   });
 
-  it('reports provider-write actions disabled until live provider activation', async () => {
+  it('requires admin/delegated_lead (not member) role when requesting the live provider resource be deleted', async () => {
+    workspaceAccessService.assertProjectRole.mockImplementation(
+      (_projectId: string, _userId: string, roles: string[]) => {
+        if (!roles.includes('member')) {
+          return Promise.reject(
+            new Error('Forbidden: requires admin or delegated_lead role'),
+          );
+        }
+        return Promise.resolve({
+          workspaceId: 'workspace-1',
+          userId: 'user-1',
+          role: 'member',
+        });
+      },
+    );
+    // No findDeploymentTargetForUser mock is queued here: access is denied
+    // in assertProjectMutationAccess before the target row is ever loaded,
+    // so queuing an unused mockResolvedValueOnce would leak into (and
+    // desync) the next test's queue.
+
+    await expect(
+      service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
+        deleteProviderResource: true,
+      }),
+    ).rejects.toThrow('Forbidden: requires admin or delegated_lead role');
+
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead'],
+    );
+    expect(
+      deploymentTargetsRepository.deleteDeploymentTargetForUser,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('allows deleteProviderResource for admin/delegated_lead roles and deletes the live resource', async () => {
+    const renderClient = {
+      deleteTarget: jest.fn().mockResolvedValue({ deleted: true }),
+    };
+    clientRegistry.getClient.mockReturnValue(renderClient);
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+    );
+    deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
+      true,
+    );
+
+    await expect(
+      service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
+        deleteProviderResource: true,
+      }),
+    ).resolves.toEqual({ detached: true, providerResourceDeleted: true });
+
+    expect(workspaceAccessService.assertProjectRole).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead'],
+    );
+    expect(renderClient.deleteTarget).toHaveBeenCalledWith({
+      token: 'render-token',
+      targetId: 'srv-1',
+    });
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          deleteProviderResourceRequested: true,
+          providerResourceDeleted: true,
+        }),
+      }),
+    );
+  });
+
+  it('still detaches locally and reports a providerDeleteError when the live provider delete fails', async () => {
+    const renderClient = {
+      deleteTarget: jest
+        .fn()
+        .mockRejectedValue(new Error('Render API is down')),
+    };
+    clientRegistry.getClient.mockReturnValue(renderClient);
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+      },
+    );
+    deploymentTargetsRepository.deleteDeploymentTargetForUser.mockResolvedValueOnce(
+      true,
+    );
+
+    await expect(
+      service.detachDeploymentTarget('project-1', 'target-1', 'user-1', {
+        deleteProviderResource: true,
+      }),
+    ).resolves.toEqual({
+      detached: true,
+      providerResourceDeleted: false,
+      providerDeleteError: 'Render API is down',
+    });
+
+    expect(
+      deploymentTargetsRepository.deleteDeploymentTargetForUser,
+    ).toHaveBeenCalledWith('project-1', 'target-1', 'user-1');
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          deleteProviderResourceRequested: true,
+          providerResourceDeleted: false,
+          providerDeleteError: 'Render API is down',
+        }),
+      }),
+    );
+  });
+
+  it('reports the sync capability mode as provider_live when a provider project id is tracked', async () => {
     deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
       {
         id: 'target-1',
@@ -395,7 +603,7 @@ describe('DeploymentTargetsService', () => {
     ).resolves.toMatchObject({
       targetId: 'target-1',
       actions: {
-        sync: { enabled: true, mode: 'local_metadata' },
+        sync: { enabled: true, mode: 'provider_live' },
         detach: { enabled: true },
         reinstallDeploymentSecrets: {
           enabled: false,
@@ -405,11 +613,119 @@ describe('DeploymentTargetsService', () => {
           enabled: true,
           url: 'https://vercel.com/flowci-team/orders-web',
         },
+        openProviderConsole: {
+          enabled: true,
+          url: 'https://vercel.com/flowci-team/orders-web/deployments',
+        },
       },
     });
   });
 
-  it('syncs target state from stored metadata only', async () => {
+  it('reports the sync capability mode as local_metadata when no provider project id is tracked', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'vercel',
+        providerProjectId: '',
+        providerProjectName: 'orders-web',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.getDeploymentTargetActions('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      actions: {
+        sync: { enabled: true, mode: 'local_metadata' },
+      },
+    });
+  });
+
+  it('reports provider_live sync with no findings when the live resource exists', async () => {
+    const renderClient = {
+      getTargetStatus: jest.fn().mockResolvedValue({
+        exists: true,
+        url: 'https://orders-api-test.onrender.com',
+      }),
+    };
+    clientRegistry.getClient.mockReturnValue(renderClient);
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      mode: 'provider_live',
+      status: 'active',
+      findings: [],
+      target: {
+        id: 'target-1',
+      },
+    });
+
+    expect(renderClient.getTargetStatus).toHaveBeenCalledWith({
+      token: 'render-token',
+      targetId: 'srv-1',
+    });
+    expect(auditEventsService.recordProjectEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        projectId: 'project-1',
+        eventCode: 'deployment_target_synced',
+      }),
+    );
+  });
+
+  it('demotes status and reports an error finding when the live provider resource is missing', async () => {
+    const renderClient = {
+      getTargetStatus: jest.fn().mockResolvedValue({ exists: false }),
+    };
+    clientRegistry.getClient.mockReturnValue(renderClient);
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      mode: 'provider_live',
+      status: 'missing',
+      findings: [
+        {
+          code: 'provider_resource_missing',
+          severity: 'error',
+        },
+      ],
+    });
+  });
+
+  it('falls back to local metadata with a warning finding when the live provider check fails', async () => {
     deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
       {
         id: 'target-1',
@@ -424,12 +740,20 @@ describe('DeploymentTargetsService', () => {
       },
     );
 
+    // No ownershipMode/providerConnectionId on the target means
+    // resolveProviderToken throws — this exercises the graceful fallback
+    // just as a network-level failure from the provider client would.
     await expect(
       service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
     ).resolves.toMatchObject({
       mode: 'local_metadata',
-      status: 'active',
-      findings: [],
+      status: 'missing',
+      findings: [
+        {
+          code: 'provider_live_check_failed',
+          severity: 'warning',
+        },
+      ],
       target: {
         id: 'target-1',
       },
@@ -443,5 +767,232 @@ describe('DeploymentTargetsService', () => {
         eventCode: 'deployment_target_synced',
       }),
     );
+  });
+
+  it('flags a missing provider project id as a local-only finding and skips the live check', async () => {
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+        providerProjectId: '',
+        providerProjectName: 'orders-api-test',
+        branchName: 'test',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      mode: 'local_metadata',
+      status: 'missing',
+      findings: [
+        {
+          code: 'provider_project_id_missing',
+          severity: 'warning',
+        },
+      ],
+    });
+    expect(clientRegistry.getClient).not.toHaveBeenCalled();
+  });
+
+  it('flags missing branch metadata as a local-only finding alongside a live check', async () => {
+    const renderClient = {
+      getTargetStatus: jest.fn().mockResolvedValue({ exists: true }),
+    };
+    clientRegistry.getClient.mockReturnValue(renderClient);
+    deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+      {
+        id: 'target-1',
+        projectId: 'project-1',
+        provider: 'render',
+        ownershipMode: 'flowci_managed',
+        providerConnectionId: null,
+        providerProjectId: 'srv-1',
+        providerProjectName: 'orders-api-test',
+        branchName: '',
+        rootDirectory: null,
+        status: 'active',
+        providerMetadata: {},
+      },
+    );
+
+    await expect(
+      service.syncDeploymentTarget('project-1', 'target-1', 'user-1'),
+    ).resolves.toMatchObject({
+      mode: 'provider_live',
+      status: 'missing',
+      findings: [
+        {
+          code: 'target_branch_missing',
+          severity: 'warning',
+        },
+      ],
+    });
+  });
+
+  it('enriches listed targets with the public service URL and dashboard URL', async () => {
+    deploymentTargetsRepository.listDeploymentTargets.mockResolvedValue([
+      {
+        id: 'target-render',
+        provider: 'render',
+        providerProjectId: 'srv-123',
+        providerProjectName: 'demo-backend-main',
+        providerMetadata: {
+          renderServiceUrl: 'https://demo-backend-main.onrender.com',
+        },
+      },
+      {
+        id: 'target-render-no-metadata',
+        provider: 'render',
+        providerProjectId: 'srv-456',
+        providerProjectName: 'demo-backend-uat',
+        providerMetadata: {},
+      },
+      {
+        id: 'target-vercel',
+        provider: 'vercel',
+        providerProjectId: 'prj_1',
+        providerProjectName: 'demo-frontend',
+        providerMetadata: {},
+      },
+    ]);
+
+    const targets = await service.listDeploymentTargets('project-1', 'user-1');
+
+    expect(targets[0]).toMatchObject({
+      publicUrl: 'https://demo-backend-main.onrender.com',
+      dashboardUrl: 'https://dashboard.render.com/web/srv-123',
+    });
+    // Falls back to Render's naming convention when metadata has no URL.
+    expect(targets[1]?.publicUrl).toBe('https://demo-backend-uat.onrender.com');
+    expect(targets[2]).toMatchObject({
+      publicUrl: 'https://demo-frontend.vercel.app',
+    });
+  });
+
+  describe('getDeploymentTargetLogs', () => {
+    it('returns live logs, including a genuinely empty result, when the provider call succeeds', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'vercel',
+          ownershipMode: 'byo',
+          providerConnectionId: 'connection-1',
+          providerProjectId: 'prj_1',
+          providerMetadata: {},
+        },
+      );
+      const client = { getLogs: jest.fn().mockResolvedValue([]) };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      await expect(
+        service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1'),
+      ).resolves.toEqual({ source: 'live', logs: [] });
+      expect(client.getLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 'vercel-token', targetId: 'prj_1' }),
+      );
+    });
+
+    it('passes filters and Render owner ID through to the client', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: { renderOwnerId: 'owner-1' },
+        },
+      );
+      const client = {
+        getLogs: jest.fn().mockResolvedValue([
+          { timestamp: '2026-07-12T00:00:00.000Z', message: 'hello', level: 'info' },
+        ]),
+      };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      await expect(
+        service.getDeploymentTargetLogs('project-1', 'target-1', 'user-1', {
+          type: 'build',
+          startTime: '2026-07-11T00:00:00.000Z',
+        }),
+      ).resolves.toEqual({
+        source: 'live',
+        logs: [{ timestamp: '2026-07-12T00:00:00.000Z', message: 'hello', level: 'info' }],
+      });
+      expect(client.getLogs).toHaveBeenCalledWith({
+        token: 'render-token',
+        targetId: 'srv-1',
+        type: 'build',
+        startTime: '2026-07-11T00:00:00.000Z',
+        renderOwnerId: 'owner-1',
+      });
+    });
+
+    it('reports simulated with the client error as the reason when the provider call fails', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      const client = {
+        getLogs: jest
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+            ),
+          ),
+      };
+      clientRegistry.getClient.mockReturnValue(client);
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+      expect(result.source).toBe('simulated');
+      expect(result.reason).toBe(
+        'Render owner ID is not linked to this target — run Sync to link it, then reopen logs.',
+      );
+      expect(result.logs.length).toBeGreaterThan(0);
+    });
+
+    it('reports simulated when the provider client does not support live logs', async () => {
+      deploymentTargetsRepository.findDeploymentTargetForUser.mockResolvedValueOnce(
+        {
+          id: 'target-1',
+          projectId: 'project-1',
+          provider: 'render',
+          ownershipMode: 'flowci_managed',
+          providerConnectionId: null,
+          providerProjectId: 'srv-1',
+          providerMetadata: {},
+        },
+      );
+      clientRegistry.getClient.mockReturnValue({});
+
+      const result = await service.getDeploymentTargetLogs(
+        'project-1',
+        'target-1',
+        'user-1',
+      );
+      expect(result.source).toBe('simulated');
+      expect(result.reason).toContain('not supported');
+    });
   });
 });

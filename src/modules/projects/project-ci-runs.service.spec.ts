@@ -9,8 +9,8 @@ describe('ProjectCiRunsService', () => {
     project_options: {
       workflowFiles: [
         {
-          name: 'FlowCI Quality',
-          path: '.github/workflows/10-flowci-quality.yml',
+          name: 'ALPHACI Quality',
+          path: '.github/workflows/10-alphaci-quality.yml',
         },
       ],
     },
@@ -66,8 +66,8 @@ describe('ProjectCiRunsService', () => {
       repoFullName: 'tone/orders-api',
       workflowFiles: [
         {
-          name: 'FlowCI Quality',
-          path: '.github/workflows/10-flowci-quality.yml',
+          name: 'ALPHACI Quality',
+          path: '.github/workflows/10-alphaci-quality.yml',
         },
       ],
     });
@@ -78,16 +78,16 @@ describe('ProjectCiRunsService', () => {
       {
         id: 'local-project-1-quality',
         stage: 'quality',
-        workflowName: 'FlowCI Quality',
+        workflowName: 'ALPHACI Quality',
         branch: 'test',
         commitSha: 'abc123',
-        actor: 'flowci-local',
+        actor: 'alphaci-local',
         status: 'completed',
         conclusion: 'failure',
         createdAt: '2026-06-12T00:00:00.000Z',
         updatedAt: '2026-06-12T00:05:00.000Z',
         htmlUrl:
-          'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
+          'https://github.com/tone/orders-api/actions/workflows/10-alphaci-quality.yml',
         canRerun: false,
       },
     ]);
@@ -110,16 +110,16 @@ describe('ProjectCiRunsService', () => {
     provider.getRun.mockResolvedValueOnce({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'FlowCI Quality',
+      workflowName: 'ALPHACI Quality',
       branch: 'test',
       commitSha: 'abc123',
-      actor: 'flowci-local',
+      actor: 'alphaci-local',
       status: 'completed',
       conclusion: 'failure',
       createdAt: '2026-06-12T00:00:00.000Z',
       updatedAt: '2026-06-12T00:05:00.000Z',
       htmlUrl:
-        'https://github.com/tone/orders-api/actions/workflows/10-flowci-quality.yml',
+        'https://github.com/tone/orders-api/actions/workflows/10-alphaci-quality.yml',
       canRerun: false,
     });
 
@@ -139,13 +139,57 @@ describe('ProjectCiRunsService', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('returns disabled rerun when live GitHub is off', async () => {
+  it('returns disabled rerun with an accurate reason regardless of live-sync flags', async () => {
     await expect(
       createService().rerun('project-1', 'run-1', 'user-1'),
     ).resolves.toEqual({
       enabled: false,
       runId: 'run-1',
-      reason: 'Live GitHub run sync is not enabled',
+      reason:
+        'Manual rerun requires a live GitHub Actions integration, which is not implemented yet.',
+    });
+  });
+
+  it('reports liveGithubEnabled true when explicitly configured', async () => {
+    configService.getOrThrow.mockReturnValue({
+      ciRunTracking: {
+        enabled: true,
+        liveGithubEnabled: true,
+      },
+    });
+
+    await expect(
+      createService().listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: true,
+    });
+  });
+
+  it('reports liveGithubEnabled false when explicitly disabled', async () => {
+    configService.getOrThrow.mockReturnValue({
+      ciRunTracking: {
+        enabled: true,
+        liveGithubEnabled: false,
+      },
+    });
+
+    await expect(
+      createService().listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: false,
+    });
+  });
+
+  it('defaults liveGithubEnabled to true when configService is absent', async () => {
+    const service = new ProjectCiRunsService(
+      projectsRepository as never,
+      provider as never,
+    );
+
+    await expect(
+      service.listRuns('project-1', 'user-1'),
+    ).resolves.toMatchObject({
+      liveGithubEnabled: true,
     });
   });
 });

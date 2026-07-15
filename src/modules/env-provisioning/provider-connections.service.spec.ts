@@ -42,7 +42,7 @@ describe('ProviderConnectionsService', () => {
           id: 'workspace-1',
           name: 'Personal workspace',
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     });
@@ -112,7 +112,7 @@ describe('ProviderConnectionsService', () => {
     expect(repository.createProviderConnection).not.toHaveBeenCalled();
   });
 
-  it('rejects provider mutations for users without owner or admin workspace access', async () => {
+  it('rejects provider mutations for users without admin or delegated_lead workspace access', async () => {
     workspacesService.getMyWorkspaces.mockResolvedValueOnce({
       enabled: true,
       items: [
@@ -132,7 +132,7 @@ describe('ProviderConnectionsService', () => {
         token: 'vercel-token-cdef',
       }),
     ).rejects.toThrow(
-      'Provider connection management requires owner or admin workspace access',
+      'Provider connection management requires admin or delegated_lead workspace access',
     );
 
     expect(repository.createProviderConnection).not.toHaveBeenCalled();

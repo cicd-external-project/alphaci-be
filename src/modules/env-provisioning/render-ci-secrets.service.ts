@@ -20,6 +20,8 @@ export interface RenderCiSecretNames {
   serviceId: string;
   ownerId: string;
   registryCredentialId: string;
+  deployHookUrl: string;
+  healthcheckUrl: string;
 }
 
 @Injectable()
@@ -44,11 +46,19 @@ export class RenderCiSecretsService {
         input.target.deploymentStrategy,
       )
     ) {
-      return { githubSecrets: this.renderSecretNames(input.target.slot) };
+      return {
+        githubSecrets: this.renderSecretNames(
+          input.target.slot,
+          input.target.branchName,
+        ),
+      };
     }
 
     const [owner, repo] = this.parseRepoFullName(input.repoFullName);
-    const secretNames = this.renderSecretNames(input.target.slot);
+    const secretNames = this.renderSecretNames(
+      input.target.slot,
+      input.target.branchName,
+    );
     const renderApiKey = await this.resolveRenderToken(input);
 
     await this.githubService.setActionsSecretStrict(
@@ -85,17 +95,47 @@ export class RenderCiSecretsService {
         registryCredentialId,
       );
     }
+    const deployHookUrl = this.providerMetadataString(
+      input.target.providerMetadata,
+      'renderDeployHookUrl',
+    );
+    if (deployHookUrl) {
+      await this.githubService.setActionsSecretStrict(
+        input.githubAccessToken,
+        owner,
+        repo,
+        secretNames.deployHookUrl,
+        deployHookUrl,
+      );
+    }
+    const healthcheckUrl = this.resolveRenderHealthcheckUrl(input.target);
+    if (healthcheckUrl) {
+      await this.githubService.setActionsSecretStrict(
+        input.githubAccessToken,
+        owner,
+        repo,
+        secretNames.healthcheckUrl,
+        healthcheckUrl,
+      );
+    }
 
     return { githubSecrets: secretNames };
   }
 
-  renderSecretNames(slot: EnvTargetSlot): RenderCiSecretNames {
-    const prefix = `RENDER_${slot.toUpperCase()}`;
+  renderSecretNames(
+    slot: EnvTargetSlot,
+    branchName: string | null | undefined = 'uat',
+  ): RenderCiSecretNames {
+    const branch = branchName === 'main' ? branchName : 'uat';
+    const prefix = `RENDER_${slot.toUpperCase()}_${branch.toUpperCase()}`;
+    const branchSuffix = branch.toUpperCase();
     return {
       apiKey: `${prefix}_API_KEY`,
       serviceId: `${prefix}_SERVICE_ID`,
       ownerId: `${prefix}_OWNER_ID`,
       registryCredentialId: `${prefix}_REGISTRY_CREDENTIAL_ID`,
+      deployHookUrl: `RENDER_DEPLOY_HOOK_URL_${branchSuffix}`,
+      healthcheckUrl: `RENDER_HEALTHCHECK_URL_${branchSuffix}`,
     };
   }
 
@@ -120,7 +160,7 @@ export class RenderCiSecretsService {
       const token = config.envProvisioning.flowciManaged.renderToken.trim();
       if (!token) {
         throw new InternalServerErrorException(
-          'FLOWCI_RENDER_API_KEY is required for FlowCI-managed Render deployments',
+          'ALPHACI_RENDER_API_KEY is required for ALPHACI-managed Render deployments',
         );
       }
 
@@ -201,5 +241,18 @@ export class RenderCiSecretsService {
   ): string | null {
     const value = metadata[key];
     return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+
+  private resolveRenderHealthcheckUrl(
+    target: DeploymentTargetSummary,
+  ): string | null {
+    return (
+      this.providerMetadataString(
+        target.providerMetadata,
+        'renderServiceUrl',
+      ) ??
+      this.providerMetadataString(target.providerMetadata, 'serviceUrl') ??
+      this.providerMetadataString(target.providerMetadata, 'url')
+    );
   }
 }

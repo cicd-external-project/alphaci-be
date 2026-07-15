@@ -30,9 +30,7 @@ export class RenderCostPolicyService {
       config.envProvisioning.flowciManaged.renderDefaultRegion ||
       'singapore';
 
-    if (input.ownershipMode === 'flowci_managed') {
-      this.assertManagedAllowed(serviceType, instanceType);
-    }
+    this.assertAllowed(serviceType, instanceType);
 
     return { serviceType, instanceType, region };
   }
@@ -41,19 +39,24 @@ export class RenderCostPolicyService {
     serviceType: RenderServiceType,
     instanceType: string,
   ): void {
+    this.assertAllowed(serviceType, instanceType);
+  }
+
+  assertAllowed(serviceType: RenderServiceType, instanceType: string): void {
     const config = this.configService.getOrThrow<AppConfig>('app');
     const allowed = config.envProvisioning.flowciManaged
       .renderAllowedInstanceTypes ?? ['free'];
-    if (!allowed.includes(instanceType)) {
+    const allowedFreeOnly = allowed.includes('free') ? ['free'] : allowed;
+    if (!allowedFreeOnly.includes(instanceType)) {
       throw new BadRequestException(
-        `FlowCI-managed Render does not allow instance type '${instanceType}'. Choose one of: ${allowed.join(', ')}.`,
+        `Render targets must use the free instance type. Received '${instanceType}'.`,
       );
     }
 
     const freeLike = instanceType === 'free';
     if (freeLike && !FREE_SUPPORTED_SERVICE_TYPES.includes(serviceType)) {
       throw new BadRequestException(
-        `Render service type '${serviceType}' cannot use the managed free default. Choose a web service or use BYO Render.`,
+        `Render targets on the free plan must use a web service. Received '${serviceType}'.`,
       );
     }
 

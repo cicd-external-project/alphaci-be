@@ -55,7 +55,7 @@ export class CiReportsService {
   ) {}
 
   /**
-   * Ingest a CI run report from the generated workflow via CI_TOKEN auth.
+   * Ingest a CI run report from the generated workflow via ALPHACI_TOKEN auth.
    * Resolves user ownership from the provisioned project, translates results
    * into friendly messages, then upserts the row.
    */
@@ -67,6 +67,7 @@ export class CiReportsService {
         body.stage,
         body.conclusion,
         body.results,
+        body.rawLogs,
       );
 
       await this.ciRunReportsRepository.upsert({
@@ -204,39 +205,51 @@ export class CiReportsService {
   private groupIntoRuns(
     rows: Awaited<ReturnType<CiRunReportsRepository['findRecentByRepo']>>,
   ): RunGroup[] {
-    // Preserve run order by tracking first-seen order of run IDs.
-    // Each entry also carries its repo so cross-repo results (findRecentByUser)
-    // display the correct GitHub Actions URL and RunGroup.repoFullName.
-    const runOrder: number[] = [];
-    const runMap = new Map<
-      number,
+    // access/quality/package are three independent GitHub Actions workflows
+    // chained via workflow_run, so each gets its own distinct run_id — they
+    // never share one. The value every stage of a single pipeline execution
+    // does share is the commit SHA (threaded through via HEAD_SHA_EXPR in the
+    // generated workflows), so that — not run_id — is the correlation key.
+    const groupOrder: string[] = [];
+    const groupMap = new Map<
+      string,
       {
         repoFullName: string;
         branch: string;
         commitSha: string;
         startedAt: string;
         stages: Map<string, StageReport>;
+        stageRunIds: Map<string, number>;
       }
     >();
 
+    // Rows arrive ordered run_id DESC, so for a given stage the first row
+    // seen is the most recent attempt — skip older re-runs of the same stage
+    // instead of letting them overwrite the freshest status.
     for (const row of rows) {
       // pg returns bigint as string; parse to number (GitHub run IDs are safe integers)
       const runId = Number(row.run_id);
+      const groupKey = `${row.repo_full_name}::${row.commit_sha}`;
 
-      if (!runMap.has(runId)) {
-        runOrder.push(runId);
-        runMap.set(runId, {
+      if (!groupMap.has(groupKey)) {
+        groupOrder.push(groupKey);
+        groupMap.set(groupKey, {
           repoFullName: row.repo_full_name,
           branch: row.branch,
           commitSha: row.commit_sha,
           startedAt: row.created_at,
           stages: new Map(),
+          stageRunIds: new Map(),
         });
       }
 
-      const run = runMap.get(runId);
-      if (run) {
-        run.stages.set(row.stage, {
+      const group = groupMap.get(groupKey);
+      if (group && !group.stages.has(row.stage)) {
+        group.stageRunIds.set(row.stage, runId);
+        if (row.created_at < group.startedAt) {
+          group.startedAt = row.created_at;
+        }
+        group.stages.set(row.stage, {
           stage: row.stage,
           status: row.status,
           friendlyMessages: row.friendly_messages,
@@ -247,12 +260,12 @@ export class CiReportsService {
       }
     }
 
-    return runOrder.map((runId) => {
-      const run = runMap.get(runId);
-      if (!run) {
-        // Should not happen — every runId in runOrder came from runMap
+    return groupOrder.map((groupKey) => {
+      const group = groupMap.get(groupKey);
+      if (!group) {
+        // Should not happen — every key in groupOrder came from groupMap
         return {
-          runId,
+          runId: 0,
           repoFullName: '',
           branch: '',
           commitSha: '',
@@ -262,13 +275,21 @@ export class CiReportsService {
         };
       }
 
+      // Represent the pipeline by its furthest-progressed stage's run_id —
+      // that's the run most relevant for the user to open on GitHub.
+      const primaryRunId =
+        group.stageRunIds.get('package') ??
+        group.stageRunIds.get('quality') ??
+        group.stageRunIds.get('access') ??
+        0;
+
       const stages: StageReport[] = ALL_STAGES.map((stageName) => {
         return (
-          run.stages.get(stageName) ?? {
+          group.stages.get(stageName) ?? {
             stage: stageName,
             status: 'pending' as const,
             friendlyMessages: [],
-            githubRunUrl: `https://github.com/${run.repoFullName}/actions/runs/${String(runId)}`,
+            githubRunUrl: `https://github.com/${group.repoFullName}/actions/runs/${String(primaryRunId)}`,
             updatedAt: '',
             rawLogs: null,
           }
@@ -276,11 +297,11 @@ export class CiReportsService {
       });
 
       return {
-        runId,
-        repoFullName: run.repoFullName,
-        branch: run.branch,
-        commitSha: run.commitSha,
-        startedAt: run.startedAt,
+        runId: primaryRunId,
+        repoFullName: group.repoFullName,
+        branch: group.branch,
+        commitSha: group.commitSha,
+        startedAt: group.startedAt,
         overallStatus: this.computeOverallStatus(stages),
         stages,
       };

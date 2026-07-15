@@ -6,6 +6,7 @@ import type {
   AdminUserSubscriptionRow,
   AdminUserWorkflowRow,
 } from './admin.repository';
+import type { AppRole } from './platform-admins.repository';
 
 /**
  * View models returned to admins. These types DELIBERATELY have no field for any
@@ -24,6 +25,8 @@ export interface AdminUserListItem {
   lastLoginAt: string | null;
   archivedAt: string | null;
   onboardingCompleted: boolean;
+  /** Global hierarchy role — assigned in the Admin Console. */
+  appRole: AppRole;
   projectCount: number;
   errorCount: number;
 }
@@ -53,6 +56,7 @@ export function toAdminUserListItem(row: AdminUserListRow): AdminUserListItem {
     lastLoginAt: row.last_login_at,
     archivedAt: row.archived_at,
     onboardingCompleted: row.onboarding_completed_at != null,
+    appRole: row.app_role,
     projectCount: row.project_count,
     errorCount: row.error_count,
   });

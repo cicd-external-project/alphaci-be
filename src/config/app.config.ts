@@ -13,6 +13,22 @@ export interface AppConfig {
     appSlug: string;
     appPrivateKey: string;
     appWebhookSecret: string;
+    /**
+     * Login of the internal company GitHub org. When set, members of this org
+     * are stamped is_internal=true on sign-in (and bypass the subscription
+     * gate); non-members are hard-blocked on the internal deployment. Leave
+     * empty on the external (sold) deployment to disable internal gating.
+     */
+    internalOrg: string;
+    /**
+     * ALL repositories created by the product are forced into this GitHub
+     * organization instead of the signed-in user's personal account. Always
+     * resolves to a non-empty org (defaults to Alpha-Explora); an empty or
+     * unset GITHUB_ENFORCED_ORG falls back to the default rather than
+     * re-enabling personal-account creation. Requires the GitHub App to be
+     * installed on this org with access to all repositories.
+     */
+    enforcedOrg: string;
   };
   templates: {
     repoPath: string;
@@ -34,6 +50,14 @@ export interface AppConfig {
   };
   envProvisioning: {
     enabled: boolean;
+    /**
+     * Deployment ownership mode offered by this deployment. BYO ('byo') is
+     * archived: every deployment centralizes on the platform's own
+     * Render/Vercel/SonarCloud credentials via flowciManaged.*, so the only
+     * mode ever offered is 'flowci_managed'. The union type is kept because
+     * stored targets and older clients may still carry 'byo' values.
+     */
+    ownershipMode: 'byo' | 'flowci_managed';
     encryptionKey: string;
     flowciManaged: {
       renderToken: string;
@@ -55,6 +79,10 @@ export interface AppConfig {
       vercelToken: string;
       vercelTeamId: string | null;
       vercelTeamSlug: string | null;
+      // Centralized SonarCloud credentials installed into every created repo
+      // so the quality-scan job works out of the box.
+      sonarToken: string;
+      sonarOrganization: string;
     };
   };
   projectSyncSnapshots: {
@@ -120,10 +148,32 @@ export interface AppConfig {
     cookieDomain?: string;
   };
   archivedAccountRetentionDays: number;
+  hierarchy: {
+    enabled: boolean;
+    /**
+     * 'stub' (default everywhere) runs the full assignment state machine and
+     * outbox lifecycle against a no-op GitHub client that always reports
+     * success. 'live' switches GithubSyncService's injected
+     * GithubTeamAccessProvider to real GitHub Team API calls. See
+     * docs/HIERARCHY_IMPLEMENTATION_PLAN.md §1.7 — no environment should be
+     * flipped to 'live' without an explicit operator decision.
+     */
+    githubSyncMode: 'stub' | 'live';
+    encryptionKeyEnvVar: string;
+    maxSyncRetries: number;
+    syncPollIntervalMs: number;
+  };
 }
 
 export const appConfig = registerAs('app', (): AppConfig => {
   const env = process.env;
+  const isProduction = env['NODE_ENV'] === 'production';
+  const defaultEnforcedOrg = 'Alpha-Explora';
+  const rawEnforcedOrg = env['GITHUB_ENFORCED_ORG']?.trim();
+  const resolvedEnforcedOrg =
+    rawEnforcedOrg && rawEnforcedOrg in env
+      ? env[rawEnforcedOrg]?.trim()
+      : rawEnforcedOrg;
 
   const seededPlans: Record<string, SubscriptionPlan> = {};
   try {
@@ -144,14 +194,34 @@ export const appConfig = registerAs('app', (): AppConfig => {
       callbackUrl:
         env['GITHUB_CALLBACK_URL'] ??
         'http://localhost:4000/api/v1/auth/github/callback',
-      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow',
-      appId: env['GITHUB_APP_ID'] ?? '',
-      appSlug: env['GITHUB_APP_SLUG'] ?? 'my-github-app',
-      appPrivateKey: (env['GITHUB_APP_PRIVATE_KEY'] ?? '').replace(
-        /\\n/g,
-        '\n',
-      ),
+      // read:org is required so the OAuth token can query the signed-in user's
+      // org membership (GET /user/memberships/orgs/{org}) for internal gating.
+      // delete_repo is required separately from `repo` for the opt-in
+      // "delete GitHub repo too" project-delete path (GET /repos DELETE)
+      // — GitHub classic OAuth Apps gate repo deletion behind this scope even
+      // when `repo` is already granted. Sessions established before this
+      // scope was added will keep 403ing on delete until the user
+      // reconnects GitHub (see GithubService.deleteRepoForUser).
+      scope: env['GITHUB_SCOPE'] ?? 'repo,workflow,read:org,delete_repo',
+      // Accept GITHUB_APP_ID with a plain GITHUB_APP alias, and the private key
+      // under either GITHUB_APP_PRIVATE_KEY or the shorter GITHUB_PRIVATE_KEY
+      // used by the sibling deployment — so a key provisioned under that naming
+      // convention still enables the App (hasAppCredentials) here instead of
+      // silently falling through to "GitHub App installations are unavailable".
+      appId: (env['GITHUB_APP_ID'] ?? env['GITHUB_APP'] ?? '').trim(),
+      appSlug:
+        env['GITHUB_APP_SLUG']?.trim() || (isProduction ? '' : 'my-github-app'),
+      appPrivateKey: (
+        env['GITHUB_APP_PRIVATE_KEY'] ??
+        env['GITHUB_PRIVATE_KEY'] ??
+        ''
+      ).replace(/\\n/g, '\n'),
       appWebhookSecret: env['GITHUB_APP_WEBHOOK_SECRET'] ?? '',
+      internalOrg: env['GITHUB_INTERNAL_ORG']?.trim() ?? '',
+      // Force every created repository into this org. Defaults to Alpha-Explora
+      // and, by using `||`, treats an empty or unset GITHUB_ENFORCED_ORG as the
+      // default too — the product can never provision into personal accounts.
+      enforcedOrg: resolvedEnforcedOrg || defaultEnforcedOrg,
     },
     templates: {
       repoPath: env['TEMPLATE_REPO_PATH'] ?? '../cicd-workflow',
@@ -181,43 +251,84 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     envProvisioning: {
       enabled: env['ENV_PROVISIONING_ENABLED'] === 'true',
+      // BYO is archived — the platform always centralizes deployments on its
+      // own hosting credentials, so ENV_PROVISIONING_OWNERSHIP_MODE is
+      // intentionally ignored.
+      ownershipMode: 'flowci_managed',
       encryptionKey: env['ENV_PROVISIONING_ENCRYPTION_KEY'] ?? '',
       flowciManaged: {
-        renderToken: env['FLOWCI_RENDER_API_KEY'] ?? '',
-        renderOwnerId: env['FLOWCI_RENDER_OWNER_ID']?.trim() || null,
+        renderToken:
+          env['ALPHACI_RENDER_API_KEY'] ?? env['FLOWCI_RENDER_API_KEY'] ?? '',
+        renderOwnerId:
+          env['ALPHACI_RENDER_OWNER_ID']?.trim() ||
+          env['FLOWCI_RENDER_OWNER_ID']?.trim() ||
+          null,
         renderDefaultRegion:
-          env['FLOWCI_RENDER_DEFAULT_REGION']?.trim() || 'singapore',
+          env['ALPHACI_RENDER_DEFAULT_REGION']?.trim() ||
+          env['FLOWCI_RENDER_DEFAULT_REGION']?.trim() ||
+          'singapore',
         renderDefaultInstanceType:
-          env['FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() || 'free',
+          env['ALPHACI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() ||
+          env['FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE']?.trim() ||
+          'free',
         renderAllowedInstanceTypes: (
-          env['FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES'] ?? 'free'
+          env['ALPHACI_RENDER_ALLOWED_INSTANCE_TYPES'] ??
+          env['FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES'] ??
+          'free'
         )
           .split(',')
           .map((value) => value.trim())
           .filter(Boolean),
         renderAllowPaidManaged:
-          env['FLOWCI_RENDER_ALLOW_PAID_MANAGED'] === 'true',
+          (env['ALPHACI_RENDER_ALLOW_PAID_MANAGED'] ??
+            env['FLOWCI_RENDER_ALLOW_PAID_MANAGED']) === 'true',
         renderManagedMaxServicesPerUser: Number(
-          env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ?? '2',
+          env['ALPHACI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ??
+            env['FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER'] ??
+            '2',
         ),
         renderManagedFleetMax: Number(
-          env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ?? '0',
+          env['ALPHACI_RENDER_MANAGED_FLEET_MAX'] ??
+            env['FLOWCI_RENDER_MANAGED_FLEET_MAX'] ??
+            '0',
         ),
         vercelManagedFleetMax: Number(
-          env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ?? '0',
+          env['ALPHACI_VERCEL_MANAGED_FLEET_MAX'] ??
+            env['FLOWCI_VERCEL_MANAGED_FLEET_MAX'] ??
+            '0',
         ),
         renderBootstrapImage:
+          env['ALPHACI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
           env['FLOWCI_RENDER_BOOTSTRAP_IMAGE']?.trim() ||
           'docker.io/library/nginx:alpine',
         renderRegistryCredentialId:
-          env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() || null,
+          env['ALPHACI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID']?.trim() ||
+          null,
         renderRegistryUsername:
-          env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() || null,
+          env['ALPHACI_RENDER_REGISTRY_USERNAME']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_USERNAME']?.trim() ||
+          null,
         renderRegistryToken:
-          env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() || null,
-        vercelToken: env['FLOWCI_VERCEL_TOKEN'] ?? '',
-        vercelTeamId: env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
-        vercelTeamSlug: env['FLOWCI_VERCEL_TEAM_SLUG'] ?? null,
+          env['ALPHACI_RENDER_REGISTRY_TOKEN']?.trim() ||
+          env['FLOWCI_RENDER_REGISTRY_TOKEN']?.trim() ||
+          null,
+        vercelToken:
+          env['ALPHACI_VERCEL_TOKEN'] ?? env['FLOWCI_VERCEL_TOKEN'] ?? '',
+        vercelTeamId:
+          env['ALPHACI_VERCEL_TEAM_ID'] ?? env['FLOWCI_VERCEL_TEAM_ID'] ?? null,
+        vercelTeamSlug:
+          env['ALPHACI_VERCEL_TEAM_SLUG'] ??
+          env['FLOWCI_VERCEL_TEAM_SLUG'] ??
+          null,
+        sonarToken:
+          env['ALPHACI_SONAR_TOKEN']?.trim() ??
+          env['FLOWCI_SONAR_TOKEN']?.trim() ??
+          '',
+        sonarOrganization:
+          env['ALPHACI_SONAR_ORGANIZATION']?.trim() ??
+          env['FLOWCI_SONAR_ORGANIZATION']?.trim() ??
+          '',
       },
     },
     projectSyncSnapshots: {
@@ -237,12 +348,12 @@ export const appConfig = registerAs('app', (): AppConfig => {
     },
     ciRunTracking: {
       enabled: env['CI_RUN_TRACKING_ENABLED'] === 'true',
-      liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] === 'true',
+      liveGithubEnabled: env['CI_RUN_LIVE_GITHUB_ENABLED'] !== 'false',
     },
     deploymentHistory: {
       enabled: env['DEPLOYMENT_HISTORY_ENABLED'] === 'true',
       liveProvidersEnabled:
-        env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] === 'true',
+        env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] !== 'false',
     },
     driftDetection: {
       enabled: env['DRIFT_DETECTION_ENABLED'] === 'true',
@@ -302,5 +413,20 @@ export const appConfig = registerAs('app', (): AppConfig => {
     archivedAccountRetentionDays: Number(
       env['ARCHIVED_ACCOUNT_RETENTION_DAYS'] ?? 30,
     ),
+    hierarchy: {
+      enabled: env['HIERARCHY_ENABLED'] !== 'false',
+      // Defaults to 'stub' regardless of what an unrecognized value is set
+      // to — an environment must explicitly set 'live' to enable real
+      // GitHub Team API calls (plan §1.7 hard requirement: default stub
+      // everywhere).
+      githubSyncMode:
+        env['HIERARCHY_GITHUB_SYNC_MODE'] === 'live' ? 'live' : 'stub',
+      encryptionKeyEnvVar:
+        env['HIERARCHY_ENCRYPTION_KEY_ENV_VAR'] ?? 'ENV_PROVISIONING_ENCRYPTION_KEY',
+      maxSyncRetries: Number(env['HIERARCHY_MAX_SYNC_RETRIES'] ?? 5),
+      syncPollIntervalMs: Number(
+        env['HIERARCHY_SYNC_POLL_INTERVAL_MS'] ?? 5000,
+      ),
+    },
   };
 });

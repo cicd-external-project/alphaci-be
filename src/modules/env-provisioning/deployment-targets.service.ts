@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import {
 } from './deployment-targets.repository';
 import { DeploymentStrategyResolver } from './deployment-strategy.resolver';
 import type { CreateDeploymentTargetDto } from './dto/create-deployment-target.dto';
+import type { DetachDeploymentTargetDto } from './dto/detach-deployment-target.dto';
 import { EnvTokenEncryptionService } from './encryption.service';
 import type {
   DeploymentTargetSummary,
@@ -29,9 +31,17 @@ import { RenderCostPolicyService } from './render-cost-policy.service';
 import { UsageQuotaService } from '../usage/usage-quota.service';
 import type { UsageLimitCode } from '../usage/usage.types';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import type { WorkspaceRole } from '../workspaces/workspaces.repository';
+
+export interface DeploymentTargetLogEntry {
+  timestamp: string;
+  message: string;
+  level: string;
+}
 
 @Injectable()
 export class DeploymentTargetsService {
+  private readonly logger = new Logger(DeploymentTargetsService.name);
   private readonly renderCostPolicy: RenderCostPolicyService;
 
   constructor(
@@ -58,7 +68,41 @@ export class DeploymentTargetsService {
 
   async listDeploymentTargets(projectId: string, userId: string) {
     await this.getProjectOrThrow(projectId, userId);
-    return this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+    const targets =
+      await this.deploymentTargetsRepository.listDeploymentTargets(projectId);
+
+    // Enrich with copyable links: the live service URL and the provider
+    // dashboard, so the UI never has to re-derive provider URL conventions.
+    return targets.map((target) => ({
+      ...target,
+      publicUrl: this.targetPublicUrl(target),
+      dashboardUrl: this.providerDashboardUrl(target),
+    }));
+  }
+
+  /**
+   * The public URL the deployed service answers on. Prefers the URL the
+   * provider returned at creation (Render stores it in providerMetadata);
+   * falls back to each provider's deterministic naming convention.
+   */
+  private targetPublicUrl(target: DeploymentTargetSummary): string | null {
+    if (target.provider === 'render') {
+      const metadataUrl = target.providerMetadata?.['renderServiceUrl'];
+      if (typeof metadataUrl === 'string' && metadataUrl.trim()) {
+        return metadataUrl.trim();
+      }
+      return target.providerProjectName
+        ? `https://${target.providerProjectName}.onrender.com`
+        : null;
+    }
+
+    if (target.provider === 'vercel') {
+      return target.providerProjectName
+        ? `https://${target.providerProjectName}.vercel.app`
+        : null;
+    }
+
+    return null;
   }
 
   async createDeploymentTarget(
@@ -69,6 +113,8 @@ export class DeploymentTargetsService {
     await this.assertProjectMutationAccess(projectId, userId);
     const project = await this.getProjectOrThrow(projectId, userId);
     await this.assertWithinQuota(userId, projectId, 'deployment_targets');
+    this.assertOwnershipModeAllowed(dto);
+    this.assertProviderSlotAllowed(dto.provider, dto.slot);
     if (dto.ownershipMode === 'flowci_managed' && dto.provider === 'render') {
       await this.assertWithinQuota(
         userId,
@@ -120,7 +166,7 @@ export class DeploymentTargetsService {
             token: providerAuth.token,
             repoFullName: project.repo_full_name,
             projectName: this.requireString(dto.projectName, 'projectName'),
-            branchName: dto.branchName?.trim() || 'test',
+            branchName: dto.branchName?.trim() || 'uat',
             ...(dto.rootDirectory?.trim()
               ? { rootDirectory: dto.rootDirectory.trim() }
               : {}),
@@ -186,7 +232,7 @@ export class DeploymentTargetsService {
         providerProjectId: target.id,
         providerProjectName: target.name,
         repoFullName: project.repo_full_name,
-        branchName: dto.branchName?.trim() || 'test',
+        branchName: dto.branchName?.trim() || 'uat',
         rootDirectory: dto.rootDirectory?.trim() || null,
         buildCommand: dto.buildCommand?.trim() || null,
         startCommand: dto.startCommand?.trim() || null,
@@ -244,7 +290,14 @@ export class DeploymentTargetsService {
     }
 
     await this.assertProjectMutationAccess(projectId, userId);
-    await this.getProjectOrThrow(projectId, userId);
+    const existingTarget = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+    if (input.slot !== undefined) {
+      this.assertProviderSlotAllowed(existingTarget.provider, input.slot);
+    }
     const target =
       await this.deploymentTargetsRepository.updateDeploymentTargetMetadataForUser(
         projectId,
@@ -276,9 +329,13 @@ export class DeploymentTargetsService {
     targetId: string,
     userId: string,
   ): Promise<{
-    mode: 'local_metadata';
+    mode: 'provider_live' | 'local_metadata';
     status: DeploymentTargetSummary['status'];
-    findings: Array<{ code: string; severity: 'warning'; message: string }>;
+    findings: Array<{
+      code: string;
+      severity: 'warning' | 'error';
+      message: string;
+    }>;
     target: DeploymentTargetSummary;
   }> {
     if (!this.projectTargetManagementEnabled()) {
@@ -286,14 +343,10 @@ export class DeploymentTargetsService {
     }
 
     await this.assertProjectMutationAccess(projectId, userId);
-    const target = await this.getOwnedTargetOrThrow(
-      projectId,
-      targetId,
-      userId,
-    );
+    let target = await this.getOwnedTargetOrThrow(projectId, targetId, userId);
     const findings: Array<{
       code: string;
-      severity: 'warning';
+      severity: 'warning' | 'error';
       message: string;
     }> = [];
 
@@ -312,8 +365,53 @@ export class DeploymentTargetsService {
       });
     }
 
+    let mode: 'provider_live' | 'local_metadata' = 'local_metadata';
+    if (target.providerProjectId?.trim()) {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          this.tokenResolutionInputFor(target),
+        );
+        const status = await this.clientRegistry.getClient(target.provider).getTargetStatus({
+          token,
+          targetId: target.providerProjectId,
+          ...this.vercelScopeFor(target),
+        });
+        mode = 'provider_live';
+        if (!status.exists) {
+          findings.push({
+            code: 'provider_resource_missing',
+            severity: 'error',
+            message: `The ${target.provider} resource for this target no longer exists — it may have been deleted outside ALPHACI.`,
+          });
+        }
+        // Backfill provider-specific fields (e.g. Render's ownerId) the live
+        // check discovered but this target was never given — most commonly
+        // targets registered via "use existing target" rather than created
+        // by ALPHACI. This is what lets real log fetching self-heal on the
+        // next sync instead of requiring a one-off registration-time fix.
+        const discovered = Object.entries(status.metadata ?? {}).filter(
+          ([key, value]) => Boolean(value) && !target.providerMetadata?.[key],
+        );
+        if (discovered.length > 0) {
+          target = await this.deploymentTargetsRepository.updateProviderMetadata(
+            target.id,
+            { ...target.providerMetadata, ...Object.fromEntries(discovered) },
+          );
+        }
+      } catch {
+        mode = 'local_metadata';
+        findings.push({
+          code: 'provider_live_check_failed',
+          severity: 'warning',
+          message: `Could not reach ${target.provider} to verify live status — showing locally tracked metadata only.`,
+        });
+      }
+    }
+
     const response = {
-      mode: 'local_metadata' as const,
+      mode,
       status: findings.length > 0 ? 'missing' : target.status,
       findings,
       target,
@@ -328,6 +426,7 @@ export class DeploymentTargetsService {
         targetId: target.id,
         provider: target.provider,
         status: response.status,
+        mode,
         findingCount: findings.length,
       },
     });
@@ -338,13 +437,55 @@ export class DeploymentTargetsService {
     projectId: string,
     targetId: string,
     userId: string,
-  ): Promise<{ detached: true }> {
+    options?: DetachDeploymentTargetDto,
+  ): Promise<{
+    detached: true;
+    providerResourceDeleted: boolean;
+    providerDeleteError?: string;
+  }> {
     if (!this.projectTargetManagementEnabled()) {
       throw new BadRequestException('Project target management is disabled');
     }
 
-    await this.assertProjectMutationAccess(projectId, userId);
-    await this.getProjectOrThrow(projectId, userId);
+    const requiresProviderDelete = options?.deleteProviderResource === true;
+    await this.assertProjectMutationAccess(
+      projectId,
+      userId,
+      requiresProviderDelete
+        ? ['admin', 'delegated_lead']
+        : ['admin', 'delegated_lead', 'member'],
+    );
+    // Load the target row before deleting anything locally — we need
+    // providerProjectId/provider/ownershipMode/providerConnectionId to
+    // attempt the live provider delete below, and the row disappears once
+    // deleteDeploymentTargetForUser runs.
+    const target = await this.getOwnedTargetOrThrow(
+      projectId,
+      targetId,
+      userId,
+    );
+
+    let providerResourceDeleted = false;
+    let providerDeleteError: string | undefined;
+    if (requiresProviderDelete && target.providerProjectId?.trim()) {
+      try {
+        const { token } = await this.resolveProviderToken(
+          target.provider,
+          userId,
+          this.tokenResolutionInputFor(target),
+        );
+        const result = await this.clientRegistry
+          .getClient(target.provider)
+          .deleteTarget({ token, targetId: target.providerProjectId });
+        providerResourceDeleted = result.deleted;
+      } catch (error) {
+        // A failed provider call must never block the local detach — the
+        // user should never be stuck unable to detach because a third-party
+        // API had a bad moment.
+        providerDeleteError = this.truncateErrorMessage(error);
+      }
+    }
+
     const deleted =
       await this.deploymentTargetsRepository.deleteDeploymentTargetForUser(
         projectId,
@@ -355,15 +496,30 @@ export class DeploymentTargetsService {
       throw new NotFoundException('Deployment target not found');
     }
 
+    const body = providerResourceDeleted
+      ? `${target.providerProjectName} and its live ${target.provider} resource were both removed.`
+      : providerDeleteError
+        ? `${target.providerProjectName} was detached from ALPHACI; local tracking removed, but the live resource could not be deleted automatically.`
+        : 'Deployment target metadata was removed from ALPHACI.';
+
     await this.recordTargetEvent({
       userId,
       projectId,
       eventCode: 'deployment_target_detached',
       title: 'Deployment target detached',
-      body: 'Deployment target metadata was removed from FlowCI.',
-      metadata: { targetId },
+      body,
+      metadata: {
+        targetId,
+        deleteProviderResourceRequested: requiresProviderDelete,
+        providerResourceDeleted,
+        ...(providerDeleteError ? { providerDeleteError } : {}),
+      },
     });
-    return { detached: true };
+    return {
+      detached: true,
+      providerResourceDeleted,
+      ...(providerDeleteError ? { providerDeleteError } : {}),
+    };
   }
 
   async getDeploymentTargetActions(
@@ -385,9 +541,16 @@ export class DeploymentTargetsService {
       targetId: target.id,
       provider: target.provider,
       actions: {
+        // Capability descriptor, not an outcome: mirrors what
+        // syncDeploymentTarget will *attempt* — a live provider check when a
+        // providerProjectId is tracked (outcome still depends on live
+        // reachability at call time), or a local-metadata-only check when
+        // there's nothing to look up against.
         sync: {
           enabled: true,
-          mode: 'local_metadata' as const,
+          mode: target.providerProjectId?.trim()
+            ? ('provider_live' as const)
+            : ('local_metadata' as const),
         },
         detach: {
           enabled: true,
@@ -399,6 +562,10 @@ export class DeploymentTargetsService {
         openProviderDashboard: {
           enabled: this.providerDashboardUrl(target) !== null,
           url: this.providerDashboardUrl(target),
+        },
+        openProviderConsole: {
+          enabled: this.providerConsoleUrl(target) !== null,
+          url: this.providerConsoleUrl(target),
         },
       },
     };
@@ -419,12 +586,32 @@ export class DeploymentTargetsService {
   private async assertProjectMutationAccess(
     projectId: string,
     userId: string,
+    roles: WorkspaceRole[] = ['admin', 'delegated_lead', 'member'],
   ): Promise<void> {
-    await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'owner',
-      'admin',
-      'developer',
-    ]);
+    await this.workspaceAccessService?.assertProjectRole(
+      projectId,
+      userId,
+      roles,
+    );
+  }
+
+  private truncateErrorMessage(error: unknown, maxLength = 300): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.length > maxLength
+      ? `${message.slice(0, maxLength)}...`
+      : message;
+  }
+
+  private tokenResolutionInputFor(target: DeploymentTargetSummary): {
+    ownershipMode: string;
+    providerConnectionId?: string;
+  } {
+    return {
+      ownershipMode: target.ownershipMode,
+      ...(target.providerConnectionId
+        ? { providerConnectionId: target.providerConnectionId }
+        : {}),
+    };
   }
 
   private async assertWithinQuota(
@@ -447,6 +634,52 @@ export class DeploymentTargetsService {
     }
   }
 
+  /**
+   * Enforce the single ownership mode this deployment offers (see
+   * capabilities.controller and ENV_PROVISIONING_OWNERSHIP_MODE):
+   *  - 'flowci_managed' (internal): deployments are centralized on the
+   *    organization's Render/Vercel; bring-your-own is not available.
+   *  - 'byo' (external/sold): managed hosting is archived; users connect their
+   *    own provider accounts.
+   */
+  private assertOwnershipModeAllowed(dto: CreateDeploymentTargetDto): void {
+    const configuredMode =
+      this.configService.getOrThrow<AppConfig>('app').envProvisioning
+        .ownershipMode;
+
+    if (configuredMode === 'flowci_managed') {
+      if (dto.ownershipMode !== 'flowci_managed') {
+        throw new BadRequestException(
+          `This workspace centralizes deployments on the organization's ${dto.provider} account. Bring-your-own ${dto.provider} hosting is not available here.`,
+        );
+      }
+      return;
+    }
+
+    if (dto.ownershipMode === 'flowci_managed') {
+      throw new BadRequestException(
+        `Managed ${dto.provider} hosting is archived. Connect your own ${dto.provider} account and use BYO hosting for new targets.`,
+      );
+    }
+  }
+
+  private assertProviderSlotAllowed(
+    provider: EnvProvider,
+    slot: EnvTargetSlot,
+  ): void {
+    if (provider === 'render' && slot !== 'backend') {
+      throw new BadRequestException(
+        'Render deployment targets are backend-only. Choose the backend slot for Render.',
+      );
+    }
+
+    if (provider === 'vercel' && slot !== 'frontend') {
+      throw new BadRequestException(
+        'Vercel deployment targets are frontend-only. Choose the frontend slot for Vercel.',
+      );
+    }
+  }
+
   private async recordTargetEvent(input: {
     userId: string;
     projectId: string;
@@ -462,13 +695,24 @@ export class DeploymentTargetsService {
       message: input.title,
       metadata: input.metadata,
     });
-    await this.notificationEventsService?.record({
-      userId: input.userId,
-      projectId: input.projectId,
-      eventCode: input.eventCode,
-      title: input.title,
-      body: input.body,
-    });
+    try {
+      await this.notificationEventsService?.record({
+        userId: input.userId,
+        projectId: input.projectId,
+        eventCode: input.eventCode,
+        title: input.title,
+        body: input.body,
+      });
+    } catch (error) {
+      // A notification failure must never surface as a failure of the
+      // mutation that already committed (e.g. detach already deleted the
+      // row) — mirrors AuditEventsService.recordProjectEvent's
+      // self-protecting try/catch, which notificationEventsService.record()
+      // itself does not have.
+      this.logger.warn(
+        `Notification event '${input.eventCode}' was not recorded: ${String(error)}`,
+      );
+    }
   }
 
   private async getOwnedTargetOrThrow(
@@ -570,6 +814,24 @@ export class DeploymentTargetsService {
     return null;
   }
 
+  private providerConsoleUrl(target: DeploymentTargetSummary): string | null {
+    if (target.provider === 'vercel') {
+      const teamSlug =
+        typeof target.providerMetadata['vercelTeamSlug'] === 'string'
+          ? target.providerMetadata['vercelTeamSlug'].trim()
+          : '';
+      return teamSlug
+        ? `https://vercel.com/${teamSlug}/${target.providerProjectName}/deployments`
+        : `https://vercel.com/dashboard/project/${target.providerProjectId}/deployments`;
+    }
+
+    if (target.provider === 'render') {
+      return `https://dashboard.render.com/web/${target.providerProjectId}/logs`;
+    }
+
+    return null;
+  }
+
   private async resolveProviderToken(
     provider: EnvProvider,
     userId: string,
@@ -586,7 +848,7 @@ export class DeploymentTargetsService {
           : config.envProvisioning.flowciManaged.vercelToken;
       if (!token) {
         throw new BadRequestException(
-          `FlowCI-managed ${provider} token is not configured`,
+          `ALPHACI-managed ${provider} token is not configured`,
         );
       }
 
@@ -632,7 +894,7 @@ export class DeploymentTargetsService {
         config.envProvisioning.flowciManaged.vercelTeamSlug?.trim() ?? '';
       if (!teamId) {
         throw new BadRequestException(
-          'FLOWCI_VERCEL_TEAM_ID is required for FlowCI-managed Vercel deployment targets',
+          'ALPHACI_VERCEL_TEAM_ID is required for ALPHACI-managed Vercel deployment targets',
         );
       }
 
@@ -757,5 +1019,185 @@ export class DeploymentTargetsService {
     }
 
     return value.trim();
+  }
+
+  async getDeploymentTargetLogs(
+    projectId: string,
+    targetId: string,
+    userId: string,
+    filters?: { type?: string; startTime?: string; endTime?: string },
+  ): Promise<{
+    logs: DeploymentTargetLogEntry[];
+    source: 'live' | 'simulated';
+    reason?: string;
+  }> {
+    const target =
+      await this.deploymentTargetsRepository.findDeploymentTargetForUser(
+        targetId,
+        userId,
+      );
+    if (!target || target.projectId !== projectId) {
+      throw new NotFoundException('Deployment target not found');
+    }
+
+    const client = this.clientRegistry.getClient(target.provider);
+    if (!client.getLogs) {
+      return {
+        source: 'simulated',
+        reason: `Live log fetching is not supported for ${target.provider}.`,
+        logs: this.getMockLogs(target),
+      };
+    }
+
+    try {
+      const { token } = await this.resolveProviderToken(
+        target.provider,
+        userId,
+        {
+          ownershipMode: target.ownershipMode,
+          ...(target.providerConnectionId
+            ? { providerConnectionId: target.providerConnectionId }
+            : {}),
+        },
+      );
+      const ownerId =
+        target.providerMetadata?.['renderOwnerId'] ??
+        target.providerMetadata?.['ownerId'];
+      const logs = await client.getLogs({
+        token,
+        targetId: target.providerProjectId,
+        ...filters,
+        ...(typeof ownerId === 'string' && ownerId.trim()
+          ? { renderOwnerId: ownerId }
+          : {}),
+        ...this.vercelScopeFor(target),
+      });
+      // An empty array here is a legitimate live result (a quiet deployment
+      // with no recent log lines) — getLogs() throws instead of returning []
+      // for cases that aren't actually "live", like a missing Render owner
+      // ID, so reaching this point at all means the fetch succeeded.
+      return { source: 'live', logs };
+    } catch (err) {
+      this.logger.warn(
+        `Failed to retrieve ${target.provider} logs: ${(err as Error).message}`,
+      );
+      return {
+        source: 'simulated',
+        reason: (err as Error).message,
+        logs: this.getMockLogs(target),
+      };
+    }
+  }
+
+  private vercelScopeFor(
+    target: DeploymentTargetSummary,
+  ): { vercelTeamId?: string; vercelTeamSlug?: string } {
+    const teamId = target.providerMetadata?.['vercelTeamId'];
+    const slug = target.providerMetadata?.['vercelTeamSlug'];
+    return {
+      ...(typeof teamId === 'string' && teamId.trim()
+        ? { vercelTeamId: teamId.trim() }
+        : {}),
+      ...(typeof slug === 'string' && slug.trim()
+        ? { vercelTeamSlug: slug.trim() }
+        : {}),
+    };
+  }
+
+  private getMockLogs(
+    target: DeploymentTargetSummary,
+  ): DeploymentTargetLogEntry[] {
+    const now = new Date();
+    const offsetDate = (secondsAgo: number) => {
+      return new Date(now.getTime() - secondsAgo * 1000).toISOString();
+    };
+
+    if (target.provider === 'vercel') {
+      return [
+        {
+          timestamp: offsetDate(70),
+          message:
+            ' ready   - started server on 0.0.0.0:3000, url: http://localhost:3000',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(68),
+          message: ' info    - Loaded env from /app/.env',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(60),
+          message:
+            ' event   - compiled client and server successfully in 835ms (192 modules)',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(50),
+          message: ' info    - [request] GET / 200 in 89ms',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(40),
+          message: ' info    - [request] GET /api/capabilities 200 in 12ms',
+          level: 'info',
+        },
+        {
+          timestamp: offsetDate(30),
+          message:
+            ' warn    - [warning] Large page data detected in /projects/[projectId] (120kb)',
+          level: 'warn',
+        },
+        {
+          timestamp: offsetDate(15),
+          message:
+            ' error   - [problem] Failed to proxy socket connection: connection timeout at /api/ws',
+          level: 'error',
+        },
+      ];
+    }
+
+    const dateStr = now.toLocaleDateString('en-US');
+    return [
+      {
+        timestamp: offsetDate(90),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [RouterExplorer] Mapped {/api/v1/capabilities, GET} route +1ms`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(88),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [NestApplication] Nest application successfully started +402ms`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(86),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:40 AM     LOG [Bootstrap] Application running on 0.0.0.0:10000`,
+        level: 'info',
+      },
+      {
+        timestamp: offsetDate(75),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:12:41 AM    WARN [AllExceptionsFilter] HTTP 404 on HEAD /: Cannot HEAD /`,
+        level: 'warn',
+      },
+      {
+        timestamp: offsetDate(65),
+        message: `==> Your service is live 🚀`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(64),
+        message: `==> Available at your primary URL https://${target.providerProjectName || 'flowci-be-test'}.onrender.com`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(60),
+        message: `==> //////////////////////////////////////////////////////`,
+        level: 'system',
+      },
+      {
+        timestamp: offsetDate(30),
+        message: `[87zbn] [Nest] 1  - ${dateStr}, 9:13:27 AM    WARN [CatalogService] Could not fetch central-workflow tags from GitHub; falling back to the default ref only; GitHub tags request failed with status 403`,
+        level: 'warn',
+      },
+    ];
   }
 }

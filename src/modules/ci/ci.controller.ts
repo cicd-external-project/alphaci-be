@@ -49,7 +49,7 @@ export class CiController {
   /**
    * POST /api/v1/ci/report
    * Ingests a CI stage run report from the generated workflow.
-   * Authenticated via CI_TOKEN bearer — same mechanism as /ci/validate.
+   * Authenticated via ALPHACI_TOKEN bearer — same mechanism as /ci/validate.
    */
   @Post('report')
   @HttpCode(200)
@@ -57,7 +57,7 @@ export class CiController {
     @Headers('authorization') authorization: string | undefined,
     @Body() body: CiReportBodyDto,
   ) {
-    // Verify the CI_TOKEN is valid for this repo before accepting the report
+    // Verify the ALPHACI_TOKEN is valid for this repo before accepting the report
     const token = this.extractBearerToken(authorization);
     await this.ciService.validateRun({
       token,

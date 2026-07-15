@@ -140,6 +140,71 @@ describe('CatalogService', () => {
       );
     });
 
+    it('activates react and nodejs stacks from the engine catalog with their pipelines', () => {
+      mockSyncFs.readFileSync.mockImplementation((path) => {
+        const normalized = String(path).replaceAll('\\', '/');
+        if (normalized.endsWith('/catalog/stacks.json')) {
+          return JSON.stringify([
+            {
+              key: 'react',
+              label: 'React',
+              kind: 'frontend',
+              runtime: 'node',
+              serviceWorkflow: 'reactService',
+            },
+            {
+              key: 'nodejs',
+              label: 'Node.js',
+              kind: 'backend',
+              runtime: 'node',
+              serviceWorkflow: 'nodeService',
+            },
+          ]);
+        }
+
+        if (normalized.endsWith('/catalog/workflow-refs.json')) {
+          return JSON.stringify({
+            currentStable: 'v1',
+            repository: 'cicd-external-project/cicd-workflow',
+            workflows: {
+              reactService: '.github/workflows/service-react.yml',
+              nodeService: '.github/workflows/service-node.yml',
+            },
+          });
+        }
+
+        return '[]';
+      });
+
+      const result = service.getProjectOptions();
+
+      expect(result.projectTypes.map((projectType) => projectType.id)).toEqual([
+        'react',
+        'nodejs',
+      ]);
+      // react is a frontend stack: mono is offered; nodejs is backend: no mono
+      expect(
+        result.projectTypes.find((pt) => pt.id === 'react')?.repoShapes,
+      ).toContain('mono');
+      expect(
+        result.projectTypes.find((pt) => pt.id === 'nodejs')?.repoShapes,
+      ).toEqual(['standalone', 'multi', 'microservices']);
+      expect(result.recipes[0]?.templateByProjectType).toEqual(
+        expect.objectContaining({
+          react: 'react-service-pipeline',
+          nodejs: 'nodejs-service-pipeline',
+        }),
+      );
+      expect(result.recipes[0]?.workflowRefByProjectType).toEqual(
+        expect.objectContaining({
+          react:
+            'cicd-external-project/cicd-workflow/.github/workflows/service-react.yml@v1',
+          nodejs:
+            'cicd-external-project/cicd-workflow/.github/workflows/service-node.yml@v1',
+        }),
+      );
+    });
+
     it('falls back to static project options when engine catalog files cannot be read', () => {
       mockSyncFs.readFileSync.mockImplementation(() => {
         throw new Error('ENOENT');

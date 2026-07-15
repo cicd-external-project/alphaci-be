@@ -51,15 +51,15 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
             rootDirectory: '.',
             buildCommand: 'npm ci && npm run build',
             startCommand: 'npm run start:prod',
             renderRuntime: 'python',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
               },
             ],
@@ -85,7 +85,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        environment: 'uat',
         vars: [{ key: 'DATABASE_URL', value: 'postgres://secret' }],
       },
     );
@@ -113,7 +113,7 @@ describe('ProjectDeploymentProvisioningService', () => {
             appliesTo: 'all',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [
                   { key: 'API_URL', value: 'https://shared.example.com' },
                   { key: 'LOG_LEVEL', value: 'debug' },
@@ -127,11 +127,11 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [{ key: 'API_URL', value: 'https://branch.example.com' }],
               },
             ],
@@ -145,7 +145,7 @@ describe('ProjectDeploymentProvisioningService', () => {
       'user-1',
       {
         deploymentTargetId: 'target-1',
-        environment: 'test',
+        environment: 'uat',
         vars: [
           { key: 'API_URL', value: 'https://branch.example.com' },
           { key: 'LOG_LEVEL', value: 'debug' },
@@ -157,10 +157,16 @@ describe('ProjectDeploymentProvisioningService', () => {
   it('can apply a variable group to a selected Vercel target branch', async () => {
     deploymentTargetsService.createDeploymentTarget
       .mockResolvedValueOnce({
-        id: 'target-backend',
+        id: 'target-backend-uat',
         provider: 'render',
         providerProjectId: 'srv-1',
-        providerProjectName: 'orders-api-test',
+        providerProjectName: 'orders-api-uat',
+      })
+      .mockResolvedValueOnce({
+        id: 'target-backend-main',
+        provider: 'render',
+        providerProjectId: 'srv-2',
+        providerProjectName: 'orders-api-main',
       })
       .mockResolvedValueOnce({
         id: 'target-frontend',
@@ -185,10 +191,10 @@ describe('ProjectDeploymentProvisioningService', () => {
             name: 'Frontend public env',
             provider: 'vercel',
             appliesTo: 'selected',
-            targetBranches: ['frontend:vercel:test'],
+            targetBranches: ['frontend:vercel:uat'],
             env: [
               {
-                environment: 'test',
+                environment: 'uat',
                 vars: [
                   {
                     key: 'NEXT_PUBLIC_API_URL',
@@ -204,27 +210,29 @@ describe('ProjectDeploymentProvisioningService', () => {
             slot: 'backend',
             provider: 'render',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-api-test',
-            branchName: 'test',
+            projectName: 'orders-api-uat',
+            branchName: 'uat',
           },
           {
             slot: 'frontend',
             provider: 'vercel',
             ownershipMode: 'flowci_managed',
-            projectName: 'orders-web-test',
-            branchName: 'test',
+            projectName: 'orders-web-uat',
+            branchName: 'uat',
           },
         ],
       },
     });
 
-    expect(envVarsService.provisionEnvVars).toHaveBeenCalledTimes(1);
+    // The user's variable group lands only on the selected frontend target;
+    // any other calls are the automatic cross-service URL injection, which
+    // must not repeat the user-provided key.
     expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
       'project-1',
       'user-1',
       {
         deploymentTargetId: 'target-frontend',
-        environment: 'test',
+        environment: 'uat',
         vars: [
           {
             key: 'NEXT_PUBLIC_API_URL',
@@ -233,6 +241,17 @@ describe('ProjectDeploymentProvisioningService', () => {
         ],
       },
     );
+    const apiUrlValues = envVarsService.provisionEnvVars.mock.calls.flatMap(
+      ([, , dto]: [
+        string,
+        string,
+        { vars: Array<{ key: string; value: string }> },
+      ]) =>
+        dto.vars
+          .filter((variable) => variable.key === 'NEXT_PUBLIC_API_URL')
+          .map((variable) => variable.value),
+    );
+    expect(apiUrlValues).toEqual(['https://api.example.com']);
   });
 
   it('reports partial status when one requested target fails', async () => {
@@ -275,7 +294,9 @@ describe('ProjectDeploymentProvisioningService', () => {
     });
 
     expect(result.status).toBe('partial');
-    expect(result.targets[1]?.errorSummary).toContain('Bearer [redacted]');
+    expect(
+      result.targets.find((target) => target.status === 'failed')?.errorSummary,
+    ).toContain('Bearer [redacted]');
     expect(JSON.stringify(result)).not.toContain('rnd_secret');
   });
 
@@ -288,9 +309,9 @@ describe('ProjectDeploymentProvisioningService', () => {
       provider: 'vercel',
       providerConnectionId: null,
       providerProjectId: 'prj_1',
-      providerProjectName: 'orders-ui-test',
+      providerProjectName: 'orders-ui-uat',
       repoFullName: 'tone/orders-ui',
-      branchName: 'test',
+      branchName: 'uat',
       rootDirectory: '.',
       buildCommand: 'npm run build',
       startCommand: null,
@@ -343,6 +364,16 @@ describe('ProjectDeploymentProvisioningService', () => {
       }) as unknown,
     });
     expect(
+      deploymentTargetsService.createDeploymentTarget,
+    ).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      expect.objectContaining({
+        branchName: 'uat',
+        projectName: 'orders-ui-uat',
+      }),
+    );
+    expect(
       deploymentTargetsService.updateProviderMetadata,
     ).toHaveBeenCalledWith('target-1', {
       vercelOrgId: 'team_flowci',
@@ -359,6 +390,319 @@ describe('ProjectDeploymentProvisioningService', () => {
         orgId: 'VERCEL_FRONTEND_ORG_ID',
         projectId: 'VERCEL_FRONTEND_PROJECT_ID',
       },
+    });
+  });
+
+  describe('cross-service URL injection', () => {
+    const mockTargetsByProjectName = () => {
+      deploymentTargetsService.createDeploymentTarget.mockImplementation(
+        (
+          _projectId: string,
+          _userId: string,
+          dto: { provider: string; projectName?: string },
+        ) => {
+          if (dto.provider === 'vercel') {
+            return Promise.resolve({
+              id: 'vercel-target',
+              provider: 'vercel',
+              providerProjectId: 'prj_123',
+              providerProjectName: 'demo-frontend',
+              deploymentStrategy: 'vercel_git_connected',
+              providerMetadata: {},
+            });
+          }
+          return Promise.resolve({
+            id: `render-${dto.projectName}`,
+            provider: 'render',
+            providerProjectId: `srv-${dto.projectName}`,
+            providerProjectName: dto.projectName,
+            deploymentStrategy: 'render_git_connected',
+            renderEnvironmentName: dto.projectName?.endsWith('-main')
+              ? 'production'
+              : 'uat',
+            providerMetadata: {
+              renderServiceUrl: `https://${dto.projectName}.onrender.com`,
+            },
+          });
+        },
+      );
+    };
+
+    const fullStackRequest = () => ({
+      enabled: true,
+      targets: [
+        {
+          slot: 'backend' as const,
+          provider: 'render' as const,
+          ownershipMode: 'flowci_managed' as const,
+          projectName: 'demo-backend',
+        },
+        {
+          slot: 'frontend' as const,
+          provider: 'vercel' as const,
+          ownershipMode: 'flowci_managed' as const,
+          projectName: 'demo-frontend',
+        },
+      ],
+    });
+
+    it('injects API URLs into the frontend and origins into the backend per environment', async () => {
+      mockTargetsByProjectName();
+      const service = new ProjectDeploymentProvisioningService(
+        deploymentTargetsService as never,
+        envVarsService as never,
+        vercelCiSecretsService as never,
+      );
+
+      await service.provisionForProject({
+        projectId: 'project-1',
+        userId: 'user-1',
+        repoFullName: 'tone/demo',
+        request: fullStackRequest(),
+      });
+
+      // Render fans out to uat and main; each backend service gets the
+      // frontend origin for CORS.
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        {
+          deploymentTargetId: 'render-demo-backend-uat',
+          environment: 'uat',
+          vars: [
+            { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
+            { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
+          ],
+        },
+      );
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        {
+          deploymentTargetId: 'render-demo-backend-main',
+          environment: 'production',
+          vars: [
+            { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
+            { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
+          ],
+        },
+      );
+
+      // The single Vercel project serves both environments, each pointing at
+      // the environment-matched backend service.
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        {
+          deploymentTargetId: 'vercel-target',
+          environment: 'uat',
+          vars: [
+            {
+              key: 'NEXT_PUBLIC_API_URL',
+              value: 'https://demo-backend-uat.onrender.com',
+            },
+            {
+              key: 'API_URL',
+              value: 'https://demo-backend-uat.onrender.com',
+            },
+          ],
+        },
+      );
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'project-1',
+        'user-1',
+        {
+          deploymentTargetId: 'vercel-target',
+          environment: 'production',
+          vars: [
+            {
+              key: 'NEXT_PUBLIC_API_URL',
+              value: 'https://demo-backend-main.onrender.com',
+            },
+            {
+              key: 'API_URL',
+              value: 'https://demo-backend-main.onrender.com',
+            },
+          ],
+        },
+      );
+    });
+
+    it('never overrides env keys the user provided themselves', async () => {
+      mockTargetsByProjectName();
+      const service = new ProjectDeploymentProvisioningService(
+        deploymentTargetsService as never,
+        envVarsService as never,
+        vercelCiSecretsService as never,
+      );
+
+      await service.provisionForProject({
+        projectId: 'project-1',
+        userId: 'user-1',
+        repoFullName: 'tone/demo',
+        request: {
+          ...fullStackRequest(),
+          sharedEnv: [
+            {
+              environment: 'uat',
+              vars: [{ key: 'CORS_ORIGINS', value: 'https://my-own.example' }],
+            },
+          ],
+        },
+      });
+
+      const uatBackendCalls = envVarsService.provisionEnvVars.mock.calls.filter(
+        ([, , dto]: [
+          string,
+          string,
+          {
+            deploymentTargetId: string;
+            environment: string;
+            vars: Array<{ key: string }>;
+          },
+        ]) =>
+          dto.deploymentTargetId === 'render-demo-backend-uat' &&
+          dto.environment === 'uat',
+      );
+      const sentVars = uatBackendCalls.flatMap(
+        ([, , dto]: [
+          string,
+          string,
+          { vars: Array<{ key: string; value: string }> },
+        ]) => dto.vars,
+      );
+      // FRONTEND_URL is still injected, but the user's CORS_ORIGINS wins: the
+      // only CORS_ORIGINS value ever sent for uat is the user's own.
+      expect(sentVars.map((variable) => variable.key)).toContain(
+        'FRONTEND_URL',
+      );
+      expect(
+        sentVars
+          .filter((variable) => variable.key === 'CORS_ORIGINS')
+          .map((variable) => variable.value),
+      ).toEqual(['https://my-own.example']);
+    });
+
+    it('cross-links targets that live on different projects (multi-repo)', async () => {
+      const service = new ProjectDeploymentProvisioningService(
+        deploymentTargetsService as never,
+        envVarsService as never,
+        vercelCiSecretsService as never,
+      );
+
+      const backendTarget = {
+        slot: 'backend' as const,
+        provider: 'render' as const,
+        ownershipMode: 'flowci_managed' as const,
+        deploymentStrategy: 'render_image_pushed' as const,
+        status: 'created' as const,
+        deploymentTargetId: 'render-be',
+        providerProjectId: 'srv-be',
+        providerProjectName: 'demo-backend-main',
+        providerMetadata: {
+          renderServiceUrl: 'https://demo-backend-main.onrender.com',
+        },
+        renderEnvironmentName: 'production' as const,
+        errorSummary: null,
+        env: [],
+      };
+      const frontendTarget = {
+        slot: 'frontend' as const,
+        provider: 'vercel' as const,
+        ownershipMode: 'flowci_managed' as const,
+        deploymentStrategy: 'vercel_git_connected' as const,
+        status: 'created' as const,
+        deploymentTargetId: 'vercel-fe',
+        providerProjectId: 'prj_fe',
+        providerProjectName: 'demo-frontend',
+        providerMetadata: {},
+        errorSummary: null,
+        env: [],
+      };
+
+      await service.crossLinkServiceUrls({
+        userId: 'user-1',
+        request: { enabled: true, targets: [] },
+        groups: [
+          {
+            projectId: 'backend-project',
+            result: { status: 'completed', targets: [backendTarget] },
+          },
+          {
+            projectId: 'frontend-project',
+            result: { status: 'completed', targets: [frontendTarget] },
+          },
+        ],
+      });
+
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'backend-project',
+        'user-1',
+        {
+          deploymentTargetId: 'render-be',
+          environment: 'production',
+          vars: [
+            { key: 'FRONTEND_URL', value: 'https://demo-frontend.vercel.app' },
+            { key: 'CORS_ORIGINS', value: 'https://demo-frontend.vercel.app' },
+          ],
+        },
+      );
+      expect(envVarsService.provisionEnvVars).toHaveBeenCalledWith(
+        'frontend-project',
+        'user-1',
+        {
+          deploymentTargetId: 'vercel-fe',
+          environment: 'production',
+          vars: [
+            {
+              key: 'NEXT_PUBLIC_API_URL',
+              value: 'https://demo-backend-main.onrender.com',
+            },
+            {
+              key: 'API_URL',
+              value: 'https://demo-backend-main.onrender.com',
+            },
+          ],
+        },
+      );
+    });
+
+    it('does nothing when only one side of the stack exists', async () => {
+      const service = new ProjectDeploymentProvisioningService(
+        deploymentTargetsService as never,
+        envVarsService as never,
+        vercelCiSecretsService as never,
+      );
+
+      await service.crossLinkServiceUrls({
+        userId: 'user-1',
+        request: { enabled: true, targets: [] },
+        groups: [
+          {
+            projectId: 'backend-project',
+            result: {
+              status: 'completed',
+              targets: [
+                {
+                  slot: 'backend',
+                  provider: 'render',
+                  ownershipMode: 'flowci_managed',
+                  deploymentStrategy: 'render_image_pushed',
+                  status: 'created',
+                  deploymentTargetId: 'render-be',
+                  providerProjectId: 'srv-be',
+                  providerProjectName: 'demo-backend-main',
+                  providerMetadata: {},
+                  errorSummary: null,
+                  env: [],
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      expect(envVarsService.provisionEnvVars).not.toHaveBeenCalled();
     });
   });
 });

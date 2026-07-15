@@ -62,6 +62,64 @@ export interface DeleteProviderEnvInput {
   key: string;
 }
 
+export interface ProviderTargetStatusInput {
+  token: string;
+  targetId: string;
+  // BYO Vercel connections carry their own team scope on the target's
+  // providerMetadata rather than the deployment's managed-account default —
+  // callers must pass it through so status/history/log lookups hit the
+  // right team instead of silently falling back to the managed default (or
+  // no scope at all).
+  vercelTeamId?: string;
+  vercelTeamSlug?: string;
+}
+
+export interface ProviderTargetStatus {
+  exists: boolean;
+  state?: string;
+  url?: string | null;
+  // Provider-specific fields discovered during the live status check (e.g.
+  // Render's ownerId) that are worth persisting into providerMetadata so
+  // later operations (like log fetching) don't need a separate lookup.
+  metadata?: Record<string, unknown>;
+}
+
+export interface DeleteProviderTargetInput {
+  token: string;
+  targetId: string;
+}
+
+export interface DeleteProviderTargetResult {
+  deleted: boolean;
+}
+
+export interface ProviderDeployEvent {
+  id: string;
+  status: string;
+  createdAt: string;
+  readyAt: string | null;
+  commitSha: string | null;
+  commitMessage: string | null;
+  trigger: string | null;
+}
+
+export interface ProviderLogEntry {
+  timestamp: string;
+  message: string;
+  level: string;
+}
+
+export interface ProviderLogsInput extends ProviderTargetStatusInput {
+  // 'build' vs 'app'/runtime — exact meaning is provider-specific; clients
+  // ignore values they don't support rather than erroring.
+  type?: string;
+  startTime?: string;
+  endTime?: string;
+  // Render's log API requires the workspace owner id, which lives on the
+  // target's providerMetadata (see deployment-targets.service.ts).
+  renderOwnerId?: string;
+}
+
 export interface RuntimeEnvProviderClient {
   provider: EnvProvider;
   validateConnection(token: string): Promise<ProviderAccountSummary>;
@@ -79,4 +137,18 @@ export interface RuntimeEnvProviderClient {
   deleteEnvironmentVariable(
     input: DeleteProviderEnvInput,
   ): Promise<{ key: string; status: 'removed' }>;
+  getTargetStatus(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderTargetStatus>;
+  deleteTarget(
+    input: DeleteProviderTargetInput,
+  ): Promise<DeleteProviderTargetResult>;
+  // Optional: not every client can list deploy/event history. Callers must
+  // check for its presence before calling.
+  getDeployHistory?(
+    input: ProviderTargetStatusInput,
+  ): Promise<ProviderDeployEvent[]>;
+  // Optional: not every client can fetch runtime logs. Callers must check
+  // for its presence before calling.
+  getLogs?(input: ProviderLogsInput): Promise<ProviderLogEntry[]>;
 }

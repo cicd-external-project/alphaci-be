@@ -7,7 +7,6 @@ import { UsersRepository } from '../persistence/users.repository.js';
 import { SubscriptionsRepository } from '../persistence/subscriptions.repository.js';
 import { OutboxRepository } from '../persistence/outbox.repository.js';
 import { OAuthStateRepository } from '../persistence/oauth-state.repository.js';
-import { ExampleProjectSeederService } from '../projects/example-project-seeder.service.js';
 import type { Request } from 'express';
 import type {
   SessionUser,
@@ -20,6 +19,7 @@ const fakeUser: SessionUser = {
   login: 'testuser',
   email: 'test@example.com',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const fakeFreeSub: SubscriptionState = {
@@ -29,7 +29,7 @@ const fakeFreeSub: SubscriptionState = {
   updatedAt: '2026-01-01T00:00:00Z',
 };
 
-const makeConfig = (withGitHub = true) =>
+const makeConfig = (withGitHub = true, internalOrg = '') =>
   ({
     get: jest.fn((key: string) => {
       if (key === 'ALLOWED_ORIGINS') {
@@ -48,6 +48,7 @@ const makeConfig = (withGitHub = true) =>
         clientSecret: withGitHub ? 'gh-client-secret' : '',
         callbackUrl: 'http://localhost:4000/api/v1/auth/github/callback',
         scope: 'read:user user:email',
+        internalOrg,
       },
     }),
   }) as unknown as ConfigService;
@@ -74,14 +75,6 @@ const makeOutboxRepo = () =>
   ({
     publishLater: jest.fn().mockResolvedValue(undefined),
   }) as unknown as OutboxRepository;
-
-const makeExampleProjectSeederService = (
-  overrides?: Partial<ExampleProjectSeederService>,
-) =>
-  ({
-    ensureExampleProjectSeeded: jest.fn().mockResolvedValue(undefined),
-    ...overrides,
-  }) as unknown as ExampleProjectSeederService;
 
 /**
  * Default OAuthStateRepository mock: save() succeeds, findAndDelete() returns
@@ -114,28 +107,22 @@ async function createService(
   withGitHub = true,
   oauthStateOverrides?: Partial<OAuthStateRepository>,
   usersRepoOverrides?: Partial<UsersRepository>,
-  exampleProjectSeederOverrides?: Partial<ExampleProjectSeederService>,
+  _unusedAuthTestArg?: unknown,
+  internalOrg = '',
 ) {
   const usersRepo = makeUsersRepo(usersRepoOverrides);
   const subsRepo = makeSubsRepo();
   const outboxRepo = makeOutboxRepo();
   const oauthStateRepo = makeOAuthStateRepo(oauthStateOverrides);
-  const exampleProjectSeederService = makeExampleProjectSeederService(
-    exampleProjectSeederOverrides,
-  );
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       AuthService,
-      { provide: ConfigService, useValue: makeConfig(withGitHub) },
+      { provide: ConfigService, useValue: makeConfig(withGitHub, internalOrg) },
       { provide: UsersRepository, useValue: usersRepo },
       { provide: SubscriptionsRepository, useValue: subsRepo },
       { provide: OutboxRepository, useValue: outboxRepo },
       { provide: OAuthStateRepository, useValue: oauthStateRepo },
-      {
-        provide: ExampleProjectSeederService,
-        useValue: exampleProjectSeederService,
-      },
     ],
   }).compile();
 
@@ -145,7 +132,6 @@ async function createService(
     subsRepo,
     outboxRepo,
     oauthStateRepo,
-    exampleProjectSeederService,
   };
 }
 
@@ -397,15 +383,9 @@ describe('AuthService', () => {
     it('returns success after successful GitHub OAuth flow (new user)', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
       // findByGithubUserIdIncludingArchived returns null → new user path
-      const { service, exampleProjectSeederService } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(null),
-        },
-      );
+      const { service } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest.fn().mockResolvedValue(null),
+      });
       const req = makeRequest();
 
       const url = await service.handleGitHubCallback(
@@ -414,10 +394,6 @@ describe('AuthService', () => {
         'valid-state',
       );
       expect(url).toContain('auth=success');
-      // Demo project seeding runs for brand-new accounts.
-      expect(
-        exampleProjectSeederService.ensureExampleProjectSeeded,
-      ).toHaveBeenCalledWith('user-1');
     });
 
     it('returns success after successful GitHub OAuth flow (active existing user)', async () => {
@@ -428,15 +404,11 @@ describe('AuthService', () => {
         archivedAt: null,
         githubUserId: '12345',
       };
-      const { service, exampleProjectSeederService } = await createService(
-        true,
-        undefined,
-        {
-          findByGithubUserIdIncludingArchived: jest
-            .fn()
-            .mockResolvedValue(activeRow),
-        },
-      );
+      const { service } = await createService(true, undefined, {
+        findByGithubUserIdIncludingArchived: jest
+          .fn()
+          .mockResolvedValue(activeRow),
+      });
       const req = makeRequest();
 
       const url = await service.handleGitHubCallback(
@@ -445,15 +417,18 @@ describe('AuthService', () => {
         'valid-state',
       );
       expect(url).toContain('auth=success');
-      // Demo project seeding must NOT run again for an already-active account.
-      expect(
-        exampleProjectSeederService.ensureExampleProjectSeeded,
-      ).not.toHaveBeenCalled();
     });
 
-    it('does not block login when example project seeding rejects', async () => {
+    it('hard-blocks a non-member when GITHUB_INTERNAL_ORG is set', async () => {
       mockSuccessfulGitHubFetch(fetchMock);
-      const { service } = await createService(
+      // Third fetch: org membership check → 404 (not a member).
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
         true,
         undefined,
         {
@@ -461,11 +436,8 @@ describe('AuthService', () => {
             .fn()
             .mockResolvedValue(null),
         },
-        {
-          ensureExampleProjectSeeded: jest
-            .fn()
-            .mockRejectedValue(new Error('seeding boom')),
-        },
+        undefined,
+        'acme-internal',
       );
       const req = makeRequest();
 
@@ -475,12 +447,176 @@ describe('AuthService', () => {
         'valid-state',
       );
 
-      // Even though the seeder rejected, login must still succeed. In
-      // production ExampleProjectSeederService never rejects (it catches
-      // internally); this test simulates a worst-case to prove the auth
-      // flow's own try/catch around resolveAccountState/establishSession
-      // does not depend on seeding succeeding.
+      expect(url).toContain('auth=not_authorized');
+      // No account is created for a blocked non-member.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a pending org invitation distinctly, with the org login for the accept link', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → 200 with state 'pending' (the
+      // user was invited to the org but has not accepted the invitation).
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ state: 'pending' }),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_invite_pending');
+      expect(url).toContain('org=acme-internal');
+      expect(url).not.toContain('auth=not_authorized');
+      // Still denied: no session, no account row.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('blocks with a distinct reason when org membership cannot be verified (e.g. 403)', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → 403 (missing scope, or the org
+      // has OAuth App access restrictions that have not approved this app).
+      // This must NOT be conflated with a confirmed 404 non-member.
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({}),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_verification_failed');
+      expect(url).not.toContain('auth=not_authorized');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('blocks with a distinct reason when the membership check throws (network error)', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check throws (e.g. DNS/network failure).
+      fetchMock.mockRejectedValueOnce(new Error('network unreachable'));
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=org_verification_failed');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).not.toHaveBeenCalled();
+    });
+
+    it('admits an org member and stamps them internal', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      // Third fetch: org membership check → active member.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ state: 'active' }),
+      } as unknown as Response);
+
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        undefined,
+        'acme-internal',
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
       expect(url).toContain('auth=success');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
+        expect.objectContaining({ isInternal: true }),
+      );
+    });
+
+    it('preserves is_internal (passes null) on the sold deployment where the org is unset', async () => {
+      mockSuccessfulGitHubFetch(fetchMock);
+      const { service, usersRepo } = await createService(
+        true,
+        undefined,
+        {
+          findByGithubUserIdIncludingArchived: jest
+            .fn()
+            .mockResolvedValue(null),
+        },
+        // internalOrg defaults to '' → gating disabled, no membership check.
+      );
+      const req = makeRequest();
+
+      const url = await service.handleGitHubCallback(
+        req,
+        'code123',
+        'valid-state',
+      );
+
+      expect(url).toContain('auth=success');
+      // null means "do not overwrite the shared flag"; brand-new rows default
+      // to false at the DB layer via COALESCE.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(usersRepo.upsertGitHubUser).toHaveBeenCalledWith(
+        expect.objectContaining({ isInternal: null }),
+      );
     });
 
     it('sets pendingArchived and returns archived_choice for a returning archived user', async () => {
@@ -551,21 +687,21 @@ describe('AuthService', () => {
         archivedAt: '2026-05-01T00:00:00Z',
         githubUserId: '12345',
       };
-      const { service, subsRepo, outboxRepo, exampleProjectSeederService } =
-        await createService(true, undefined, {
+      const { service, subsRepo, outboxRepo } = await createService(
+        true,
+        undefined,
+        {
           findByGithubUserIdIncludingArchived: jest
             .fn()
             .mockResolvedValue(archivedRow),
-        });
+        },
+      );
 
       const req = makeRequest();
       await service.handleGitHubCallback(req, 'code123', 'valid-state');
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(subsRepo.ensureDefaultFreeSubscription).not.toHaveBeenCalled();
-      expect(
-        exampleProjectSeederService.ensureExampleProjectSeeded,
-      ).not.toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(outboxRepo.publishLater).not.toHaveBeenCalled();
     });
@@ -813,6 +949,7 @@ describe('AuthService', () => {
         githubUserId: '12345',
         login: 'testuser',
         accessToken: 'tok-restore',
+        isInternal: true,
       };
       const session = makeSession({ pendingArchived: pending });
       const req = { session } as unknown as Request;
@@ -820,7 +957,10 @@ describe('AuthService', () => {
       await service.restoreArchivedAccount(req);
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(usersRepo.restoreByGithubUserId).toHaveBeenCalledWith('12345');
+      expect(usersRepo.restoreByGithubUserId).toHaveBeenCalledWith(
+        '12345',
+        true,
+      );
 
       const s = session as unknown as Record<string, unknown>;
       expect(s['userId']).toBe('user-1');
@@ -842,11 +982,14 @@ describe('AuthService', () => {
     it('hard-deletes old row, upserts new row, provisions subscription, establishes session', async () => {
       const hardDeleteSpy = jest.fn().mockResolvedValue(undefined);
       const upsertSpy = jest.fn().mockResolvedValue(fakeUser);
-      const { service, usersRepo, subsRepo, exampleProjectSeederService } =
-        await createService(true, undefined, {
+      const { service, usersRepo, subsRepo } = await createService(
+        true,
+        undefined,
+        {
           hardDeleteByGithubUserId: hardDeleteSpy,
           upsertGitHubUser: upsertSpy,
-        });
+        },
+      );
 
       const pending = {
         githubUserId: '12345',
@@ -855,6 +998,7 @@ describe('AuthService', () => {
         email: 'test@example.com',
         avatarUrl: 'https://example.com/avatar.png',
         accessToken: 'tok-fresh',
+        isInternal: true,
       };
       const session = makeSession({ pendingArchived: pending });
       const req = { session } as unknown as Request;
@@ -868,15 +1012,12 @@ describe('AuthService', () => {
         name: 'Test User',
         email: 'test@example.com',
         avatarUrl: 'https://example.com/avatar.png',
+        isInternal: true,
       });
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(subsRepo.ensureDefaultFreeSubscription).toHaveBeenCalledWith(
         'user-1',
       );
-      expect(
-        exampleProjectSeederService.ensureExampleProjectSeeded,
-      ).toHaveBeenCalledWith('user-1');
-
       const s = session as unknown as Record<string, unknown>;
       expect(s['userId']).toBe('user-1');
       expect(s['pendingArchived']).toBeUndefined();

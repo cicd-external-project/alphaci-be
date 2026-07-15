@@ -226,7 +226,7 @@ describe('VercelEnvClient', () => {
     );
   });
 
-  it('omits Git repository linking for CI-pushed Vercel projects', async () => {
+  it('links Git repository metadata for CI-pushed Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -250,17 +250,22 @@ describe('VercelEnvClient', () => {
       string,
       { body: string },
     ];
-    expect(JSON.parse(init.body)).not.toHaveProperty('gitRepository');
+    expect(JSON.parse(init.body)).toMatchObject({
+      gitRepository: {
+        type: 'github',
+        repo: 'owner/web-app',
+      },
+    });
     expect(target.metadata).toEqual(
       expect.objectContaining({
         deploymentStrategy: 'vercel_ci_pushed',
-        gitConnected: false,
+        gitConnected: true,
         vercelOrgId: 'user_123',
       }),
     );
   });
 
-  it('omits Git repository linking for FlowCI-managed CI-pushed Vercel projects', async () => {
+  it('links Git repository metadata for ALPHACI-managed CI-pushed Vercel projects', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({
       ok: true,
       json: () =>
@@ -288,11 +293,16 @@ describe('VercelEnvClient', () => {
       { body: string },
     ];
     expect(url).toBe('https://api.vercel.com/v11/projects?teamId=team_flowci');
-    expect(JSON.parse(init.body)).not.toHaveProperty('gitRepository');
+    expect(JSON.parse(init.body)).toMatchObject({
+      gitRepository: {
+        type: 'github',
+        repo: 'owner/web-app',
+      },
+    });
     expect(target.metadata).toEqual(
       expect.objectContaining({
         deploymentStrategy: 'vercel_ci_pushed',
-        gitConnected: false,
+        gitConnected: true,
         vercelOrgId: 'team_flowci',
         vercelTeamId: 'team_flowci',
       }),
@@ -332,7 +342,7 @@ describe('VercelEnvClient', () => {
         Promise.resolve({
           id: 'team_123',
           slug: 'flowci',
-          name: 'FlowCI',
+          name: 'ALPHACI',
         }),
     });
 
@@ -342,7 +352,7 @@ describe('VercelEnvClient', () => {
     ).resolves.toEqual({
       id: 'team_123',
       slug: 'flowci',
-      name: 'FlowCI',
+      name: 'ALPHACI',
     });
 
     expect(fetch).toHaveBeenCalledWith(
@@ -517,6 +527,160 @@ describe('VercelEnvClient', () => {
       'Vercel project could not be created: 403 {"error":{"message":"Missing team access"}}',
     );
     expect(thrown?.message).not.toContain('vercel-secret');
+  });
+
+  it('reports the Vercel project exists with its latest deployment url', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: 'prj_1',
+          name: 'web-app-test',
+          latestDeployments: [{ url: 'web-app-test.vercel.app' }],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getTargetStatus({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual({
+      exists: true,
+      url: 'web-app-test.vercel.app',
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v9/projects/prj_1',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel',
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('reports the Vercel project does not exist on a 404', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().getTargetStatus({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual({ exists: false });
+  });
+
+  it('maps Vercel deployments into provider deploy events', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          deployments: [
+            {
+              uid: 'dpl_2',
+              readyState: 'READY',
+              source: 'git',
+              createdAt: 1752313500000,
+              ready: 1752313620000,
+              meta: {
+                githubCommitSha: 'ea73844',
+                githubCommitMessage: 'feat: add logs endpoint',
+              },
+            },
+            {
+              uid: 'dpl_1',
+              state: 'ERROR',
+              createdAt: 1752313000000,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual([
+      {
+        id: 'dpl_2',
+        status: 'READY',
+        createdAt: new Date(1752313500000).toISOString(),
+        readyAt: new Date(1752313620000).toISOString(),
+        commitSha: 'ea73844',
+        commitMessage: 'feat: add logs endpoint',
+        trigger: 'git',
+      },
+      {
+        id: 'dpl_1',
+        status: 'ERROR',
+        createdAt: new Date(1752313000000).toISOString(),
+        readyAt: null,
+        commitSha: null,
+        commitMessage: null,
+        trigger: null,
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v6/deployments?projectId=prj_1&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer vercel',
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('returns an empty deploy history list on a 404', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().getDeployHistory({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('deletes the Vercel project', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteTarget({
+        token: 'vercel',
+        targetId: 'prj_1',
+      }),
+    ).resolves.toEqual({ deleted: true });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.vercel.com/v9/projects/prj_1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('treats an already-gone Vercel project (404) as deleted', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve(''),
+    });
+
+    await expect(
+      new VercelEnvClient().deleteTarget({
+        token: 'vercel',
+        targetId: 'prj_missing',
+      }),
+    ).resolves.toEqual({ deleted: true });
   });
 
   it('returns an actionable message when Vercel GitHub integration is missing', async () => {

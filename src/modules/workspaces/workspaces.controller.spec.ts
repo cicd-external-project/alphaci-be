@@ -19,7 +19,7 @@ describe('WorkspacesController', () => {
             id: 'workspace-1',
             name: "tone's workspace",
             kind: 'personal',
-            role: 'owner',
+            role: 'admin',
           },
         ],
       }),
@@ -28,7 +28,7 @@ describe('WorkspacesController', () => {
           id: 'member-1',
           workspaceId: 'workspace-1',
           userId: 'user-1',
-          role: 'owner',
+          role: 'admin',
           login: 'tone',
           name: 'Tone',
           email: null,
@@ -40,7 +40,7 @@ describe('WorkspacesController', () => {
         id: 'member-2',
         workspaceId: 'workspace-1',
         userId: 'user-2',
-        role: 'developer',
+        role: 'member',
         login: 'dev',
         name: 'Dev User',
         email: null,
@@ -49,7 +49,7 @@ describe('WorkspacesController', () => {
       }),
       updateMemberRole: jest.fn().mockResolvedValue({
         id: 'member-2',
-        role: 'admin',
+        role: 'delegated_lead',
       }),
       removeMember: jest.fn().mockResolvedValue({
         id: 'member-2',
@@ -72,7 +72,7 @@ describe('WorkspacesController', () => {
           id: 'workspace-1',
           name: "tone's workspace",
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     });
@@ -115,7 +115,7 @@ describe('WorkspacesController', () => {
         'workspace-1',
       ),
     ).resolves.toEqual([
-      expect.objectContaining({ id: 'member-1', role: 'owner' }),
+      expect.objectContaining({ id: 'member-1', role: 'admin' }),
     ]);
     expect(service.listMembers).toHaveBeenCalledWith('workspace-1', 'user-1');
   });
@@ -130,13 +130,13 @@ describe('WorkspacesController', () => {
         'workspace-1',
         {
           loginOrEmail: 'dev',
-          role: 'developer',
+          role: 'member',
         },
       ),
-    ).resolves.toMatchObject({ id: 'member-2', role: 'developer' });
+    ).resolves.toMatchObject({ id: 'member-2', role: 'member' });
     expect(service.addMember).toHaveBeenCalledWith('workspace-1', 'user-1', {
       loginOrEmail: 'dev',
-      role: 'developer',
+      role: 'member',
     });
   });
 
@@ -149,14 +149,14 @@ describe('WorkspacesController', () => {
         { session: { userId: 'user-1' } } as never,
         'workspace-1',
         'member-2',
-        { role: 'admin' },
+        { role: 'delegated_lead' },
       ),
-    ).resolves.toMatchObject({ id: 'member-2', role: 'admin' });
+    ).resolves.toMatchObject({ id: 'member-2', role: 'delegated_lead' });
     expect(service.updateMemberRole).toHaveBeenCalledWith(
       'workspace-1',
       'user-1',
       'member-2',
-      'admin',
+      'delegated_lead',
     );
   });
 
@@ -172,7 +172,7 @@ describe('WorkspacesController', () => {
         { session: { userId: 'user-1' } } as never,
         'workspace-1',
         'member-owner',
-        { role: 'admin' },
+        { role: 'delegated_lead' },
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });

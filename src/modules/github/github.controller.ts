@@ -16,7 +16,10 @@ export class GithubController {
   /** GET /github/app/install-url — returns the GitHub App installation URL */
   @Get('app/install-url')
   getAppInstallUrl() {
-    return { installUrl: this.githubService.getAppInstallUrl() };
+    return {
+      installUrl: this.githubService.getAppInstallUrl(),
+      appSlug: this.githubService.getAppSlug(),
+    };
   }
 
   /** POST /github/installations — link a GitHub App installation to the current user */
@@ -50,6 +53,7 @@ export class GithubController {
       installationId: inst.installationId,
       accountLogin: inst.accountLogin,
       accountId: inst.accountId,
+      accountType: inst.accountType,
       repositorySelection: inst.repositorySelection,
     }));
     return { accounts };
@@ -115,10 +119,10 @@ export class GithubController {
     const { repoUrl, cloneUrl, ownerLogin, repoName } =
       await this.githubService.createRepo(accessToken, body);
 
-    // `develop` is created and protected like the others, but no CI workflow
-    // is triggered on it (pipeline triggers stay test/uat/main only).
+    // `develop` remains available for integration work but is intentionally
+    // unprotected and does not trigger generated workflows.
     const branchesCreated: string[] = ['main'];
-    for (const branch of ['develop', 'uat', 'test'] as const) {
+    for (const branch of ['develop', 'uat'] as const) {
       await this.githubService.createBranch(
         accessToken,
         ownerLogin,
@@ -129,7 +133,7 @@ export class GithubController {
       branchesCreated.push(branch);
     }
 
-    for (const branch of ['develop', 'test', 'uat', 'main'] as const) {
+    for (const branch of ['uat', 'main'] as const) {
       await this.githubService.applyBranchProtection(
         accessToken,
         ownerLogin,

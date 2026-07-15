@@ -9,6 +9,11 @@ export interface SessionUser {
   avatarUrl?: string;
   email?: string;
   onboardingCompleted: boolean;
+  /**
+   * True when the user is a member of the internal company GitHub org.
+   * Internal users bypass the subscription/payment gate entirely.
+   */
+  isInternal: boolean;
 }
 
 export interface SubscriptionState {

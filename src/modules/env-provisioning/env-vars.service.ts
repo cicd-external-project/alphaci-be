@@ -244,9 +244,9 @@ export class EnvVarsService {
     userId: string,
   ): Promise<void> {
     await this.workspaceAccessService?.assertProjectRole(projectId, userId, [
-      'owner',
       'admin',
-      'developer',
+      'delegated_lead',
+      'member',
     ]);
   }
 
@@ -374,7 +374,7 @@ export class EnvVarsService {
       );
       if (!token) {
         throw new BadRequestException(
-          `FlowCI-managed ${target.provider} token is not configured`,
+          `ALPHACI-managed ${target.provider} token is not configured`,
         );
       }
 

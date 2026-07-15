@@ -103,7 +103,7 @@ describe('VercelCiSecretsService', () => {
     );
   });
 
-  it('uses the FlowCI-managed Vercel token for managed CI-pushed targets', async () => {
+  it('uses the ALPHACI-managed Vercel token for managed CI-pushed targets', async () => {
     const service = makeService();
 
     await service.installForTarget({
@@ -145,7 +145,7 @@ describe('VercelCiSecretsService', () => {
     );
   });
 
-  it('requires FlowCI-managed Vercel token before installing managed secrets', async () => {
+  it('requires ALPHACI-managed Vercel token before installing managed secrets', async () => {
     configService.getOrThrow.mockReturnValue({
       envProvisioning: {
         flowciManaged: {

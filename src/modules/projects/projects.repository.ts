@@ -4,6 +4,42 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 
+/**
+ * Role-aware visibility predicate for a provisioned project (table aliased `pp`).
+ * `userParam` is a positional placeholder literal (e.g. '$1') — NOT user input,
+ * so interpolating it carries no injection risk. A project is visible when the
+ * viewer is:
+ *   - a GLOBAL admin (app_role 'admin', or any platform_admins row) — sees all;
+ *   - the project owner;
+ *   - a MANAGER (Lead/owner tier) of the owning group/workspace; or
+ *   - actively assigned to the hierarchy repository linked to the project.
+ * A plain group member with no assignment therefore only sees the repositories
+ * they were explicitly assigned to (product decision 2026-07-14).
+ */
+function projectVisibilitySql(userParam: string): string {
+  return `
+    EXISTS (SELECT 1 FROM identity.app_users vu
+             WHERE vu.id = ${userParam} AND vu.app_role = 'admin')
+    OR EXISTS (SELECT 1 FROM identity.platform_admins vpa
+                WHERE vpa.user_id = ${userParam})
+    OR pp.user_id = ${userParam}
+    OR EXISTS (
+      SELECT 1 FROM orgs.workspace_members vm
+       WHERE vm.workspace_id = pp.workspace_id
+         AND vm.user_id = ${userParam}
+         AND vm.member_status = 'active'
+         AND vm.role IN ('admin', 'delegated_lead')
+    )
+    OR EXISTS (
+      SELECT 1
+        FROM hierarchy.repositories vhr
+        JOIN hierarchy.repository_assignments vra ON vra.repository_id = vhr.id
+       WHERE vhr.provisioned_project_id = pp.id
+         AND vra.user_id = ${userParam}
+         AND vra.status IN ('active', 'pending')
+    )`;
+}
+
 export type ProvisionedProjectStatus =
   | 'provisioning'
   | 'provisioned'
@@ -29,6 +65,14 @@ export interface ProvisionedProjectRow {
   project_options: Record<string, unknown> | null;
   workspace_id?: string | null;
   is_example?: boolean;
+  /**
+   * Viewer-relative: true only when the querying user is the actual row
+   * owner (`pp.user_id = viewer`), not merely able to see the row via
+   * admin/manager visibility. Only populated by queries that compute it
+   * against a specific viewer (currently `listByUser`) — undefined
+   * elsewhere, so callers must not assume it is always present.
+   */
+  is_owner?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +95,6 @@ export interface CreateProvisionedProjectInput {
   projectOptions?: Record<string, unknown> | null;
   workflowSha256?: string | null;
   workspaceId?: string | null;
-  isExample?: boolean;
 }
 
 @Injectable()
@@ -156,7 +199,7 @@ export class ProjectsRepository {
         data.templateId,
         JSON.stringify(projectOptions),
         data.workspaceId ?? null,
-        data.isExample ?? false,
+        false,
       ],
     );
 
@@ -168,25 +211,6 @@ export class ProjectsRepository {
     return row;
   }
 
-  /**
-   * Checks whether userId already has a seeded example/demo project row.
-   * Used as the idempotency guard before seeding so this is safe to call
-   * repeatedly (e.g. on every login), not just once at signup.
-   */
-  async hasExampleProject(userId: string): Promise<boolean> {
-    const result = await this.databaseService.query(
-      `
-        SELECT 1
-        FROM projects.provisioned_projects
-        WHERE user_id = $1
-          AND is_example = true
-        LIMIT 1;
-      `,
-      [userId],
-    );
-    return (result.rowCount ?? 0) > 0;
-  }
-
   async listByUser(
     userId: string,
     limit = 50,
@@ -196,7 +220,7 @@ export class ProjectsRepository {
       ? Math.max(1, Math.min(100, Math.trunc(limit)))
       : 25;
 
-    const workspaceFilter = workspaceId ? 'AND workspace_id = $3' : '';
+    const workspaceFilter = workspaceId ? 'AND pp.workspace_id = $3' : '';
     const values = workspaceId
       ? [userId, safeLimit, workspaceId]
       : [userId, safeLimit];
@@ -204,38 +228,31 @@ export class ProjectsRepository {
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          template_id,
-          service_name,
-          workflow_path,
-          status,
-          github_commit_sha,
-          github_commit_url,
-          failure_reason,
-          github_repository_url AS repo_url,
-          visibility,
-          repo_shape,
-          project_type_id,
-          workflow_recipe_id,
-          project_options,
-          workspace_id,
-          is_example,
-          created_at,
-          updated_at
-        FROM projects.provisioned_projects
-        WHERE (
-          user_id = $1
-          OR EXISTS (
-            SELECT 1
-            FROM orgs.workspace_members AS member
-            WHERE member.workspace_id = projects.provisioned_projects.workspace_id
-              AND member.user_id = $1
-          )
-        )
+          pp.id,
+          pp.user_id,
+          pp.repo_full_name,
+          pp.template_id,
+          pp.service_name,
+          pp.workflow_path,
+          pp.status,
+          pp.github_commit_sha,
+          pp.github_commit_url,
+          pp.failure_reason,
+          pp.github_repository_url AS repo_url,
+          pp.visibility,
+          pp.repo_shape,
+          pp.project_type_id,
+          pp.workflow_recipe_id,
+          pp.project_options,
+          pp.workspace_id,
+          pp.is_example,
+          (pp.user_id = $1) AS is_owner,
+          pp.created_at,
+          pp.updated_at
+        FROM projects.provisioned_projects AS pp
+        WHERE (${projectVisibilitySql('$1')})
         ${workspaceFilter}
-        ORDER BY created_at DESC
+        ORDER BY pp.created_at DESC
         LIMIT $2;
       `,
       values,
@@ -244,47 +261,96 @@ export class ProjectsRepository {
     return result.rows;
   }
 
+  /**
+   * `allowedRoles` is a fail-closed SQL-level gate, not just an app-layer
+   * convenience: when provided, a caller whose workspace role isn't in the
+   * list gets no row back at all (indistinguishable from "not found"),
+   * regardless of whether any optional app-layer role-checking service is
+   * wired in. Omitted (the default) preserves the original unrestricted
+   * behavior — any workspace member, any role, can read — so every existing
+   * 2-arg call site is unaffected. Callers that need a *tightened* role set
+   * for a destructive/sensitive read (e.g. before an opt-in GitHub repo
+   * delete) should pass an explicit allowedRoles list.
+   */
+  /**
+   * May this user create a project inside the given workspace/group? True for
+   * an active member of the workspace, or any global admin (app_role 'admin' or
+   * a platform_admins row). Used to validate a group-scoped "Create project".
+   */
+  async canCreateInWorkspace(
+    userId: string,
+    workspaceId: string,
+  ): Promise<boolean> {
+    const result = await this.databaseService.query<{ allowed: boolean }>(
+      `
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM orgs.workspace_members m
+             WHERE m.workspace_id = $2 AND m.user_id = $1
+               AND m.member_status = 'active'
+          )
+          OR EXISTS (SELECT 1 FROM identity.app_users u
+                      WHERE u.id = $1 AND u.app_role = 'admin')
+          OR EXISTS (SELECT 1 FROM identity.platform_admins pa
+                      WHERE pa.user_id = $1)
+        ) AS allowed;
+      `,
+      [userId, workspaceId],
+    );
+    return result.rows[0]?.allowed ?? false;
+  }
+
   async findByIdAndUser(
     id: string,
     userId: string,
+    allowedRoles?: string[],
   ): Promise<ProvisionedProjectRow | null> {
     const result = await this.databaseService.query<ProvisionedProjectRow>(
       `
         SELECT
-          id,
-          user_id,
-          repo_full_name,
-          template_id,
-          service_name,
-          workflow_path,
-          status,
-          github_commit_sha,
-          github_commit_url,
-          failure_reason,
-          github_repository_url AS repo_url,
-          visibility,
-          repo_shape,
-          project_type_id,
-          workflow_recipe_id,
-          project_options,
-          workspace_id,
-          is_example,
-          created_at,
-          updated_at
-        FROM projects.provisioned_projects
-        WHERE id = $1
+          pp.id,
+          pp.user_id,
+          pp.repo_full_name,
+          pp.template_id,
+          pp.service_name,
+          pp.workflow_path,
+          pp.status,
+          pp.github_commit_sha,
+          pp.github_commit_url,
+          pp.failure_reason,
+          pp.github_repository_url AS repo_url,
+          pp.visibility,
+          pp.repo_shape,
+          pp.project_type_id,
+          pp.workflow_recipe_id,
+          pp.project_options,
+          pp.workspace_id,
+          pp.is_example,
+          pp.created_at,
+          pp.updated_at
+        FROM projects.provisioned_projects AS pp
+        WHERE pp.id = $1
           AND (
-            user_id = $2
-            OR EXISTS (
-              SELECT 1
-              FROM orgs.workspace_members AS member
-              WHERE member.workspace_id = projects.provisioned_projects.workspace_id
-                AND member.user_id = $2
-            )
+            CASE WHEN $3::text[] IS NOT NULL THEN
+              -- Restricted mode (e.g. destructive delete): owner OR a workspace
+              -- member holding one of the explicitly allowed roles. Unchanged.
+              pp.user_id = $2
+              OR EXISTS (
+                SELECT 1
+                FROM orgs.workspace_members AS member
+                WHERE member.workspace_id = pp.workspace_id
+                  AND member.user_id = $2
+                  AND member.role = ANY($3::text[])
+              )
+            ELSE
+              -- Default read: same role-aware visibility as the dashboard list
+              -- (global admin / owner / group manager / assigned member).
+              ${projectVisibilitySql('$2')}
+            END
           )
         LIMIT 1;
       `,
-      [id, userId],
+      [id, userId, allowedRoles ?? null],
     );
 
     return result.rows[0] ?? null;
@@ -317,8 +383,20 @@ export class ProjectsRepository {
    * CASCADE takes care of ci.project_ci_tokens automatically.
    * Scoped to userId to prevent cross-user deletions.
    * Returns true if a row was deleted, false if not found or wrong user.
+   *
+   * `allowedRoles` defaults to the original permissive set (lead/delegated_lead/
+   * member) so every existing 2-arg call site is unaffected. This is the
+   * FINAL enforcement point for the delete itself — pass a tightened list
+   * (e.g. ['admin', 'delegated_lead']) for destructive variants (opt-in GitHub repo
+   * delete) so the restriction is enforced by the SQL statement that
+   * actually performs the delete, independent of any optional app-layer
+   * pre-check.
    */
-  async deleteByIdAndUser(id: string, userId: string): Promise<boolean> {
+  async deleteByIdAndUser(
+    id: string,
+    userId: string,
+    allowedRoles: string[] = ['admin', 'delegated_lead', 'member'],
+  ): Promise<boolean> {
     const result = await this.databaseService.query<{ id: string }>(
       `
         DELETE FROM projects.provisioned_projects
@@ -330,12 +408,12 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $2
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role = ANY($3::text[])
             )
           )
         RETURNING id;
       `,
-      [id, userId],
+      [id, userId, allowedRoles],
     );
     return (result.rowCount ?? 0) > 0;
   }
@@ -361,7 +439,7 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
@@ -392,7 +470,7 @@ export class ProjectsRepository {
               FROM orgs.workspace_members AS member
               WHERE member.workspace_id = projects.provisioned_projects.workspace_id
                 AND member.user_id = $1
-                AND member.role IN ('owner', 'admin', 'developer')
+                AND member.role IN ('admin', 'delegated_lead', 'member')
             )
           )
           AND id = ANY(ARRAY[${placeholders}]::uuid[])
@@ -401,6 +479,70 @@ export class ProjectsRepository {
       [userId, ...ids],
     );
     return result.rowCount ?? 0;
+  }
+
+  /**
+   * Hard-deletes every provisioned project row whose repo_full_name matches
+   * (case-insensitive). Used by two callers that both confirm — via the
+   * GitHub API or a `repository` `deleted` webhook — that the repo is
+   * actually gone, not just unreachable:
+   *   - ProjectsService.handleRepositoryDeleted() (live webhook path)
+   *   - ProjectsService.reconcileDeletedRepos() (scheduled backlog sweep)
+   * GitHub reports both org-wide with no user context, so unlike
+   * deleteByIdAndUser() this is NOT scoped to a userId; it matches purely on
+   * repo_full_name across every owner. CASCADE to ci.project_ci_tokens
+   * applies automatically — same table/FK as deleteByIdAndUser(). Returns
+   * the id + user_id of each row it deleted so the caller can still emit a
+   * per-owner audit/notification event.
+   */
+  async deleteByRepoFullName(
+    repoFullName: string,
+  ): Promise<Array<{ id: string; user_id: string }>> {
+    const result = await this.databaseService.query<{
+      id: string;
+      user_id: string;
+    }>(
+      `
+        DELETE FROM projects.provisioned_projects
+        WHERE lower(repo_full_name) = lower($1)
+        RETURNING id, user_id;
+      `,
+      [repoFullName],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Lists every tracked project system-wide (all users, all workspaces) —
+   * just the columns needed to check GitHub and delete confirmed-gone rows.
+   * Backs ProjectsService.reconcileDeletedRepos(), the scheduled sweep that
+   * catches repos deleted on GitHub before the repository.deleted webhook
+   * path existed.
+   *
+   * Capped at 5,000 rows in a single pass rather than following listByUser's
+   * 100-row cap: this is a full-table reconciliation script run a few times
+   * a day (see src/scripts/reconcile-deleted-repos.ts), not a
+   * user-interactive request, so a higher ceiling is appropriate. 5,000 is
+   * comfortably above current project volume; if the table grows past that,
+   * switch this to batched keyset pagination rather than raising the cap
+   * further.
+   */
+  async listAllRepoFullNames(): Promise<
+    Array<{ id: string; repo_full_name: string; user_id: string }>
+  > {
+    const result = await this.databaseService.query<{
+      id: string;
+      repo_full_name: string;
+      user_id: string;
+    }>(
+      `
+        SELECT id, repo_full_name, user_id
+        FROM projects.provisioned_projects
+        ORDER BY created_at ASC
+        LIMIT 5000;
+      `,
+    );
+    return result.rows;
   }
 
   private splitRepoFullName(repoFullName: string): {

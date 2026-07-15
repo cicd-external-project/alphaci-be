@@ -33,6 +33,22 @@ export interface EnvironmentVariables {
   ALLOWED_ORIGINS: string;
   ENV_PROVISIONING_ENABLED?: string;
   ENV_PROVISIONING_ENCRYPTION_KEY?: string;
+  ALPHACI_RENDER_API_KEY?: string;
+  ALPHACI_RENDER_OWNER_ID?: string;
+  ALPHACI_RENDER_DEFAULT_REGION?: string;
+  ALPHACI_RENDER_DEFAULT_INSTANCE_TYPE?: string;
+  ALPHACI_RENDER_ALLOWED_INSTANCE_TYPES?: string;
+  ALPHACI_RENDER_ALLOW_PAID_MANAGED?: string;
+  ALPHACI_RENDER_MANAGED_MAX_SERVICES_PER_USER?: string;
+  ALPHACI_RENDER_BOOTSTRAP_IMAGE?: string;
+  ALPHACI_RENDER_REGISTRY_CREDENTIAL_ID?: string;
+  ALPHACI_RENDER_REGISTRY_USERNAME?: string;
+  ALPHACI_RENDER_REGISTRY_TOKEN?: string;
+  ALPHACI_VERCEL_TOKEN?: string;
+  ALPHACI_VERCEL_TEAM_ID?: string;
+  ALPHACI_VERCEL_TEAM_SLUG?: string;
+  ALPHACI_SONAR_TOKEN?: string;
+  ALPHACI_SONAR_ORGANIZATION?: string;
   FLOWCI_RENDER_API_KEY?: string;
   FLOWCI_RENDER_OWNER_ID?: string;
   FLOWCI_RENDER_DEFAULT_REGION?: string;
@@ -47,6 +63,8 @@ export interface EnvironmentVariables {
   FLOWCI_VERCEL_TOKEN?: string;
   FLOWCI_VERCEL_TEAM_ID?: string;
   FLOWCI_VERCEL_TEAM_SLUG?: string;
+  FLOWCI_SONAR_TOKEN?: string;
+  FLOWCI_SONAR_ORGANIZATION?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -157,6 +175,18 @@ function requireString(env: RawEnv, key: string): string {
   return value.trim();
 }
 
+function requireStringFromAny(env: RawEnv, keys: string[]): string {
+  const value = getTrimmedString(env, keys);
+  if (!value) {
+    throw new Error(
+      `[env] Missing required environment variable: ${keys[0]}` +
+        (keys.length > 1 ? ` (or alias ${keys.slice(1).join(', ')})` : '') +
+        `. Set it in .env or your deployment secrets before starting the service.`,
+    );
+  }
+  return value;
+}
+
 function requireEnum<T extends string>(
   env: RawEnv,
   key: string,
@@ -200,6 +230,41 @@ function validateEnvProvisioningConfig(env: RawEnv): void {
   if (key.length !== 32) {
     throw new Error(
       '[env] ENV_PROVISIONING_ENCRYPTION_KEY must be a base64-encoded 32-byte key.',
+    );
+  }
+}
+
+function validateProductionGithubAppConfig(env: RawEnv): void {
+  if (env['NODE_ENV'] !== 'production') return;
+
+  // Accept the same alias names as app.config.ts (GITHUB_APP for the App ID,
+  // GITHUB_PRIVATE_KEY for the key). If this gate rejects a name that
+  // app.config.ts would honor at runtime, a correctly configured deployment
+  // crash-loops at boot and the platform keeps serving the previous release.
+  const appId = requireStringFromAny(env, ['GITHUB_APP_ID', 'GITHUB_APP']);
+  const appSlug = requireString(env, 'GITHUB_APP_SLUG');
+  const privateKey = requireStringFromAny(env, [
+    'GITHUB_APP_PRIVATE_KEY',
+    'GITHUB_PRIVATE_KEY',
+  ]).replaceAll('\\n', '\n');
+
+  if (!/^\d+$/.test(appId)) {
+    throw new Error('[env] GITHUB_APP_ID must contain digits only.');
+  }
+  if (
+    appSlug === 'my-github-app' ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/.test(appSlug)
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_SLUG must be the real GitHub App slug, not the placeholder my-github-app.',
+    );
+  }
+  if (
+    !privateKey.includes('-----BEGIN') ||
+    !privateKey.includes('PRIVATE KEY-----')
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_PRIVATE_KEY must contain a PEM-encoded private key.',
     );
   }
 }
@@ -288,6 +353,7 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // rather than a hard crash at startup.
   requireString(env, 'GITHUB_CLIENT_ID');
   requireString(env, 'GITHUB_CLIENT_SECRET');
+  validateProductionGithubAppConfig(env);
 
   // --- Optional ---
   const ENABLE_SWAGGER =

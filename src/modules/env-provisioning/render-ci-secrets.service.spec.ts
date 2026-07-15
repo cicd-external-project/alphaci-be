@@ -25,16 +25,16 @@ describe('RenderCiSecretsService', () => {
     provider: 'render',
     providerConnectionId: null,
     providerProjectId: 'srv-1',
-    providerProjectName: 'orders-api-test',
+    providerProjectName: 'orders-api-uat',
     repoFullName: 'tone/orders-api',
-    branchName: 'test',
+    branchName: 'uat',
     rootDirectory: 'backend',
     buildCommand: null,
     startCommand: null,
     renderServiceType: 'web_service',
     renderInstanceType: 'free',
     renderRegion: 'singapore',
-    renderEnvironmentName: 'test',
+    renderEnvironmentName: 'uat',
     dockerContext: 'backend',
     dockerfilePath: 'backend/Dockerfile',
     imageUrl: null,
@@ -90,10 +90,12 @@ describe('RenderCiSecretsService', () => {
     });
 
     expect(result.githubSecrets).toEqual({
-      apiKey: 'RENDER_BACKEND_API_KEY',
-      serviceId: 'RENDER_BACKEND_SERVICE_ID',
-      ownerId: 'RENDER_BACKEND_OWNER_ID',
-      registryCredentialId: 'RENDER_BACKEND_REGISTRY_CREDENTIAL_ID',
+      apiKey: 'RENDER_BACKEND_UAT_API_KEY',
+      serviceId: 'RENDER_BACKEND_UAT_SERVICE_ID',
+      ownerId: 'RENDER_BACKEND_UAT_OWNER_ID',
+      registryCredentialId: 'RENDER_BACKEND_UAT_REGISTRY_CREDENTIAL_ID',
+      deployHookUrl: 'RENDER_DEPLOY_HOOK_URL_UAT',
+      healthcheckUrl: 'RENDER_HEALTHCHECK_URL_UAT',
     });
     expect(githubService.setActionsSecretStrict).toHaveBeenCalledTimes(4);
     expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
@@ -101,7 +103,7 @@ describe('RenderCiSecretsService', () => {
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_API_KEY',
+      'RENDER_BACKEND_UAT_API_KEY',
       'managed-render-token',
     );
     expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
@@ -109,7 +111,7 @@ describe('RenderCiSecretsService', () => {
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_SERVICE_ID',
+      'RENDER_BACKEND_UAT_SERVICE_ID',
       'srv-1',
     );
     expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
@@ -117,7 +119,7 @@ describe('RenderCiSecretsService', () => {
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_OWNER_ID',
+      'RENDER_BACKEND_UAT_OWNER_ID',
       'tea-flowci',
     );
     expect(githubService.setActionsSecretStrict).toHaveBeenNthCalledWith(
@@ -125,7 +127,7 @@ describe('RenderCiSecretsService', () => {
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_REGISTRY_CREDENTIAL_ID',
+      'RENDER_BACKEND_UAT_REGISTRY_CREDENTIAL_ID',
       'crd-flowci',
     );
   });
@@ -161,14 +163,14 @@ describe('RenderCiSecretsService', () => {
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_API_KEY',
+      'RENDER_BACKEND_UAT_API_KEY',
       'byo-render-token',
     );
     expect(githubService.setActionsSecretStrict).toHaveBeenCalledWith(
       'gh-token',
       'tone',
       'orders-api',
-      'RENDER_BACKEND_OWNER_ID',
+      'RENDER_BACKEND_UAT_OWNER_ID',
       'usr-render-owner',
     );
   });
@@ -185,7 +187,7 @@ describe('RenderCiSecretsService', () => {
       },
     });
 
-    expect(result.githubSecrets.apiKey).toBe('RENDER_BACKEND_API_KEY');
+    expect(result.githubSecrets.apiKey).toBe('RENDER_BACKEND_UAT_API_KEY');
     expect(githubService.setActionsSecretStrict).not.toHaveBeenCalled();
   });
 

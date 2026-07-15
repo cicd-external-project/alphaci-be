@@ -42,8 +42,12 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: DiscoverExistingRepoDto,
   ): Promise<ExistingRepoDiscoveryResponse> {
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    const token = await this.resolveProvisioningToken(
+      userId,
+      oauthAccessToken,
+      dto.repoFullName,
+    );
     const baseBranch = dto.baseBranch ?? 'main';
     const packageJson = await this.githubService.getFileContent(
       token,
@@ -69,8 +73,12 @@ export class ExistingReposService {
     oauthAccessToken: string | null | undefined,
     dto: SetupExistingRepoPrDto,
   ): Promise<ExistingRepoSetupPullRequestResponse> {
-    const token = await this.resolveProvisioningToken(userId, oauthAccessToken);
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+    const token = await this.resolveProvisioningToken(
+      userId,
+      oauthAccessToken,
+      dto.repoFullName,
+    );
     const baseBranch = dto.baseBranch ?? 'main';
     const workflowRecipeId = dto.workflowRecipeId ?? 'standard';
     const templateId = this.resolveTemplateId(
@@ -85,7 +93,7 @@ export class ExistingReposService {
       dto.coverageThreshold,
       dto.outputFileName,
     );
-    const branchName = `flowci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`;
+    const branchName = `alphaci/${this.sanitizeBranchSlug(dto.serviceName)}-ci`;
     const workflowPath = `.github/workflows/${outputFileName}`;
 
     await this.githubService.createBranch(
@@ -102,18 +110,18 @@ export class ExistingReposService {
       workflowPath,
       generatedYaml,
       branchName,
-      'ci: add FlowCI Studio workflow',
+      'ci: add ALPHACI workflow',
     );
     const pullRequest = await this.githubService.createPullRequest(
       token,
       owner,
       repo,
       {
-        title: 'Add FlowCI Studio workflow',
+        title: 'Add ALPHACI workflow',
         head: branchName,
         base: baseBranch,
         body: [
-          'This PR adds a FlowCI Studio workflow for this existing repository.',
+          'This PR adds an ALPHACI workflow for this existing repository.',
           '',
           `Service: ${dto.serviceName}`,
           `Workflow: ${workflowPath}`,
@@ -133,9 +141,13 @@ export class ExistingReposService {
   private async resolveProvisioningToken(
     userId: string,
     oauthAccessToken: string | null | undefined,
+    repoFullName: string,
   ): Promise<string> {
     const installationToken =
-      await this.githubService.getInstallationAccessTokenForUser(userId);
+      await this.githubService.getInstallationAccessTokenForUserRepo(
+        userId,
+        repoFullName,
+      );
 
     if (installationToken) {
       return installationToken;

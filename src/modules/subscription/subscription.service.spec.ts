@@ -19,6 +19,7 @@ const fakeUser: SessionUser = {
   id: 'user-1',
   login: 'testuser',
   onboardingCompleted: false,
+  isInternal: false,
 };
 
 const fakeFreeSub: SubscriptionState = {
@@ -159,6 +160,21 @@ describe('SubscriptionService', () => {
       );
       expect(result.plan).toBe('pro');
     });
+
+    it('bypasses the gate for internal users (entitled pro/active, no DB read)', async () => {
+      const { service, subsRepo } = await createService();
+
+      const result = await service.getForUser({
+        ...fakeUser,
+        isInternal: true,
+      });
+
+      expect(result.plan).toBe('pro');
+      expect(result.status).toBe('active');
+      // Internal entitlement is synthetic — no subscription lookup happens.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(subsRepo.getCurrentByUserId).not.toHaveBeenCalled();
+    });
   });
 
   describe('createCheckoutSession', () => {
@@ -208,7 +224,7 @@ describe('SubscriptionService', () => {
               {
                 currency: 'PHP',
                 amount: 30000,
-                name: 'FlowCI Studio Pro Monthly',
+                name: 'ALPHACI Pro Monthly',
                 quantity: 1,
               },
             ],

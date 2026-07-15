@@ -173,12 +173,25 @@ describe('ProjectsRepository', () => {
     expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
   });
 
-  it('finds a project by id scoped to user', async () => {
+  it('computes a viewer-relative is_owner column against the same viewer param used by the visibility predicate', async () => {
+    await repo.listByUser('user-1', 10);
+
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    // Must compare against $1 (the viewer), not just select the raw column —
+    // otherwise every row (including ones only visible via admin/manager
+    // oversight) would be misreported as owned by the viewer.
+    expect(query).toContain('(pp.user_id = $1) AS is_owner');
+  });
+
+  it('finds a project by id scoped to user, unrestricted by role when allowedRoles is omitted', async () => {
     const result = await repo.findByIdAndUser('project-1', 'user-1');
 
     expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE id = $1'),
-      ['project-1', 'user-1'],
+      expect.stringContaining('WHERE pp.id = $1'),
+      ['project-1', 'user-1', null],
     );
     expect(result).toEqual(fakeRow);
   });
@@ -194,7 +207,110 @@ describe('ProjectsRepository', () => {
     expect(query).toContain('member.workspace_id');
   });
 
-  it('defaults isExample to false when creating a real project', async () => {
+  it('scopes findByIdAndUser to an allowedRoles list when provided', async () => {
+    await repo.findByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
+
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead'],
+    ]);
+  });
+
+  it('deletes a project row with the default permissive role list', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
+
+    const result = await repo.deleteByIdAndUser('project-1', 'user-1');
+
+    expect(result).toBe(true);
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead', 'member'],
+    ]);
+  });
+
+  it('deletes a project row scoped to a tightened allowedRoles list', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1 });
+
+    await repo.deleteByIdAndUser('project-1', 'user-1', ['admin', 'delegated_lead']);
+
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), [
+      'project-1',
+      'user-1',
+      ['admin', 'delegated_lead'],
+    ]);
+  });
+
+  it('returns false when deleteByIdAndUser deletes no row', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rowCount: 0 });
+
+    const result = await repo.deleteByIdAndUser('project-1', 'user-1');
+
+    expect(result).toBe(false);
+  });
+
+  it('hard-deletes projects by repo_full_name across all owners, case-insensitively', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        { id: 'project-1', user_id: 'user-1' },
+        { id: 'project-9', user_id: 'user-2' },
+      ],
+    });
+
+    const result = await repo.deleteByRepoFullName('Alpha-Explora/Some-Repo');
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('lower(repo_full_name) = lower($1)'),
+      ['Alpha-Explora/Some-Repo'],
+    );
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [string];
+    expect(query).toContain('DELETE FROM projects.provisioned_projects');
+    expect(query).not.toContain('user_id = $');
+    expect(result).toEqual([
+      { id: 'project-1', user_id: 'user-1' },
+      { id: 'project-9', user_id: 'user-2' },
+    ]);
+  });
+
+  it('returns an empty array when no project matches the deleted repo', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [] });
+
+    const result = await repo.deleteByRepoFullName('tone/gone-repo');
+
+    expect(result).toEqual([]);
+  });
+
+  it('lists every tracked project system-wide, unscoped by user', async () => {
+    (db.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'project-1',
+          repo_full_name: 'tone/orders-api',
+          user_id: 'user-1',
+        },
+        {
+          id: 'project-2',
+          repo_full_name: 'tone/gone-api',
+          user_id: 'user-2',
+        },
+      ],
+    });
+
+    const result = await repo.listAllRepoFullNames();
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM projects.provisioned_projects'),
+    );
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [string];
+    expect(query).not.toContain('WHERE');
+    expect(result).toEqual([
+      { id: 'project-1', repo_full_name: 'tone/orders-api', user_id: 'user-1' },
+      { id: 'project-2', repo_full_name: 'tone/gone-api', user_id: 'user-2' },
+    ]);
+  });
+
+  it('marks every created project as non-example', async () => {
     await repo.create({
       userId: 'user-1',
       repoFullName: 'tone/orders-api',
@@ -210,45 +326,5 @@ describe('ProjectsRepository', () => {
     ];
     expect(query).toContain('is_example');
     expect(values[values.length - 1]).toBe(false);
-  });
-
-  it('persists isExample = true when explicitly requested', async () => {
-    await repo.create({
-      userId: 'user-1',
-      repoFullName: 'flowci-demo/flowci-demo-app',
-      templateId: 'nest-service-pipeline',
-      serviceName: 'flowci-demo-backend',
-      workflowPath:
-        '.github/workflows/flowci-demo-backend-nest-service-pipeline.yml',
-      status: 'provisioned',
-      visibility: 'public',
-      isExample: true,
-    });
-
-    const [, values] = (db.query as jest.Mock).mock.calls[0] as [
-      string,
-      unknown[],
-    ];
-    expect(values[values.length - 1]).toBe(true);
-  });
-
-  it('hasExampleProject returns true when a row is found', async () => {
-    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [{}], rowCount: 1 });
-
-    const result = await repo.hasExampleProject('user-1');
-
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('is_example = true'),
-      ['user-1'],
-    );
-    expect(result).toBe(true);
-  });
-
-  it('hasExampleProject returns false when no row is found', async () => {
-    (db.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
-
-    const result = await repo.hasExampleProject('user-1');
-
-    expect(result).toBe(false);
   });
 });

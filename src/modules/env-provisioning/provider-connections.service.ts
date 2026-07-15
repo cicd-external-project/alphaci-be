@@ -80,11 +80,11 @@ export class ProviderConnectionsService {
 
     const workspaces = await this.workspacesService.getMyWorkspaces(userId);
     const canManage = workspaces.items.some(
-      (workspace) => workspace.role === 'owner' || workspace.role === 'admin',
+      (workspace) => workspace.role === 'admin' || workspace.role === 'delegated_lead',
     );
     if (!canManage) {
       throw new ForbiddenException(
-        'Provider connection management requires owner or admin workspace access',
+        'Provider connection management requires admin or delegated_lead workspace access',
       );
     }
   }

@@ -95,27 +95,27 @@ const makeProjectsService = () =>
       workflowFiles: [
         {
           stage: 'access',
-          name: 'FlowCI Access Gate',
-          path: '.github/workflows/00-flowci-access.yml',
+          name: 'ALPHACI Access Gate',
+          path: '.github/workflows/00-alphaci-access.yml',
           gated: true,
-          yaml: 'name: FlowCI Access Gate',
+          yaml: 'name: ALPHACI Access Gate',
         },
       ],
       diffSummary: [
-        { path: '.github/workflows/00-flowci-access.yml', status: 'changed' },
+        { path: '.github/workflows/00-alphaci-access.yml', status: 'changed' },
       ],
       validationWarnings: [],
     }),
     createWorkflowUpdatePullRequest: jest.fn().mockResolvedValue({
       projectId: 'project-1',
       repoFullName: 'testuser/orders-api',
-      branchName: 'flowci/workflow-update-20260612000000',
-      workflowPath: '.github/workflows/00-flowci-access.yml',
+      branchName: 'alphaci/workflow-update-20260612000000',
+      workflowPath: '.github/workflows/00-alphaci-access.yml',
       workflowFiles: [
         {
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
           stage: 'access',
-          name: 'FlowCI Access Gate',
+          name: 'ALPHACI Access Gate',
           gated: true,
         },
       ],
@@ -127,7 +127,9 @@ const makeProjectsService = () =>
       enabled: true,
       items: [],
     }),
-    disconnectProject: jest.fn().mockResolvedValue(undefined),
+    disconnectProject: jest
+      .fn()
+      .mockResolvedValue({ ok: true, githubRepoDeleted: false }),
     syncProjects: jest.fn().mockResolvedValue({ checked: 1 }),
   }) as unknown as ProjectsService;
 
@@ -143,7 +145,7 @@ const makeProjectCiRunsService = () =>
     getRun: jest.fn().mockResolvedValue({
       id: 'local-project-1-quality',
       stage: 'quality',
-      workflowName: 'FlowCI Quality',
+      workflowName: 'ALPHACI Quality',
     }),
     rerun: jest.fn().mockResolvedValue({
       enabled: false,
@@ -388,7 +390,7 @@ describe('ProjectsController', () => {
     expect(result).toMatchObject({
       workflowFiles: [
         expect.objectContaining({
-          path: '.github/workflows/00-flowci-access.yml',
+          path: '.github/workflows/00-alphaci-access.yml',
         }),
       ],
     });
@@ -573,14 +575,20 @@ describe('ProjectsController', () => {
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  it('throws when setting up a project without a GitHub OAuth token', async () => {
-    await expect(
-      controller.setupProject(makeRequest(fakeUser, undefined), {
+  it('allows setup without a GitHub OAuth token so the service can use a GitHub App token', async () => {
+    await controller.setupProject(makeRequest(fakeUser, undefined), {
+      repoFullName: 'testuser/orders-api',
+      templateId: 'backend-api-ci',
+      serviceName: 'orders-api',
+    });
+
+    expect(service.setupProject).toHaveBeenCalledWith(
+      'user-1',
+      null,
+      expect.objectContaining({
         repoFullName: 'testuser/orders-api',
-        templateId: 'backend-api-ci',
-        serviceName: 'orders-api',
       }),
-    ).rejects.toThrow(UnauthorizedException);
+    );
   });
 
   it('falls back to the default list limit when limit is invalid', async () => {
@@ -717,13 +725,33 @@ describe('ProjectsController', () => {
     );
   });
 
-  it('disconnects project tracking and returns an ok contract', async () => {
+  it('disconnects project tracking and returns an ok contract (default, no body)', async () => {
     await expect(
       controller.disconnectProject(makeRequest(), 'project-1'),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, githubRepoDeleted: false });
     expect(service.disconnectProject).toHaveBeenCalledWith(
       'project-1',
       'user-1',
+      undefined,
+      null,
+    );
+  });
+
+  it('passes the deleteGithubRepo opt-in body and session GitHub token through', async () => {
+    const body = {
+      deleteGithubRepo: true,
+      confirmRepoName: 'testuser/orders-api',
+    };
+    await controller.disconnectProject(
+      makeRequest(fakeUser, 'gh-token'),
+      'project-1',
+      body,
+    );
+    expect(service.disconnectProject).toHaveBeenCalledWith(
+      'project-1',
+      'user-1',
+      body,
+      'gh-token',
     );
   });
 

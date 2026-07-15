@@ -19,6 +19,7 @@ import type { FeedbackStatus } from '../feedback/feedback.repository';
 import { AdminService } from './admin.service';
 import { GrantRoleDto } from './dto/grant-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { SetAppRoleDto } from './dto/set-app-role.dto';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 import { SuperAdminGuard } from './guards/super-admin.guard';
 
@@ -76,6 +77,21 @@ export class AdminController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.adminService.revokeRole(this.actorId(req), id);
+  }
+
+  // Global hierarchy role (Admin / Lead / Member) — the single place roles are
+  // assigned. Open to ANY platform admin (the class-level PlatformAdminGuard),
+  // NOT just super-admins: Alpha-Explora org owners are provisioned as platform
+  // admins and are expected to manage hierarchy roles. This is deliberately a
+  // lower bar than the grant/revoke PLATFORM-role routes above, which stay
+  // super-admin only because they hand out platform-admin powers themselves.
+  @Patch('users/:id/app-role')
+  setAppRole(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: SetAppRoleDto,
+  ) {
+    return this.adminService.setAppRole(this.actorId(req), id, dto.role);
   }
 
   @Get('feedback')

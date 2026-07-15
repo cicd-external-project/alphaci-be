@@ -47,7 +47,7 @@ describe('CiController', () => {
   // ─── POST /ci/validate ───────────────────────────────────────────────────
 
   it('validates a bearer token against repo and stage metadata', async () => {
-    const result = await controller.validate('Bearer fci_valid-token', {
+    const result = await controller.validate('Bearer aci_valid-token', {
       repo: 'owner/repo',
       stage: 'quality',
       workflowRunId: '12345',
@@ -55,7 +55,7 @@ describe('CiController', () => {
     });
 
     expect(service.validateRun).toHaveBeenCalledWith({
-      token: 'fci_valid-token',
+      token: 'aci_valid-token',
       repoFullName: 'owner/repo',
       stage: 'quality',
       workflowRunId: '12345',
@@ -84,12 +84,12 @@ describe('CiController', () => {
     };
 
     const result = await controller.ingestReport(
-      'Bearer fci_valid-token',
+      'Bearer aci_valid-token',
       body,
     );
 
     expect(service.validateRun).toHaveBeenCalledWith({
-      token: 'fci_valid-token',
+      token: 'aci_valid-token',
       repoFullName: 'owner/repo',
       stage: 'quality',
     });
@@ -117,7 +117,7 @@ describe('CiController', () => {
     );
 
     await expect(
-      controller.ingestReport('Bearer fci_bad', {
+      controller.ingestReport('Bearer aci_bad', {
         repoFullName: 'other/repo',
         branch: 'test',
         commitSha: 'abc123',
@@ -141,7 +141,7 @@ describe('CiController', () => {
     );
 
     await expect(
-      controller.ingestReport('Bearer fci_valid', {
+      controller.ingestReport('Bearer aci_valid', {
         repoFullName: 'unregistered/repo',
         branch: 'test',
         commitSha: 'abc',

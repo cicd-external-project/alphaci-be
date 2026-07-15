@@ -10,7 +10,7 @@ describe('WorkspacesService', () => {
         id: 'workspace-1',
         name: 'Personal workspace',
         kind: 'personal',
-        role: 'owner',
+        role: 'admin',
       }),
       listMembers: jest.fn().mockResolvedValue([]),
       addMemberByLoginOrEmail: jest.fn(),
@@ -23,7 +23,7 @@ describe('WorkspacesService', () => {
       assertWorkspaceRole: jest.fn().mockResolvedValue({
         workspaceId: 'workspace-1',
         userId: 'user-1',
-        role: 'owner',
+        role: 'admin',
       }),
       assertCanChangeOwnerRole: jest.fn().mockResolvedValue(undefined),
       assertCanRemoveMember: jest.fn().mockResolvedValue(undefined),
@@ -36,7 +36,7 @@ describe('WorkspacesService', () => {
         id: 'workspace-2',
         name: 'Team workspace',
         kind: 'team',
-        role: 'developer',
+        role: 'member',
       },
     ]);
     const service = new WorkspacesService(repository, makeAccessService());
@@ -48,7 +48,7 @@ describe('WorkspacesService', () => {
           id: 'workspace-2',
           name: 'Team workspace',
           kind: 'team',
-          role: 'developer',
+          role: 'member',
         },
       ],
     });
@@ -66,7 +66,7 @@ describe('WorkspacesService', () => {
           id: 'workspace-1',
           name: 'Personal workspace',
           kind: 'personal',
-          role: 'owner',
+          role: 'admin',
         },
       ],
     });
@@ -81,7 +81,7 @@ describe('WorkspacesService', () => {
         id: 'member-1',
         workspaceId: 'workspace-1',
         userId: 'user-1',
-        role: 'owner',
+        role: 'admin',
         login: 'tone',
         name: 'Tone',
         email: null,
@@ -97,7 +97,7 @@ describe('WorkspacesService', () => {
     expect(accessService.assertWorkspaceRole).toHaveBeenCalledWith(
       'workspace-1',
       'user-1',
-      ['owner', 'admin', 'developer', 'viewer'],
+      ['admin', 'delegated_lead', 'member', 'viewer'],
     );
   });
 
@@ -108,7 +108,7 @@ describe('WorkspacesService', () => {
       id: 'member-2',
       workspaceId: 'workspace-1',
       userId: 'user-2',
-      role: 'developer',
+      role: 'member',
       login: 'dev',
       name: 'Dev User',
       email: null,
@@ -120,13 +120,13 @@ describe('WorkspacesService', () => {
     await expect(
       service.addMember('workspace-1', 'user-1', {
         loginOrEmail: 'dev',
-        role: 'developer',
+        role: 'member',
       }),
-    ).resolves.toMatchObject({ userId: 'user-2', role: 'developer' });
+    ).resolves.toMatchObject({ userId: 'user-2', role: 'member' });
     expect(accessService.assertWorkspaceRole).toHaveBeenCalledWith(
       'workspace-1',
       'user-1',
-      ['owner', 'admin'],
+      ['admin', 'delegated_lead'],
     );
   });
 
@@ -136,7 +136,7 @@ describe('WorkspacesService', () => {
     repository.findMemberById.mockResolvedValueOnce({
       workspaceId: 'workspace-1',
       userId: 'owner-1',
-      role: 'owner',
+      role: 'admin',
     });
     accessService.assertCanChangeOwnerRole.mockRejectedValueOnce(
       new Error('Workspace must keep at least one owner'),
@@ -148,7 +148,7 @@ describe('WorkspacesService', () => {
         'workspace-1',
         'user-1',
         'member-owner',
-        'admin',
+        'delegated_lead',
       ),
     ).rejects.toThrow('Workspace must keep at least one owner');
     expect(repository.updateMemberRole).not.toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe('WorkspacesService', () => {
     repository.findMemberById.mockResolvedValueOnce({
       workspaceId: 'workspace-1',
       userId: 'user-2',
-      role: 'developer',
+      role: 'member',
     });
     repository.removeMember.mockResolvedValueOnce({ id: 'member-2' });
     const accessService = makeAccessService();
@@ -170,7 +170,7 @@ describe('WorkspacesService', () => {
     ).resolves.toEqual({ id: 'member-2', removed: true });
     expect(accessService.assertCanRemoveMember).toHaveBeenCalledWith(
       'workspace-1',
-      { workspaceId: 'workspace-1', userId: 'user-2', role: 'developer' },
+      { workspaceId: 'workspace-1', userId: 'user-2', role: 'member' },
     );
   });
 });

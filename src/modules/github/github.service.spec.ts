@@ -1,9 +1,9 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { createHmac, generateKeyPairSync } from 'node:crypto';
 
 import type { ConfigService } from '@nestjs/config';
 
 import type { AppConfig } from '../../config/app.config.js';
-import { GithubService } from './github.service.js';
+import { GithubRepoDeleteError, GithubService } from './github.service.js';
 import type { GithubInstallationsRepository } from './github-installations.repository.js';
 
 const makeRepo = (overrides = {}) => ({
@@ -38,6 +38,8 @@ const appConfig: AppConfig = {
     appSlug: 'flowci-test',
     appPrivateKey: testPrivateKey,
     appWebhookSecret: 'webhook-secret',
+    internalOrg: '',
+    enforcedOrg: 'Alpha-Explora',
   },
   templates: {
     repoPath: '../cicd-workflow',
@@ -45,6 +47,7 @@ const appConfig: AppConfig = {
   },
   envProvisioning: {
     enabled: false,
+    ownershipMode: 'flowci_managed',
     encryptionKey: '',
     flowciManaged: {
       renderToken: '',
@@ -52,6 +55,8 @@ const appConfig: AppConfig = {
       vercelToken: '',
       vercelTeamId: null,
       vercelTeamSlug: null,
+      sonarToken: '',
+      sonarOrganization: '',
     },
   },
   projectSyncSnapshots: {
@@ -100,6 +105,13 @@ const appConfig: AppConfig = {
   workspaces: { enabled: false },
   auditEvents: { enabled: false },
   notifications: { enabled: false },
+  hierarchy: {
+    enabled: false,
+    githubSyncMode: 'stub',
+    encryptionKeyEnvVar: 'ENV_PROVISIONING_ENCRYPTION_KEY',
+    maxSyncRetries: 5,
+    syncPollIntervalMs: 5000,
+  },
 };
 
 const makeConfigService = (config: AppConfig = appConfig) =>
@@ -114,6 +126,7 @@ const makeInstallationsRepository = () =>
       userId: 'user-1',
       accountLogin: 'tone',
       accountId: 99,
+      accountType: 'Organization',
       repositorySelection: 'all',
       reposLinked: 2,
     }),
@@ -124,11 +137,26 @@ const makeInstallationsRepository = () =>
         userId: 'user-1',
         accountLogin: 'tone',
         accountId: 99,
+        accountType: 'Organization',
         repositorySelection: 'all',
         reposLinked: 2,
       },
     ]),
+    findByUserIdAndInstallationId: jest.fn().mockResolvedValue({
+      installationId: 12345,
+      userId: 'user-1',
+      accountLogin: 'tone',
+      accountId: 99,
+      accountType: 'Organization',
+      repositorySelection: 'all',
+      reposLinked: 2,
+    }),
     findReposByUserId: jest.fn().mockResolvedValue([]),
+    beginWebhookDelivery: jest.fn().mockResolvedValue(true),
+    completeWebhookDelivery: jest.fn().mockResolvedValue(undefined),
+    releaseWebhookDelivery: jest.fn().mockResolvedValue(undefined),
+    setSuspended: jest.fn().mockResolvedValue(undefined),
+    deleteInstallation: jest.fn().mockResolvedValue(undefined),
   }) as unknown as GithubInstallationsRepository;
 
 describe('GithubService', () => {
@@ -153,6 +181,40 @@ describe('GithubService', () => {
     it('builds the GitHub App install URL from config', () => {
       expect(service.getAppInstallUrl()).toBe(
         'https://github.com/apps/flowci-test/installations/new',
+      );
+    });
+
+    it('reads the app slug from ConfigService when building the install URL', () => {
+      const configService = makeConfigService({
+        ...appConfig,
+        github: { ...appConfig.github, appSlug: '' },
+      });
+      const dynamicService = new GithubService(
+        configService,
+        installationsRepository,
+      );
+
+      (configService.get as jest.Mock).mockReturnValue({
+        ...appConfig,
+        github: { ...appConfig.github, appSlug: 'alphaci-test' },
+      });
+
+      expect(dynamicService.getAppInstallUrl()).toBe(
+        'https://github.com/apps/alphaci-test/installations/new',
+      );
+    });
+
+    it('rejects install URL generation when the App slug is missing', () => {
+      const unconfigured = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, appSlug: '' },
+        }),
+        installationsRepository,
+      );
+
+      expect(() => unconfigured.getAppInstallUrl()).toThrow(
+        'GitHub App installation is not configured',
       );
     });
 
@@ -243,7 +305,7 @@ describe('GithubService', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
-            account: { login: 'tone', id: 99 },
+            account: { login: 'tone', id: 99, type: 'Organization' },
             repository_selection: 'all',
           }),
         } as unknown as Response)
@@ -268,6 +330,7 @@ describe('GithubService', () => {
         12345,
         'tone',
         99,
+        'Organization',
         'all',
         2,
       );
@@ -320,6 +383,306 @@ describe('GithubService', () => {
     });
   });
 
+  describe('getInstallationAccessTokenForUserRepo', () => {
+    it('uses an all-repositories installation for the requested owner', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'owner-installation-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo('user-1', 'tone/api'),
+      ).resolves.toBe('owner-installation-token');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/app/installations/12345/access_tokens',
+        expect.any(Object),
+      );
+    });
+
+    it('uses the selected-repository installation that contains the requested repo', async () => {
+      (installationsRepository.findByUserId as jest.Mock).mockResolvedValueOnce(
+        [
+          {
+            installationId: 111,
+            userId: 'user-1',
+            accountLogin: 'other',
+            accountId: 100,
+            accountType: 'Organization',
+            repositorySelection: 'selected',
+            reposLinked: 1,
+          },
+          {
+            installationId: 222,
+            userId: 'user-1',
+            accountLogin: 'tone',
+            accountId: 99,
+            accountType: 'Organization',
+            repositorySelection: 'selected',
+            reposLinked: 1,
+          },
+        ],
+      );
+      (
+        installationsRepository.findReposByUserId as jest.Mock
+      ).mockResolvedValueOnce([
+        { installationId: 111, repoFullName: 'other/api' },
+        { installationId: 222, repoFullName: 'tone/private-api' },
+      ]);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'selected-installation-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo(
+          'user-1',
+          'tone/private-api',
+        ),
+      ).resolves.toBe('selected-installation-token');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/app/installations/222/access_tokens',
+        expect.any(Object),
+      );
+    });
+
+    it('returns null when no linked installation covers the requested repo', async () => {
+      (
+        installationsRepository.findReposByUserId as jest.Mock
+      ).mockResolvedValueOnce([]);
+
+      await expect(
+        service.getInstallationAccessTokenForUserRepo('user-1', 'other/api'),
+      ).resolves.toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('organization provisioning', () => {
+    it('uses the explicitly selected linked organization installation', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'organization-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContext('user-1', 12345),
+      ).resolves.toEqual({
+        accessToken: 'organization-token',
+        ownerLogin: 'tone',
+      });
+    });
+
+    it('resolves the enforced org installation app-to-org via the App JWT', async () => {
+      // 1) GET /orgs/{org}/installation — app-level lookup, no per-user linkage.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 12345,
+          account: { login: 'tone' },
+          target_type: 'Organization',
+          repository_selection: 'all',
+        }),
+      } as unknown as Response);
+      // 2) POST installation access token.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'organization-token' }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContextByLogin('TONE'),
+      ).resolves.toEqual({
+        accessToken: 'organization-token',
+        ownerLogin: 'tone',
+      });
+    });
+
+    it('rejects with a server-config error when App credentials are missing', async () => {
+      const noCreds = new GithubService(null, installationsRepository);
+
+      await expect(
+        noCreds.getOrganizationProvisioningContextByLogin('Alpha-Explora'),
+      ).rejects.toThrow('GITHUB_APP_ID');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(installationsRepository.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the App is not installed on the enforced org (404)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => 'Not Found',
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContextByLogin('Alpha-Explora'),
+      ).rejects.toThrow(
+        'The GitHub App is not installed on the Alpha-Explora organization',
+      );
+    });
+
+    it('rejects when the enforced org installation lacks all-repositories access', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 12345,
+          account: { login: 'tone' },
+          target_type: 'Organization',
+          repository_selection: 'selected',
+        }),
+      } as unknown as Response);
+
+      await expect(
+        service.getOrganizationProvisioningContextByLogin('TONE'),
+      ).rejects.toThrow('requires "All repositories"');
+    });
+  });
+
+  describe('GitHub webhooks', () => {
+    it('verifies the signature and suspends a linked installation', async () => {
+      const payload = {
+        action: 'suspend',
+        installation: { id: 12345 },
+      };
+      const rawBody = Buffer.from(JSON.stringify(payload));
+      const signature = `sha256=${createHmac('sha256', 'webhook-secret')
+        .update(rawBody)
+        .digest('hex')}`;
+
+      await expect(
+        service.handleWebhook(
+          signature,
+          'installation',
+          'delivery-1',
+          rawBody,
+          payload,
+        ),
+      ).resolves.toEqual({ accepted: true });
+
+      expect(installationsRepository.setSuspended).toHaveBeenCalledWith(
+        12345,
+        true,
+      );
+      expect(
+        installationsRepository.completeWebhookDelivery,
+      ).toHaveBeenCalledWith('delivery-1');
+    });
+
+    it('rejects an invalid webhook signature', async () => {
+      await expect(
+        service.handleWebhook(
+          'sha256=invalid',
+          'installation',
+          'delivery-2',
+          Buffer.from('{}'),
+          {},
+        ),
+      ).rejects.toThrow('Invalid GitHub webhook signature');
+    });
+
+    describe('repository deleted', () => {
+      const sign = (payload: unknown) => {
+        const rawBody = Buffer.from(JSON.stringify(payload));
+        const signature = `sha256=${createHmac('sha256', 'webhook-secret')
+          .update(rawBody)
+          .digest('hex')}`;
+        return { rawBody, signature };
+      };
+
+      it('emits repository.deleted with the repo full_name', async () => {
+        const payload = {
+          action: 'deleted',
+          repository: { full_name: 'Alpha-Explora/some-repo' },
+          installation: { id: 12345 },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-1',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).toHaveBeenCalledWith({
+          repoFullName: 'Alpha-Explora/some-repo',
+        });
+        expect(installationsRepository.deleteInstallation).not.toHaveBeenCalled();
+      });
+
+      it('ignores repository events for actions other than deleted', async () => {
+        const payload = {
+          action: 'renamed',
+          repository: { full_name: 'Alpha-Explora/some-repo' },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await service.handleWebhook(
+          signature,
+          'repository',
+          'delivery-repo-2',
+          rawBody,
+          payload,
+        );
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it('does not emit when the repository object is missing', async () => {
+        const payload = { action: 'deleted' };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-3',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it('does not emit when full_name is missing or not a string', async () => {
+        const payload = {
+          action: 'deleted',
+          repository: { full_name: 42 },
+        };
+        const { rawBody, signature } = sign(payload);
+        const listener = jest.fn();
+        service.on('repository.deleted', listener);
+
+        await expect(
+          service.handleWebhook(
+            signature,
+            'repository',
+            'delivery-repo-4',
+            rawBody,
+            payload,
+          ),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('GitHub App installation repository reads', () => {
     it('returns linked repos from persistence', async () => {
       (
@@ -360,8 +723,6 @@ describe('GithubService', () => {
     it.each([
       [200, true],
       [404, false],
-      [403, false],
-      [401, false],
     ])('maps GitHub status %s to %s', async (status, expected) => {
       fetchMock.mockResolvedValueOnce({
         status,
@@ -373,17 +734,98 @@ describe('GithubService', () => {
       ).resolves.toBe(expected);
     });
 
-    it('throws for unexpected GitHub repo lookup responses', async () => {
+    it.each([401, 403, 503])(
+      'throws on status %s instead of reporting not-found — a rejected token or rate limit is not proof the repo is gone',
+      async (status) => {
+        fetchMock.mockResolvedValueOnce({
+          status,
+          text: async () => 'denied',
+        } as unknown as Response);
+
+        await expect(
+          service.repoExists('gh-token', 'tone/orders-api'),
+        ).rejects.toThrow(
+          `GitHub repo existence check failed (${String(status)}): denied`,
+        );
+      },
+    );
+  });
+
+  describe('deleteRepoForUser', () => {
+    it('resolves on a 204 success response', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 204,
+        text: async () => '',
+      } as unknown as Response);
+
+      await expect(
+        service.deleteRepoForUser('gh-token', 'tone', 'orders-api'),
+      ).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/tone/orders-api',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+
+    it('throws a not_found GithubRepoDeleteError on 404', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 404,
+        text: async () => 'Not Found',
+      } as unknown as Response);
+
+      const error = await service
+        .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(GithubRepoDeleteError);
+      expect((error as GithubRepoDeleteError).code).toBe('not_found');
+    });
+
+    it.each([403, 401])(
+      'throws a missing_scope GithubRepoDeleteError on %s',
+      async (status) => {
+        fetchMock.mockResolvedValueOnce({
+          status,
+          text: async () => 'Resource not accessible by integration',
+        } as unknown as Response);
+
+        const error = await service
+          .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(GithubRepoDeleteError);
+        expect((error as GithubRepoDeleteError).code).toBe('missing_scope');
+        expect((error as GithubRepoDeleteError).message).toContain(
+          'reconnect your GitHub account',
+        );
+      },
+    );
+
+    it('throws an other GithubRepoDeleteError on unexpected statuses', async () => {
       fetchMock.mockResolvedValueOnce({
         status: 503,
         text: async () => 'unavailable',
       } as unknown as Response);
 
+      const error = await service
+        .deleteRepoForUser('gh-token', 'tone', 'orders-api')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(GithubRepoDeleteError);
+      expect((error as GithubRepoDeleteError).code).toBe('other');
+    });
+
+    it('does not swallow errors the way deleteRepo() does (never resolves false)', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 403,
+        text: async () => '',
+      } as unknown as Response);
+
+      // deleteRepo() would resolve to `false` here; deleteRepoForUser() must
+      // reject so the caller can surface the failure reason to the user.
       await expect(
-        service.repoExists('gh-token', 'tone/orders-api'),
-      ).rejects.toThrow(
-        'GitHub repo existence check failed (503): unavailable',
-      );
+        service.deleteRepoForUser('gh-token', 'tone', 'orders-api'),
+      ).rejects.toThrow(GithubRepoDeleteError);
     });
   });
 
@@ -496,13 +938,13 @@ describe('GithubService', () => {
       ).rejects.toThrow('GitHub repo lookup failed (404): not found');
     });
 
-    it('creates a repository through the GitHub API', async () => {
+    it('creates a repository inside the enforced organization, never a personal account', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          html_url: 'https://github.com/tone/orders-api',
-          clone_url: 'https://github.com/tone/orders-api.git',
-          owner: { login: 'tone' },
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
       } as unknown as Response);
@@ -514,13 +956,13 @@ describe('GithubService', () => {
           private: true,
         }),
       ).resolves.toEqual({
-        repoUrl: 'https://github.com/tone/orders-api',
-        cloneUrl: 'https://github.com/tone/orders-api.git',
-        ownerLogin: 'tone',
+        repoUrl: 'https://github.com/Alpha-Explora/orders-api',
+        cloneUrl: 'https://github.com/Alpha-Explora/orders-api.git',
+        ownerLogin: 'Alpha-Explora',
         repoName: 'orders-api',
       });
       expect(fetchMock).toHaveBeenCalledWith(
-        'https://api.github.com/user/repos',
+        'https://api.github.com/orgs/Alpha-Explora/repos',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
@@ -532,15 +974,20 @@ describe('GithubService', () => {
           }),
         }),
       );
+      // The personal /user/repos endpoint must never be reached.
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'https://api.github.com/user/repos',
+        expect.anything(),
+      );
     });
 
     it('uses an empty description when creating a repository without one', async () => {
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          html_url: 'https://github.com/tone/orders-api',
-          clone_url: 'https://github.com/tone/orders-api.git',
-          owner: { login: 'tone' },
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
           name: 'orders-api',
         }),
       } as unknown as Response);
@@ -551,7 +998,7 @@ describe('GithubService', () => {
       });
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringContaining('/orgs/Alpha-Explora/repos'),
         expect.objectContaining({
           body: expect.stringContaining('"description":""'),
         }),
@@ -559,12 +1006,13 @@ describe('GithubService', () => {
     });
 
     it.each([
-      [403, 'GitHub rejected repo creation (403).'],
-      [401, 'GitHub rejected repo creation (401).'],
-      [422, 'Repository already exists or name is invalid:'],
+      [403, 'GitHub denied repository creation in organization Alpha-Explora'],
+      [401, 'GitHub denied repository creation in organization Alpha-Explora'],
+      [404, 'GitHub organization Alpha-Explora is unavailable'],
+      [422, 'Repository already exists in Alpha-Explora'],
       [500, 'GitHub repo creation failed (500):'],
     ])(
-      'maps repo creation status %s to a useful exception',
+      'maps org repo creation status %s to a useful exception',
       async (status, message) => {
         fetchMock.mockResolvedValueOnce({
           ok: false,
@@ -581,28 +1029,101 @@ describe('GithubService', () => {
       },
     );
 
-    it('explains when a stale OAuth token lacks repository creation scope', async () => {
+    it('falls back to the default enforced org when config resolves empty', async () => {
+      // Defense in depth: even if the `app` config namespace yields an empty
+      // enforcedOrg (misconfiguration or a config/DI failure), creation must
+      // still lock to the hardcoded default org rather than surfacing the
+      // misleading "no destination org configured" error.
+      const unconfiguredService = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, enforcedOrg: '' },
+        }),
+        installationsRepository,
+      );
       fetchMock.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        headers: {
-          get: jest
-            .fn()
-            .mockReturnValue('read:org, read:user, repo:status, workflow'),
-        },
-        text: async () => '{"message":"Not Found"}',
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
+          name: 'orders-api',
+        }),
+      } as unknown as Response);
+
+      await unconfiguredService.createRepo('gh-token', {
+        repoName: 'orders-api',
+        private: true,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/Alpha-Explora/repos',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('returns the default enforced org from getEnforcedOrg even without ConfigService', () => {
+      const noConfigService = new GithubService(null, installationsRepository);
+      expect(noConfigService.getEnforcedOrg()).toBe('Alpha-Explora');
+    });
+
+    it('creates an organization repository with a user OAuth token when an owner is selected', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/tone/orders-api',
+          clone_url: 'https://github.com/tone/orders-api.git',
+          owner: { login: 'tone' },
+          name: 'orders-api',
+        }),
+      } as unknown as Response);
+
+      await service.createRepo(
+        'oauth-user-token',
+        { repoName: 'orders-api', private: true },
+        'tone',
+      );
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/tone/repos',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('forces creation into the enforced org when no owner is provided', async () => {
+      const enforcedService = new GithubService(
+        makeConfigService({
+          ...appConfig,
+          github: { ...appConfig.github, enforcedOrg: 'Alpha-Explora' },
+        }),
+        installationsRepository,
+      );
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          html_url: 'https://github.com/Alpha-Explora/orders-api',
+          clone_url: 'https://github.com/Alpha-Explora/orders-api.git',
+          owner: { login: 'Alpha-Explora' },
+          name: 'orders-api',
+        }),
       } as unknown as Response);
 
       await expect(
-        service.createRepo(
-          'under-scoped-oauth-token',
-          { repoName: 'orders-api', private: true },
-          'tone',
-        ),
-      ).rejects.toThrow(
-        "repository creation requires the full 'repo' scope. Sign out of this environment and sign back in",
+        enforcedService.createRepo('gh-token', {
+          repoName: 'orders-api',
+          private: true,
+        }),
+      ).resolves.toMatchObject({ ownerLogin: 'Alpha-Explora' });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/orgs/Alpha-Explora/repos',
+        expect.objectContaining({ method: 'POST' }),
       );
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // The personal /user/repos endpoint must never be reached.
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        'https://api.github.com/user/repos',
+        expect.anything(),
+      );
     });
 
     it('creates a branch from an existing source branch ref', async () => {
@@ -854,7 +1375,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).resolves.toEqual({
@@ -873,7 +1394,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).rejects.toThrow(
@@ -890,7 +1411,7 @@ describe('GithubService', () => {
       await expect(
         service.createPullRequest('gh-token', 'tone', 'orders-api', {
           title: 'Update workflow',
-          head: 'flowci/update',
+          head: 'alphaci/update',
           base: 'test',
         }),
       ).rejects.toThrow('GitHub pull request response was incomplete');
@@ -904,7 +1425,7 @@ describe('GithubService', () => {
           null,
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).resolves.toBeUndefined();
@@ -917,7 +1438,7 @@ describe('GithubService', () => {
           undefined,
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
           {
             throwOnFailure: true,
@@ -938,7 +1459,7 @@ describe('GithubService', () => {
           'gh-token',
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).resolves.toBeUndefined();
@@ -956,7 +1477,7 @@ describe('GithubService', () => {
           'gh-token',
           'tone',
           'orders-api',
-          'FLOWCI_TOKEN',
+          'ALPHACI_TOKEN',
           'x',
         ),
       ).rejects.toThrow('setActionsSecret: failed to fetch public key');
@@ -972,6 +1493,44 @@ describe('GithubService', () => {
         'https://api.github.com/repos/tone/orders-api/branches/test/protection',
         expect.objectContaining({ method: 'PUT' }),
       );
+    });
+
+    it('requires the env-guard status check on protected branches by default', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+
+      await service.applyBranchProtection(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'test',
+      );
+
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      const body = JSON.parse(init.body) as {
+        required_status_checks: { strict: boolean; contexts: string[] } | null;
+      };
+      expect(body.required_status_checks).toEqual({
+        strict: false,
+        contexts: ['env-guard'],
+      });
+    });
+
+    it('omits required status checks when explicitly given none', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true } as unknown as Response);
+
+      await service.applyBranchProtection(
+        'gh-token',
+        'tone',
+        'orders-api',
+        'test',
+        [],
+      );
+
+      const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+      const body = JSON.parse(init.body) as {
+        required_status_checks: unknown;
+      };
+      expect(body.required_status_checks).toBeNull();
     });
 
     it('does not throw when branch protection fails', async () => {

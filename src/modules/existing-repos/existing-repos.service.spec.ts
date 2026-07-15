@@ -13,6 +13,9 @@ const mockedReadFile = readFile as jest.MockedFunction<typeof readFile>;
 const makeGithubService = () =>
   ({
     getInstallationAccessTokenForUser: jest.fn().mockResolvedValue('app-token'),
+    getInstallationAccessTokenForUserRepo: jest
+      .fn()
+      .mockResolvedValue('app-token'),
     getFileContent: jest.fn().mockResolvedValue(
       JSON.stringify({
         dependencies: { next: '16.0.0' },
@@ -79,8 +82,8 @@ jobs:
     });
 
     expect(
-      githubService.getInstallationAccessTokenForUser,
-    ).toHaveBeenCalledWith('user-1');
+      githubService.getInstallationAccessTokenForUserRepo,
+    ).toHaveBeenCalledWith('user-1', 'tone/app');
     expect(githubService.getFileContent).toHaveBeenCalledWith(
       'app-token',
       'tone',
@@ -113,7 +116,7 @@ jobs:
       'app-token',
       'tone',
       'app',
-      'flowci/app-ci',
+      'alphaci/app-ci',
       'main',
     );
     expect(githubService.putFileContent).toHaveBeenCalledWith(
@@ -122,21 +125,21 @@ jobs:
       'app',
       '.github/workflows/ci.yml',
       expect.stringContaining('app - Next.js Service'),
-      'flowci/app-ci',
-      'ci: add FlowCI Studio workflow',
+      'alphaci/app-ci',
+      'ci: add ALPHACI workflow',
     );
     expect(githubService.createPullRequest).toHaveBeenCalledWith(
       'app-token',
       'tone',
       'app',
       expect.objectContaining({
-        head: 'flowci/app-ci',
+        head: 'alphaci/app-ci',
         base: 'main',
       }),
     );
     expect(result).toEqual({
       repoFullName: 'tone/app',
-      branchName: 'flowci/app-ci',
+      branchName: 'alphaci/app-ci',
       workflowPath: '.github/workflows/ci.yml',
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/tone/app/pull/42',
@@ -169,7 +172,7 @@ jobs:
 
   it('falls back to the OAuth token when no app installation token exists', async () => {
     (
-      githubService.getInstallationAccessTokenForUser as jest.Mock
+      githubService.getInstallationAccessTokenForUserRepo as jest.Mock
     ).mockResolvedValueOnce(null);
 
     await service.discover('user-1', 'oauth-token', {
@@ -187,7 +190,7 @@ jobs:
 
   it('rejects discovery when no GitHub token source is available', async () => {
     (
-      githubService.getInstallationAccessTokenForUser as jest.Mock
+      githubService.getInstallationAccessTokenForUserRepo as jest.Mock
     ).mockResolvedValueOnce(null);
 
     await expect(
@@ -215,7 +218,7 @@ jobs:
     });
 
     expect(result).toMatchObject({
-      branchName: 'flowci/orders-api-ci',
+      branchName: 'alphaci/orders-api-ci',
       workflowPath: '.github/workflows/orders-api-unknown-standard.yml',
     });
     expect(githubService.putFileContent).toHaveBeenCalledWith(
@@ -224,8 +227,8 @@ jobs:
       'app',
       '.github/workflows/orders-api-unknown-standard.yml',
       expect.stringContaining("default: '24'"),
-      'flowci/orders-api-ci',
-      'ci: add FlowCI Studio workflow',
+      'alphaci/orders-api-ci',
+      'ci: add ALPHACI workflow',
     );
   });
 

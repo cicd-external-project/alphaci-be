@@ -49,9 +49,12 @@ describe('appConfig factory', () => {
     expect(config.workflowUpdatePr.enabled).toBe(false);
     expect(config.projectTargetManagement.enabled).toBe(false);
     expect(config.ciRunTracking.enabled).toBe(false);
-    expect(config.ciRunTracking.liveGithubEnabled).toBe(false);
+    // liveGithubEnabled/liveProvidersEnabled default to true (opt-out via
+    // an explicit 'false'), unlike every other flag in this block which
+    // defaults to false (opt-in via an explicit 'true').
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(true);
     expect(config.deploymentHistory.enabled).toBe(false);
-    expect(config.deploymentHistory.liveProvidersEnabled).toBe(false);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
     expect(config.driftDetection.enabled).toBe(false);
     expect(config.driftRepair.enabled).toBe(false);
     expect(config.driftRepair.liveRepairEnabled).toBe(false);
@@ -84,6 +87,31 @@ describe('appConfig factory', () => {
     expect(config.session.secure).toBe(true);
   });
 
+  it.each([
+    ['unset', undefined, 'Alpha-Explora'],
+    ['empty', '', 'Alpha-Explora'],
+    ['whitespace only', '   ', 'Alpha-Explora'],
+    ['a custom org', 'My-Org', 'My-Org'],
+    ['a padded custom org', '  My-Org  ', 'My-Org'],
+    ['a variable reference', 'GITHUB_INTERNAL_ORG', 'Alpha-Explora'],
+  ])(
+    'always resolves a non-empty enforced org (never personal accounts) when GITHUB_ENFORCED_ORG is %s',
+    (_label, value, expected) => {
+      process.env['GITHUB_INTERNAL_ORG'] = 'Alpha-Explora';
+      if (value === undefined) {
+        delete process.env['GITHUB_ENFORCED_ORG'];
+      } else {
+        process.env['GITHUB_ENFORCED_ORG'] = value;
+      }
+
+      const config = appConfig();
+
+      expect(config.github.enforcedOrg).toBe(expected);
+      delete process.env['GITHUB_ENFORCED_ORG'];
+      delete process.env['GITHUB_INTERNAL_ORG'];
+    },
+  );
+
   it('parses SUBSCRIPTION_MOCK_MAP_JSON correctly', () => {
     process.env['SUBSCRIPTION_MOCK_MAP_JSON'] = JSON.stringify({
       testuser: 'pro',
@@ -107,6 +135,13 @@ describe('appConfig factory', () => {
     expect(config.github.appPrivateKey).toBe('line1\nline2');
   });
 
+  it('does not use the placeholder GitHub App slug in production', () => {
+    process.env['NODE_ENV'] = 'production';
+    delete process.env['GITHUB_APP_SLUG'];
+
+    expect(appConfig().github.appSlug).toBe('');
+  });
+
   it('uses storeDriver memory when SESSION_STORE_DRIVER is not postgres', () => {
     process.env['SESSION_STORE_DRIVER'] = 'redis';
 
@@ -114,7 +149,7 @@ describe('appConfig factory', () => {
     expect(config.session.storeDriver).toBe('memory');
   });
 
-  it('reads FlowCI-managed Render owner id when set', () => {
+  it('reads ALPHACI-managed Render owner id when set', () => {
     process.env['FLOWCI_RENDER_OWNER_ID'] = 'tea-configured';
 
     const config = appConfig();
@@ -177,6 +212,16 @@ describe('appConfig factory', () => {
 
     expect(config.deploymentHistory.enabled).toBe(true);
     expect(config.deploymentHistory.liveProvidersEnabled).toBe(true);
+  });
+
+  it('disables live-sync flags only when explicitly set to false', () => {
+    process.env['CI_RUN_LIVE_GITHUB_ENABLED'] = 'false';
+    process.env['DEPLOYMENT_HISTORY_LIVE_PROVIDERS_ENABLED'] = 'false';
+
+    const config = appConfig();
+
+    expect(config.ciRunTracking.liveGithubEnabled).toBe(false);
+    expect(config.deploymentHistory.liveProvidersEnabled).toBe(false);
   });
 
   it('enables drift detection when explicitly flagged', () => {

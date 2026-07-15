@@ -67,7 +67,24 @@ export class DatabaseService implements OnModuleDestroy {
     this.pool = new Pool({
       connectionString: this.config.supabase.dbUrl,
       ssl: sslConfig,
-      max: 10,
+      // Connection budget: Supabase's Supavisor pooler runs this project in
+      // session mode with pool_size: 15 (project-wide, shared by every
+      // process that connects — see EMAXCONNSESSION incident 2026-07-13).
+      // Three separate `pg.Pool`s dial this same pool_size: this one, the
+      // connect-pg-simple session-store pool in main.ts (max: 2), and the
+      // process-outbox cron job (max: 3, runs as its own process every
+      // minute). The repo has no render.yaml / IaC exposing the web
+      // service's instance count, so this is sized conservatively assuming
+      // up to 2 concurrent web instances (Render can briefly run old+new
+      // instances during a rolling deploy even without autoscaling
+      // enabled): 2 instances x (this pool's max=3 + session pool's max=2)
+      // + outbox's max=3 = 13, leaving 2 connections of headroom under the
+      // pool_size: 15 ceiling for the deploy window/admin connections, and
+      // 8 of 15 free in the (likely) single-instance steady state. If
+      // Render's actual instance count is confirmed higher, or this pool is
+      // starved under load, prefer raising the Supabase project's
+      // pool_size (plan upgrade) over raising `max` here.
+      max: 3,
       connectionTimeoutMillis: 10_000,
       query_timeout: 10_000,
       statement_timeout: 10_000,

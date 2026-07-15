@@ -18,6 +18,10 @@ function validEnv(
     FRONTEND_URL: 'http://localhost:3000',
     GITHUB_CLIENT_ID: 'github-client-id',
     GITHUB_CLIENT_SECRET: 'github-client-secret',
+    GITHUB_APP_ID: '4114943',
+    GITHUB_APP_SLUG: 'alphaci-test',
+    GITHUB_APP_PRIVATE_KEY:
+      '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
     ...overrides,
   };
 }
@@ -175,5 +179,63 @@ describe('validateEnv', () => {
         );
       });
     }
+  });
+
+  describe('production GitHub App configuration', () => {
+    for (const field of [
+      'GITHUB_APP_ID',
+      'GITHUB_APP_SLUG',
+      'GITHUB_APP_PRIVATE_KEY',
+    ]) {
+      it(`throws when ${field} is missing in production`, () => {
+        const env = validEnv({ NODE_ENV: 'production' });
+        delete env[field];
+        expect(() => validateEnv(env)).toThrow(new RegExp(field));
+      });
+    }
+
+    it('accepts the GITHUB_APP alias for GITHUB_APP_ID in production', () => {
+      const env = validEnv({ NODE_ENV: 'production', GITHUB_APP: '4114943' });
+      delete env['GITHUB_APP_ID'];
+      expect(() => validateEnv(env)).not.toThrow();
+    });
+
+    it('accepts the GITHUB_PRIVATE_KEY alias for GITHUB_APP_PRIVATE_KEY in production', () => {
+      const env = validEnv({
+        NODE_ENV: 'production',
+        GITHUB_PRIVATE_KEY:
+          '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
+      });
+      delete env['GITHUB_APP_PRIVATE_KEY'];
+      expect(() => validateEnv(env)).not.toThrow();
+    });
+
+    it('names both accepted variables when the App ID is missing in production', () => {
+      const env = validEnv({ NODE_ENV: 'production' });
+      delete env['GITHUB_APP_ID'];
+      delete env['GITHUB_APP'];
+      expect(() => validateEnv(env)).toThrow(/GITHUB_APP_ID.*GITHUB_APP/);
+    });
+
+    it('rejects the placeholder GitHub App slug in production', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            NODE_ENV: 'production',
+            GITHUB_APP_SLUG: 'my-github-app',
+          }),
+        ),
+      ).toThrow(/real GitHub App slug/);
+    });
+
+    it('allows local development to use the placeholder GitHub App slug', () => {
+      expect(() =>
+        validateEnv(
+          validEnv({
+            GITHUB_APP_SLUG: 'my-github-app',
+          }),
+        ),
+      ).not.toThrow();
+    });
   });
 });
