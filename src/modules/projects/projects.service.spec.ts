@@ -717,6 +717,71 @@ jobs:
     );
   });
 
+  it('maps is_owner to a viewer-relative isOwner so admin/manager-visible projects are distinguishable from owned ones', async () => {
+    const projectsRepository = {
+      listByUser: jest.fn().mockResolvedValue([
+        {
+          id: 'project-own',
+          user_id: 'user-1',
+          repo_full_name: 'tone/orders-api',
+          template_id: 'be-nestjs',
+          service_name: 'orders-api',
+          workflow_path: '.github/workflows/ci.yml',
+          status: 'provisioned',
+          github_commit_sha: null,
+          github_commit_url: null,
+          failure_reason: null,
+          repo_url: null,
+          visibility: 'private',
+          repo_shape: 'single-app',
+          project_type_id: 'nestjs-api',
+          workflow_recipe_id: 'backend-api-ci',
+          project_options: {},
+          workspace_id: null,
+          is_owner: true,
+          created_at: '2026-06-05T00:00:00.000Z',
+          updated_at: '2026-06-05T00:00:00.000Z',
+        },
+        {
+          id: 'project-other',
+          user_id: 'user-2',
+          repo_full_name: 'antoneeeeems/iuyyxfgfuy',
+          template_id: 'be-nestjs',
+          service_name: 'iuyyxfgfuy',
+          workflow_path: '.github/workflows/ci.yml',
+          status: 'provisioned',
+          github_commit_sha: null,
+          github_commit_url: null,
+          failure_reason: null,
+          repo_url: null,
+          visibility: 'private',
+          repo_shape: 'single-app',
+          project_type_id: 'nestjs-api',
+          workflow_recipe_id: 'backend-api-ci',
+          project_options: {},
+          workspace_id: null,
+          is_owner: false,
+          created_at: '2026-06-05T00:00:00.000Z',
+          updated_at: '2026-06-05T00:00:00.000Z',
+        },
+      ]),
+    } as unknown as jest.Mocked<ProjectsRepository>;
+    const listService = new ProjectsService(
+      makeCatalogService(),
+      githubService,
+      projectsRepository,
+      makeCiService(),
+      projectDeploymentProvisioningService as never,
+    );
+
+    const result = await listService.listProjects('admin-1', 25);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'project-own', isOwner: true }),
+      expect.objectContaining({ id: 'project-other', isOwner: false }),
+    ]);
+  });
+
   it('omits Vercel deploy jobs for frontend single-repo creation', async () => {
     await service.createProject('user-1', 'tone', 'oauth-token', {
       repoName: 'orders-ui',
@@ -860,6 +925,33 @@ jobs:
       projectDeploymentProvisioningService.provisionForProject,
     ).not.toHaveBeenCalled();
     expect(result.deploymentProvisioning.status).toBe('skipped');
+  });
+
+  it('rejects Setup-flow attachment of a repo outside the enforced org', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    await expect(
+      service.setupProject('user-1', 'oauth-token', {
+        repoFullName: 'some-other-org/external-repo',
+        templateId: 'be-nestjs',
+        serviceName: 'external-repo',
+      }),
+    ).rejects.toThrow(
+      "repoFullName must belong to the Alpha-Explora organization. 'some-other-org' is not allowed for new Setup-flow attachments.",
+    );
+    expect(githubServiceMock.setActionsSecretStrict).not.toHaveBeenCalled();
+  });
+
+  it('allows Setup-flow attachment when the repo owner case-insensitively matches the enforced org', async () => {
+    githubServiceMock.getEnforcedOrg.mockReturnValue('Alpha-Explora');
+
+    const result = await service.setupProject('user-1', null, {
+      repoFullName: 'alpha-explora/orders-api',
+      templateId: 'be-nestjs',
+      serviceName: 'orders-api',
+    });
+
+    expect(result.repoFullName).toBe('alpha-explora/orders-api');
   });
 
   it('provisions centralized deployment targets during GitHub project creation', async () => {
