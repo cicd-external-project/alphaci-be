@@ -173,6 +173,19 @@ describe('ProjectsRepository', () => {
     expect(db.query).toHaveBeenCalledWith(expect.any(String), ['user-1', 25]);
   });
 
+  it('computes a viewer-relative is_owner column against the same viewer param used by the visibility predicate', async () => {
+    await repo.listByUser('user-1', 10);
+
+    const [query] = (db.query as jest.Mock).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    // Must compare against $1 (the viewer), not just select the raw column —
+    // otherwise every row (including ones only visible via admin/manager
+    // oversight) would be misreported as owned by the viewer.
+    expect(query).toContain('(pp.user_id = $1) AS is_owner');
+  });
+
   it('finds a project by id scoped to user, unrestricted by role when allowedRoles is omitted', async () => {
     const result = await repo.findByIdAndUser('project-1', 'user-1');
 

@@ -177,6 +177,13 @@ export interface ProvisionedProject {
    * this is the GROUP id — the FE Projects screen groups the list by it.
    */
   workspaceId?: string | null;
+  /**
+   * Viewer-relative: true only when the authenticated user is the actual
+   * project creator, not just able to see it via admin/manager visibility.
+   * Only populated by `listByUser`-backed reads (currently `listProjects`) —
+   * undefined elsewhere (e.g. `findByIdAndUser`-backed reads).
+   */
+  isOwner?: boolean | undefined;
 }
 
 export interface SyncProjectsResponse {
@@ -1048,6 +1055,21 @@ export class ProjectsService {
 
     // 2. Derive owner and repo from repoFullName (format: "owner/repo")
     const [owner, repo] = this.parseRepoFullName(dto.repoFullName);
+
+    // Product decision: going forward, Setup-flow attachments are restricted
+    // to the enforced org, same as brand-new repository creation. Already
+    // attached external repos in the DB are untouched — this only blocks new
+    // attachments. Enforced defense-in-depth: the FE repo picker is filtered
+    // too, but the FE is not a trust boundary. Mirrors the `if (enforcedOrg)`
+    // guard in resolveRepositoryProvisioning — an unconfigured/empty enforced
+    // org means no restriction is active.
+    const enforcedOrg = this.githubService.getEnforcedOrg();
+    if (enforcedOrg && owner.toLowerCase() !== enforcedOrg.toLowerCase()) {
+      throw new UnprocessableEntityException(
+        `repoFullName must belong to the ${enforcedOrg} organization. '${owner}' is not allowed for new Setup-flow attachments.`,
+      );
+    }
+
     const accessToken = await this.resolveSetupProvisioningToken(
       userId,
       oauthAccessToken,
@@ -4277,6 +4299,7 @@ export class ProjectsService {
       workflowRecipeId: row.workflow_recipe_id,
       projectOptions: row.project_options,
       workspaceId: row.workspace_id ?? null,
+      isOwner: row.is_owner,
     };
   }
 

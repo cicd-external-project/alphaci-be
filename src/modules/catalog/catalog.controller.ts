@@ -8,17 +8,30 @@ import {
 } from '@nestjs/common';
 
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
+import { GithubService } from '../github/github.service';
 import { ListCatalogQueryDto } from './dto/list-catalog-query.dto';
 import { CatalogService } from './catalog.service';
 
 @Controller('catalog')
 @UseGuards(SessionAuthGuard)
 export class CatalogController {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly githubService: GithubService,
+  ) {}
 
+  /**
+   * `enforcedOrg` rides along on this response (rather than a new endpoint)
+   * so the FE has a single, already-fetched source for the org every
+   * repository must belong to — used to filter the Setup-flow repo picker
+   * and to label already-attached repos outside it as "External".
+   */
   @Get('project-options')
   getProjectOptions() {
-    return this.catalogService.getProjectOptions();
+    return {
+      ...this.catalogService.getProjectOptions(),
+      enforcedOrg: this.githubService.getEnforcedOrg(),
+    };
   }
 
   @Get('central-workflow-tags')

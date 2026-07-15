@@ -65,6 +65,14 @@ export interface ProvisionedProjectRow {
   project_options: Record<string, unknown> | null;
   workspace_id?: string | null;
   is_example?: boolean;
+  /**
+   * Viewer-relative: true only when the querying user is the actual row
+   * owner (`pp.user_id = viewer`), not merely able to see the row via
+   * admin/manager visibility. Only populated by queries that compute it
+   * against a specific viewer (currently `listByUser`) — undefined
+   * elsewhere, so callers must not assume it is always present.
+   */
+  is_owner?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -238,6 +246,7 @@ export class ProjectsRepository {
           pp.project_options,
           pp.workspace_id,
           pp.is_example,
+          (pp.user_id = $1) AS is_owner,
           pp.created_at,
           pp.updated_at
         FROM projects.provisioned_projects AS pp
