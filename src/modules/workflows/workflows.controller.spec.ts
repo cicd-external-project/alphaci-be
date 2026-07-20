@@ -7,7 +7,10 @@ import type { Request } from 'express';
 
 const fakeUser = { id: 'user-1', login: 'testuser' };
 
-const makeRequest = (user: typeof fakeUser | undefined = fakeUser, githubToken?: string) =>
+const makeRequest = (
+  user: typeof fakeUser | undefined = fakeUser,
+  githubToken?: string,
+) =>
   ({ session: { user, githubAccessToken: githubToken } }) as unknown as Request;
 
 const makeUnauthRequest = () => ({ session: {} }) as unknown as Request;
@@ -29,9 +32,13 @@ describe('WorkflowsController', () => {
       controllers: [WorkflowsController],
       providers: [{ provide: WorkflowsService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
-      .overrideGuard(require('../../common/guards/subscription.guard.js').SubscriptionGuard)
+      .overrideGuard(
+        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -56,7 +63,10 @@ describe('WorkflowsController', () => {
     it('throws UnauthorizedException when no user in session', async () => {
       const req = makeUnauthRequest();
       await expect(
-        controller.generate(req, { templateId: 'nestjs-be', serviceName: 'my-service' }),
+        controller.generate(req, {
+          templateId: 'nestjs-be',
+          serviceName: 'my-service',
+        }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });
@@ -79,7 +89,9 @@ describe('WorkflowsController', () => {
 
     it('throws UnauthorizedException when no user in session', async () => {
       const req = makeUnauthRequest();
-      await expect(controller.history(req)).rejects.toThrow(UnauthorizedException);
+      await expect(controller.history(req)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 });

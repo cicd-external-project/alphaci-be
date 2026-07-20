@@ -10,10 +10,18 @@ function validEnv(
   return {
     NODE_ENV: 'development',
     PORT: '3000',
+    SESSION_SECRET: 'a'.repeat(32),
     SUPABASE_URL: 'https://abc.supabase.co',
     SUPABASE_ANON_KEY: 'anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     ALLOWED_ORIGINS: 'http://localhost:5173',
+    FRONTEND_URL: 'http://localhost:3000',
+    GITHUB_CLIENT_ID: 'github-client-id',
+    GITHUB_CLIENT_SECRET: 'github-client-secret',
+    GITHUB_APP_ID: '4114943',
+    GITHUB_APP_SLUG: 'alphaci-test',
+    GITHUB_APP_PRIVATE_KEY:
+      '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
     ...overrides,
   };
 }
@@ -36,70 +44,13 @@ describe('validateEnv', () => {
     });
 
     it('accepts production as NODE_ENV', () => {
-      const result = validateEnv(
-        validEnv({
-          NODE_ENV: 'production',
-          API_CENTER_BASE_URL: 'http://api-center.local',
-          API_CENTER_TRIBE_ID: 'tribe-a',
-          API_CENTER_TRIBE_SECRET: 'tribe-secret',
-        }),
-      );
+      const result = validateEnv(validEnv({ NODE_ENV: 'production' }));
       expect(result.NODE_ENV).toBe('production');
     });
 
     it('accepts test as NODE_ENV', () => {
       const result = validateEnv(validEnv({ NODE_ENV: 'test' }));
       expect(result.NODE_ENV).toBe('test');
-    });
-
-    it('includes optional API_CENTER_BASE_URL when provided', () => {
-      const result = validateEnv(
-        validEnv({ API_CENTER_BASE_URL: 'http://api-center.local' }),
-      );
-      expect(result.API_CENTER_BASE_URL).toBe('http://api-center.local');
-    });
-
-    it('includes optional API_CENTER_API_KEY when provided', () => {
-      const result = validateEnv(
-        validEnv({
-          API_CENTER_BASE_URL: 'http://api-center.local',
-          API_CENTER_API_KEY: 'secret-key',
-        }),
-      );
-      expect(result.API_CENTER_API_KEY).toBe('secret-key');
-    });
-
-    it('includes optional API_CENTER_TRIBE_ID and API_CENTER_TRIBE_SECRET when provided', () => {
-      const result = validateEnv(
-        validEnv({
-          API_CENTER_TRIBE_ID: 'tribe-a',
-          API_CENTER_TRIBE_SECRET: 'tribe-secret',
-        }),
-      );
-
-      expect(result.API_CENTER_TRIBE_ID).toBe('tribe-a');
-      expect(result.API_CENTER_TRIBE_SECRET).toBe('tribe-secret');
-    });
-
-    it('includes optional API_CENTER_TIMEOUT_MS when provided', () => {
-      const result = validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: '8000' }));
-      expect(result.API_CENTER_TIMEOUT_MS).toBe('8000');
-    });
-
-    it('accepts APICENTER_* aliases', () => {
-      const result = validateEnv(
-        validEnv({
-          APICENTER_URL: 'http://api-center.local',
-          APICENTER_TRIBE_ID: 'tribe-a',
-          APICENTER_TRIBE_SECRET: 'tribe-secret',
-          APICENTER_TIMEOUT_MS: '5000',
-        }),
-      );
-
-      expect(result.API_CENTER_BASE_URL).toBe('http://api-center.local');
-      expect(result.API_CENTER_TRIBE_ID).toBe('tribe-a');
-      expect(result.API_CENTER_TRIBE_SECRET).toBe('tribe-secret');
-      expect(result.API_CENTER_TIMEOUT_MS).toBe('5000');
     });
 
     it('accepts scoped Supabase-only config without default SUPABASE_* trio', () => {
@@ -130,11 +81,6 @@ describe('validateEnv', () => {
       expect(result.SUPABASE_URL).toBe('https://abc.supabase.co');
       expect(result.SUPABASE_ANON_KEY).toBeUndefined();
       expect(result.SUPABASE_SERVICE_ROLE_KEY).toBe('service-role-key');
-    });
-
-    it('omits API_CENTER_BASE_URL from result when not set', () => {
-      const result = validateEnv(validEnv());
-      expect(result.API_CENTER_BASE_URL).toBeUndefined();
     });
 
     it('defaults ENABLE_SWAGGER to "false" when not set', () => {
@@ -174,10 +120,10 @@ describe('validateEnv', () => {
   });
 
   describe('PORT validation', () => {
-    it('throws when PORT is missing', () => {
+    it('defaults PORT to 4000 when missing', () => {
       const env = validEnv();
       delete env['PORT'];
-      expect(() => validateEnv(env)).toThrow(/PORT/);
+      expect(validateEnv(env).PORT).toBe(4000);
     });
 
     it('throws when PORT is zero', () => {
@@ -209,6 +155,9 @@ describe('validateEnv', () => {
       'SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
       'ALLOWED_ORIGINS',
+      'FRONTEND_URL',
+      'GITHUB_CLIENT_ID',
+      'GITHUB_CLIENT_SECRET',
     ];
 
     for (const field of requiredFields) {
@@ -232,70 +181,58 @@ describe('validateEnv', () => {
     }
   });
 
-  describe('optional field warnings', () => {
-    it('does not throw when API_CENTER_BASE_URL is missing', () => {
-      expect(() => validateEnv(validEnv())).not.toThrow();
+  describe('production GitHub App configuration', () => {
+    for (const field of [
+      'GITHUB_APP_ID',
+      'GITHUB_APP_SLUG',
+      'GITHUB_APP_PRIVATE_KEY',
+    ]) {
+      it(`throws when ${field} is missing in production`, () => {
+        const env = validEnv({ NODE_ENV: 'production' });
+        delete env[field];
+        expect(() => validateEnv(env)).toThrow(new RegExp(field));
+      });
+    }
+
+    it('accepts the GITHUB_APP alias for GITHUB_APP_ID in production', () => {
+      const env = validEnv({ NODE_ENV: 'production', GITHUB_APP: '4114943' });
+      delete env['GITHUB_APP_ID'];
+      expect(() => validateEnv(env)).not.toThrow();
     });
 
-    it('does not throw when API_CENTER_API_KEY is missing', () => {
-      expect(() =>
-        validateEnv(
-          validEnv({ API_CENTER_BASE_URL: 'http://api-center.local' }),
-        ),
-      ).not.toThrow();
+    it('accepts the GITHUB_PRIVATE_KEY alias for GITHUB_APP_PRIVATE_KEY in production', () => {
+      const env = validEnv({
+        NODE_ENV: 'production',
+        GITHUB_PRIVATE_KEY:
+          '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
+      });
+      delete env['GITHUB_APP_PRIVATE_KEY'];
+      expect(() => validateEnv(env)).not.toThrow();
     });
 
-    it('does not throw when only APICENTER_URL alias is set', () => {
-      expect(() =>
-        validateEnv(validEnv({ APICENTER_URL: 'http://api-center.local' })),
-      ).not.toThrow();
+    it('names both accepted variables when the App ID is missing in production', () => {
+      const env = validEnv({ NODE_ENV: 'production' });
+      delete env['GITHUB_APP_ID'];
+      delete env['GITHUB_APP'];
+      expect(() => validateEnv(env)).toThrow(/GITHUB_APP_ID.*GITHUB_APP/);
     });
 
-    it('throws when API_CENTER_TIMEOUT_MS is invalid', () => {
-      expect(() =>
-        validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: 'abc' })),
-      ).toThrow(/API_CENTER_TIMEOUT_MS/);
-    });
-
-    it('throws when API_CENTER_TIMEOUT_MS is zero', () => {
-      expect(() =>
-        validateEnv(validEnv({ API_CENTER_TIMEOUT_MS: '0' })),
-      ).toThrow(/API_CENTER_TIMEOUT_MS/);
-    });
-  });
-
-  describe('production APICenter requirements', () => {
-    it('throws in production when API center base URL is missing', () => {
+    it('rejects the placeholder GitHub App slug in production', () => {
       expect(() =>
         validateEnv(
           validEnv({
             NODE_ENV: 'production',
-            API_CENTER_TRIBE_ID: 'tribe-a',
-            API_CENTER_TRIBE_SECRET: 'tribe-secret',
+            GITHUB_APP_SLUG: 'my-github-app',
           }),
         ),
-      ).toThrow(/API_CENTER_BASE_URL|APICENTER_URL/);
+      ).toThrow(/real GitHub App slug/);
     });
 
-    it('throws in production when auth variables are missing', () => {
+    it('allows local development to use the placeholder GitHub App slug', () => {
       expect(() =>
         validateEnv(
           validEnv({
-            NODE_ENV: 'production',
-            API_CENTER_BASE_URL: 'http://api-center.local',
-          }),
-        ),
-      ).toThrow(/Production APICenter auth is missing/);
-    });
-
-    it('passes in production with tribe credentials', () => {
-      expect(() =>
-        validateEnv(
-          validEnv({
-            NODE_ENV: 'production',
-            API_CENTER_BASE_URL: 'http://api-center.local',
-            API_CENTER_TRIBE_ID: 'tribe-a',
-            API_CENTER_TRIBE_SECRET: 'tribe-secret',
+            GITHUB_APP_SLUG: 'my-github-app',
           }),
         ),
       ).not.toThrow();

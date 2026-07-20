@@ -113,7 +113,50 @@ export class WorkflowHistoryRepository {
       [userId, safeLimit],
     );
 
-    return result.rows.map((row) => ({
+    return result.rows.map((row) => this.toEntry(row));
+  }
+
+  async listForProjectIdentity(input: {
+    userId: string;
+    serviceName: string;
+    templateId: string | null;
+    limit?: number;
+  }): Promise<WorkflowHistoryEntry[]> {
+    const safeLimit = Number.isFinite(input.limit)
+      ? Math.max(1, Math.min(100, input.limit ?? 5))
+      : 5;
+
+    const result = await this.databaseService.query<WorkflowHistoryRow>(
+      `
+        SELECT
+          id,
+          created_at,
+          template_id,
+          template_name,
+          stack,
+          service_name,
+          output_file_name,
+          source_workflow_file,
+          source_properties_file,
+          line_count,
+          yaml
+        FROM workflow_generations
+        WHERE user_id = $1
+          AND (
+            service_name = $2
+            OR ($3::text IS NOT NULL AND template_id = $3)
+          )
+        ORDER BY created_at DESC
+        LIMIT $4;
+      `,
+      [input.userId, input.serviceName, input.templateId, safeLimit],
+    );
+
+    return result.rows.map((row) => this.toEntry(row));
+  }
+
+  private toEntry(row: WorkflowHistoryRow): WorkflowHistoryEntry {
+    return {
       id: row.id,
       createdAt: row.created_at,
       templateId: row.template_id,
@@ -125,6 +168,6 @@ export class WorkflowHistoryRepository {
       sourcePropertiesFile: row.source_properties_file,
       lineCount: row.line_count,
       yaml: row.yaml,
-    }));
+    };
   }
 }

@@ -4,6 +4,7 @@ import type { TestingModule } from '@nestjs/testing';
 import { CatalogController } from './catalog.controller.js';
 import { CatalogService } from './catalog.service.js';
 import type { WorkflowTemplate } from './catalog.service.js';
+import { GithubService } from '../github/github.service.js';
 
 const fakeTemplate: WorkflowTemplate = {
   id: 'nestjs-be',
@@ -21,22 +22,41 @@ const makeCatalogService = (): Partial<CatalogService> => ({
   listCategories: jest.fn().mockResolvedValue([{ name: 'Backend', count: 1 }]),
   listTemplates: jest.fn().mockResolvedValue([fakeTemplate]),
   getTemplateById: jest.fn().mockResolvedValue(fakeTemplate),
+  getProjectOptions: jest.fn().mockReturnValue({
+    repoShapes: [],
+    projectTypes: [],
+    recipes: [],
+    nodeVersions: [],
+  }),
+});
+
+const makeGithubService = (): Partial<GithubService> => ({
+  getEnforcedOrg: jest.fn().mockReturnValue('Alpha-Explora'),
 });
 
 describe('CatalogController', () => {
   let controller: CatalogController;
   let service: Partial<CatalogService>;
+  let githubService: Partial<GithubService>;
 
   beforeEach(async () => {
     service = makeCatalogService();
+    githubService = makeGithubService();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [CatalogController],
-      providers: [{ provide: CatalogService, useValue: service }],
+      providers: [
+        { provide: CatalogService, useValue: service },
+        { provide: GithubService, useValue: githubService },
+      ],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
-      .overrideGuard(require('../../common/guards/subscription.guard.js').SubscriptionGuard)
+      .overrideGuard(
+        require('../../common/guards/subscription.guard.js').SubscriptionGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -45,6 +65,15 @@ describe('CatalogController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('getProjectOptions merges the enforced org onto the catalog response', () => {
+    const result = controller.getProjectOptions();
+    expect(result).toEqual(
+      expect.objectContaining({ enforcedOrg: 'Alpha-Explora' }),
+    );
+    expect(service.getProjectOptions).toHaveBeenCalled();
+    expect(githubService.getEnforcedOrg).toHaveBeenCalled();
   });
 
   it('categories returns wrapped list', async () => {

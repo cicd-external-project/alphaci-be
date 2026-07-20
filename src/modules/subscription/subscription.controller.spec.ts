@@ -4,9 +4,17 @@ import type { TestingModule } from '@nestjs/testing';
 import { SubscriptionController } from './subscription.controller.js';
 import { SubscriptionService } from './subscription.service.js';
 import type { Request } from 'express';
-import type { SessionUser, SubscriptionState } from '../../common/interfaces/session-user.interface.js';
+import type {
+  SessionUser,
+  SubscriptionState,
+} from '../../common/interfaces/session-user.interface.js';
 
-const fakeUser: SessionUser = { id: 'user-1', login: 'testuser' };
+const fakeUser: SessionUser = {
+  id: 'user-1',
+  login: 'testuser',
+  onboardingCompleted: false,
+  isInternal: false,
+};
 
 const fakeFreeSub: SubscriptionState = {
   plan: 'free',
@@ -37,6 +45,7 @@ const makeSubscriptionService = () =>
       redirectUrl: 'https://checkout.paymongo.com/test',
     }),
     getCheckoutStatus: jest.fn().mockResolvedValue({ status: 'pending' }),
+    handlePayMongoWebhook: jest.fn().mockResolvedValue({ received: true }),
     activateForUser: jest.fn().mockResolvedValue(fakeProSub),
     cancelForUser: jest.fn().mockResolvedValue(fakeFreeSub),
   }) as unknown as SubscriptionService;
@@ -52,7 +61,9 @@ describe('SubscriptionController', () => {
       controllers: [SubscriptionController],
       providers: [{ provide: SubscriptionService, useValue: service }],
     })
-      .overrideGuard(require('../../common/guards/session-auth.guard.js').SessionAuthGuard)
+      .overrideGuard(
+        require('../../common/guards/session-auth.guard.js').SessionAuthGuard,
+      )
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -70,16 +81,21 @@ describe('SubscriptionController', () => {
     });
 
     it('throws UnauthorizedException when no user in session', async () => {
-      await expect(controller.getSubscription(makeUnauthRequest())).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        controller.getSubscription(makeUnauthRequest()),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 
   describe('createCheckout', () => {
     it('delegates to service and returns result', async () => {
-      const result = await controller.createCheckout(makeRequest(), { plan: 'pro' });
-      expect(service.createCheckoutSession).toHaveBeenCalledWith(fakeUser, 'pro');
+      const result = await controller.createCheckout(makeRequest(), {
+        plan: 'pro',
+      });
+      expect(service.createCheckoutSession).toHaveBeenCalledWith(
+        fakeUser,
+        'pro',
+      );
       expect((result as { checkoutId: string }).checkoutId).toBe('cs_test_123');
     });
 
@@ -92,8 +108,14 @@ describe('SubscriptionController', () => {
 
   describe('getCheckoutStatus', () => {
     it('returns status from service', async () => {
-      const result = await controller.getCheckoutStatus(makeRequest(), 'cs_test_123');
-      expect(service.getCheckoutStatus).toHaveBeenCalledWith(fakeUser, 'cs_test_123');
+      const result = await controller.getCheckoutStatus(
+        makeRequest(),
+        'cs_test_123',
+      );
+      expect(service.getCheckoutStatus).toHaveBeenCalledWith(
+        fakeUser,
+        'cs_test_123',
+      );
       expect(result).toEqual({ status: 'pending' });
     });
   });
@@ -105,9 +127,33 @@ describe('SubscriptionController', () => {
       expect(result).toEqual({ subscription: fakeProSub });
     });
 
-    it('activates enterprise when specified', async () => {
-      await controller.activateMonthly(makeRequest(), { plan: 'enterprise' });
-      expect(service.activateForUser).toHaveBeenCalledWith(fakeUser, 'enterprise');
+    it('activates pro when specified', async () => {
+      await controller.activateMonthly(makeRequest(), { plan: 'pro' });
+      expect(service.activateForUser).toHaveBeenCalledWith(fakeUser, 'pro');
+    });
+  });
+
+  describe('handlePayMongoWebhook', () => {
+    it('delegates PayMongo webhook payload to service', async () => {
+      const payload = { data: { type: 'checkout_session.payment.paid' } };
+      const req = {
+        rawBody: Buffer.from(JSON.stringify(payload)),
+      } as Request & {
+        rawBody: Buffer;
+      };
+
+      const result = await controller.handlePayMongoWebhook(
+        req,
+        payload,
+        'whsec_test_123',
+      );
+
+      expect(service.handlePayMongoWebhook).toHaveBeenCalledWith(
+        payload,
+        req.rawBody,
+        'whsec_test_123',
+      );
+      expect(result).toEqual({ received: true });
     });
   });
 
@@ -119,9 +165,9 @@ describe('SubscriptionController', () => {
     });
 
     it('throws UnauthorizedException when no user in session', async () => {
-      await expect(controller.cancelMonthly(makeUnauthRequest())).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        controller.cancelMonthly(makeUnauthRequest()),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 });

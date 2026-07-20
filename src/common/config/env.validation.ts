@@ -13,8 +13,6 @@
  *   - Required vars cause a hard crash (fail-fast). Missing required config
  *     in a running service is a security risk: the service may silently fall
  *     back to insecure defaults.
- *   - Optional vars (API_CENTER_BASE_URL) emit a warning so the developer
- *     knows the feature will be unavailable, but local dev is not broken.
  *
  * Threat addressed:
  *   - Service starting with missing secrets and silently degrading to
@@ -27,15 +25,46 @@ export interface EnvironmentVariables {
   NODE_ENV: 'development' | 'test' | 'production';
   PORT: number;
   ENABLE_SWAGGER: string;
+  SESSION_SECRET: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_DB_CA_CERT?: string;
   ALLOWED_ORIGINS: string;
-  API_CENTER_BASE_URL?: string;
-  API_CENTER_API_KEY?: string;
-  API_CENTER_TRIBE_ID?: string;
-  API_CENTER_TRIBE_SECRET?: string;
-  API_CENTER_TIMEOUT_MS?: string;
+  ENV_PROVISIONING_ENABLED?: string;
+  ENV_PROVISIONING_ENCRYPTION_KEY?: string;
+  ALPHACI_RENDER_API_KEY?: string;
+  ALPHACI_RENDER_OWNER_ID?: string;
+  ALPHACI_RENDER_DEFAULT_REGION?: string;
+  ALPHACI_RENDER_DEFAULT_INSTANCE_TYPE?: string;
+  ALPHACI_RENDER_ALLOWED_INSTANCE_TYPES?: string;
+  ALPHACI_RENDER_ALLOW_PAID_MANAGED?: string;
+  ALPHACI_RENDER_MANAGED_MAX_SERVICES_PER_USER?: string;
+  ALPHACI_RENDER_BOOTSTRAP_IMAGE?: string;
+  ALPHACI_RENDER_REGISTRY_CREDENTIAL_ID?: string;
+  ALPHACI_RENDER_REGISTRY_USERNAME?: string;
+  ALPHACI_RENDER_REGISTRY_TOKEN?: string;
+  ALPHACI_VERCEL_TOKEN?: string;
+  ALPHACI_VERCEL_TEAM_ID?: string;
+  ALPHACI_VERCEL_TEAM_SLUG?: string;
+  ALPHACI_SONAR_TOKEN?: string;
+  ALPHACI_SONAR_ORGANIZATION?: string;
+  FLOWCI_RENDER_API_KEY?: string;
+  FLOWCI_RENDER_OWNER_ID?: string;
+  FLOWCI_RENDER_DEFAULT_REGION?: string;
+  FLOWCI_RENDER_DEFAULT_INSTANCE_TYPE?: string;
+  FLOWCI_RENDER_ALLOWED_INSTANCE_TYPES?: string;
+  FLOWCI_RENDER_ALLOW_PAID_MANAGED?: string;
+  FLOWCI_RENDER_MANAGED_MAX_SERVICES_PER_USER?: string;
+  FLOWCI_RENDER_BOOTSTRAP_IMAGE?: string;
+  FLOWCI_RENDER_REGISTRY_CREDENTIAL_ID?: string;
+  FLOWCI_RENDER_REGISTRY_USERNAME?: string;
+  FLOWCI_RENDER_REGISTRY_TOKEN?: string;
+  FLOWCI_VERCEL_TOKEN?: string;
+  FLOWCI_VERCEL_TEAM_ID?: string;
+  FLOWCI_VERCEL_TEAM_SLUG?: string;
+  FLOWCI_SONAR_TOKEN?: string;
+  FLOWCI_SONAR_ORGANIZATION?: string;
 }
 
 type RawEnv = Record<string, unknown>;
@@ -44,14 +73,6 @@ const SCOPED_SUPABASE_SECRET_SUFFIXES = [
   '_SUPABASE_SECRET_KEY',
   '_SUPABASE_SERVICE_ROLE_KEY',
 ] as const;
-
-interface ApiCenterConfig {
-  baseUrl: string | undefined;
-  tribeId: string | undefined;
-  tribeSecret: string | undefined;
-  apiKey: string | undefined;
-  timeoutMs: string | undefined;
-}
 
 function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   for (const key of keys) {
@@ -62,25 +83,6 @@ function getTrimmedString(env: RawEnv, keys: string[]): string | undefined {
   }
 
   return undefined;
-}
-
-function resolveApiCenterConfig(env: RawEnv): ApiCenterConfig {
-  return {
-    baseUrl: getTrimmedString(env, ['API_CENTER_BASE_URL', 'APICENTER_URL']),
-    tribeId: getTrimmedString(env, [
-      'API_CENTER_TRIBE_ID',
-      'APICENTER_TRIBE_ID',
-    ]),
-    tribeSecret: getTrimmedString(env, [
-      'API_CENTER_TRIBE_SECRET',
-      'APICENTER_TRIBE_SECRET',
-    ]),
-    apiKey: getTrimmedString(env, ['API_CENTER_API_KEY']),
-    timeoutMs: getTrimmedString(env, [
-      'API_CENTER_TIMEOUT_MS',
-      'APICENTER_TIMEOUT_MS',
-    ]),
-  };
 }
 
 function extractScopedPrefix(key: string, suffix: string): string | null {
@@ -142,65 +144,25 @@ function countScopedSupabaseClients(env: RawEnv): number {
   return count;
 }
 
-function warnApiCenterConfig(config: ApiCenterConfig): void {
-  if (!config.baseUrl) {
-    console.warn(
-      '[env] WARNING: API_CENTER_BASE_URL/APICENTER_URL is not set. Calls to APICenter will fail at runtime.',
-    );
-  }
-
-  if (!config.apiKey) {
-    console.warn(
-      '[env] WARNING: API_CENTER_API_KEY is not set. Legacy fallback disabled; prefer tribe credentials.',
-    );
-  }
-
-  if (config.tribeId && !config.tribeSecret) {
-    console.warn(
-      '[env] WARNING: API_CENTER_TRIBE_ID is set but API_CENTER_TRIBE_SECRET is missing. Tribe token flow will not work.',
-    );
-  }
-
-  if (config.tribeSecret && !config.tribeId) {
-    console.warn(
-      '[env] WARNING: API_CENTER_TRIBE_SECRET is set but API_CENTER_TRIBE_ID is missing. Tribe token flow will not work.',
-    );
-  }
-}
-
-function validateApiCenterTimeout(config: ApiCenterConfig): void {
-  if (!config.timeoutMs) {
-    return;
-  }
-
-  const parsed = Number(config.timeoutMs);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(
-      `[env] API_CENTER_TIMEOUT_MS must be a positive number when set. Got: '${config.timeoutMs}'.`,
-    );
-  }
-}
-
-function validateProductionApiCenter(config: ApiCenterConfig): void {
-  if (!config.baseUrl) {
-    throw new Error(
-      '[env] API_CENTER_BASE_URL (or APICENTER_URL) is required in production.',
-    );
-  }
-
-  const hasTribeAuth = Boolean(config.tribeId && config.tribeSecret);
-  const hasLegacyAuth = Boolean(config.apiKey);
-
-  if (!hasTribeAuth && !hasLegacyAuth) {
-    throw new Error(
-      '[env] Production APICenter auth is missing. Set API_CENTER_TRIBE_ID + API_CENTER_TRIBE_SECRET (preferred) or API_CENTER_API_KEY (legacy).',
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Require SESSION_SECRET to be present and at least 32 characters long.
+ * Extracted into its own function to keep validateEnv's cognitive complexity
+ * within the project limit (≤ 15).
+ */
+function requireSessionSecret(env: RawEnv): string {
+  const raw = env['SESSION_SECRET'];
+  if (typeof raw !== 'string' || raw.trim().length < 32) {
+    throw new Error(
+      '[env] SESSION_SECRET must be set and at least 32 characters long. ' +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    );
+  }
+  return raw.trim();
+}
 
 function requireString(env: RawEnv, key: string): string {
   const value = env[key];
@@ -211,6 +173,18 @@ function requireString(env: RawEnv, key: string): string {
     );
   }
   return value.trim();
+}
+
+function requireStringFromAny(env: RawEnv, keys: string[]): string {
+  const value = getTrimmedString(env, keys);
+  if (!value) {
+    throw new Error(
+      `[env] Missing required environment variable: ${keys[0]}` +
+        (keys.length > 1 ? ` (or alias ${keys.slice(1).join(', ')})` : '') +
+        `. Set it in .env or your deployment secrets before starting the service.`,
+    );
+  }
+  return value;
 }
 
 function requireEnum<T extends string>(
@@ -228,15 +202,71 @@ function requireEnum<T extends string>(
   return raw as T;
 }
 
-function requirePort(env: RawEnv, key: string): number {
+function requirePort(env: RawEnv, key: string, defaultValue = 4000): number {
   const raw = env[key];
+  if (raw === undefined || raw === '') return defaultValue;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    const display =
+      typeof raw === 'string' ||
+      typeof raw === 'number' ||
+      typeof raw === 'boolean'
+        ? String(raw)
+        : JSON.stringify(raw);
     throw new Error(
-      `[env] ${key} must be an integer between 1 and 65535. Got: '${String(raw)}'.`,
+      `[env] ${key} must be an integer between 1 and 65535. Got: '${display}'.`,
     );
   }
   return parsed;
+}
+
+function validateEnvProvisioningConfig(env: RawEnv): void {
+  if (env['ENV_PROVISIONING_ENABLED'] !== 'true') {
+    return;
+  }
+
+  const rawKey = requireString(env, 'ENV_PROVISIONING_ENCRYPTION_KEY');
+  const key = Buffer.from(rawKey, 'base64');
+  if (key.length !== 32) {
+    throw new Error(
+      '[env] ENV_PROVISIONING_ENCRYPTION_KEY must be a base64-encoded 32-byte key.',
+    );
+  }
+}
+
+function validateProductionGithubAppConfig(env: RawEnv): void {
+  if (env['NODE_ENV'] !== 'production') return;
+
+  // Accept the same alias names as app.config.ts (GITHUB_APP for the App ID,
+  // GITHUB_PRIVATE_KEY for the key). If this gate rejects a name that
+  // app.config.ts would honor at runtime, a correctly configured deployment
+  // crash-loops at boot and the platform keeps serving the previous release.
+  const appId = requireStringFromAny(env, ['GITHUB_APP_ID', 'GITHUB_APP']);
+  const appSlug = requireString(env, 'GITHUB_APP_SLUG');
+  const privateKey = requireStringFromAny(env, [
+    'GITHUB_APP_PRIVATE_KEY',
+    'GITHUB_PRIVATE_KEY',
+  ]).replaceAll('\\n', '\n');
+
+  if (!/^\d+$/.test(appId)) {
+    throw new Error('[env] GITHUB_APP_ID must contain digits only.');
+  }
+  if (
+    appSlug === 'my-github-app' ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/.test(appSlug)
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_SLUG must be the real GitHub App slug, not the placeholder my-github-app.',
+    );
+  }
+  if (
+    !privateKey.includes('-----BEGIN') ||
+    !privateKey.includes('PRIVATE KEY-----')
+  ) {
+    throw new Error(
+      '[env] GITHUB_APP_PRIVATE_KEY must contain a PEM-encoded private key.',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +288,12 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   ] as const);
 
   const PORT = requirePort(env, 'PORT');
+
+  // --- Required: session secret (minimum length enforced) ---
+  // A weak or missing SESSION_SECRET allows cookie forgery. We require it in
+  // all environments (not just production) so that developers are never
+  // unknowingly running with an insecure secret.
+  const SESSION_SECRET = requireSessionSecret(env);
 
   const SUPABASE_URL = getTrimmedString(env, ['SUPABASE_URL']);
   const SUPABASE_ANON_KEY = getTrimmedString(env, ['SUPABASE_ANON_KEY']);
@@ -307,40 +343,36 @@ export function validateEnv(env: RawEnv): EnvironmentVariables {
   // We require it here so misconfiguration is explicit at startup.
   const ALLOWED_ORIGINS = requireString(env, 'ALLOWED_ORIGINS');
 
-  // --- Optional with warnings ---
+  // --- Required: frontend URL ---
+  // FRONTEND_URL is the redirect target after OAuth. If missing, every login
+  // silently redirects to localhost:3000 — invisible in logs, fatal in prod.
+  requireString(env, 'FRONTEND_URL');
+
+  // --- Required: GitHub OAuth credentials ---
+  // Both must be set; a missing secret causes silent login failure at runtime
+  // rather than a hard crash at startup.
+  requireString(env, 'GITHUB_CLIENT_ID');
+  requireString(env, 'GITHUB_CLIENT_SECRET');
+  validateProductionGithubAppConfig(env);
+
+  // --- Optional ---
   const ENABLE_SWAGGER =
     (env['ENABLE_SWAGGER'] as string | undefined) ?? 'false';
+  validateEnvProvisioningConfig(env);
 
-  const apiCenterConfig = resolveApiCenterConfig(env);
-  warnApiCenterConfig(apiCenterConfig);
-  validateApiCenterTimeout(apiCenterConfig);
-
-  if (NODE_ENV === 'production') {
-    validateProductionApiCenter(apiCenterConfig);
-  }
-
+  // Pass all raw env vars through first so appConfig and other factories can
+  // read variables (e.g. GITHUB_CLIENT_ID) that validateEnv does not explicitly
+  // validate. Without this, @nestjs/config's assignVariablesToProcess only sets
+  // the keys returned here, leaving everything else missing from process.env.
   return {
+    ...(env as unknown as EnvironmentVariables),
     NODE_ENV,
     PORT,
     ENABLE_SWAGGER,
+    SESSION_SECRET,
     ...(SUPABASE_URL ? { SUPABASE_URL } : {}),
     ...(SUPABASE_ANON_KEY ? { SUPABASE_ANON_KEY } : {}),
     ...(SUPABASE_SERVICE_ROLE_KEY ? { SUPABASE_SERVICE_ROLE_KEY } : {}),
     ALLOWED_ORIGINS,
-    ...(apiCenterConfig.baseUrl
-      ? { API_CENTER_BASE_URL: apiCenterConfig.baseUrl }
-      : {}),
-    ...(apiCenterConfig.apiKey
-      ? { API_CENTER_API_KEY: apiCenterConfig.apiKey }
-      : {}),
-    ...(apiCenterConfig.tribeId
-      ? { API_CENTER_TRIBE_ID: apiCenterConfig.tribeId }
-      : {}),
-    ...(apiCenterConfig.tribeSecret
-      ? { API_CENTER_TRIBE_SECRET: apiCenterConfig.tribeSecret }
-      : {}),
-    ...(apiCenterConfig.timeoutMs
-      ? { API_CENTER_TIMEOUT_MS: apiCenterConfig.timeoutMs }
-      : {}),
   };
 }
